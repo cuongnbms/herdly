@@ -800,11 +800,12 @@ pub async fn files_list_all(
     mgr: Mgr<'_>,
     machine_id: String,
     root: String,
+    hidden: Option<Vec<String>>,
 ) -> Result<FileList, AppError> {
     let home = mgr.info(&machine_id)?.home;
     let root = resolve_root(&home, &root)?;
     let t = mgr.transport(&machine_id)?;
-    all::list_all(&*t, &home, &root).await
+    all::list_all(&*t, &home, &root, &hidden.unwrap_or_default()).await
 }
 
 #[tauri::command]

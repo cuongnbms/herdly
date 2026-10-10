@@ -128,7 +128,9 @@ export const quotaFetch = (provider: QuotaProvider) => invoke<QuotaOutcome>("quo
 /** Folders named in `hidden` are left out; files and linked folders with those names are kept. */
 export const filesListDir = (machineId: string, root: string, rel: string, hidden: string[] = []) =>
   invoke<FileEntry[]>("files_list_dir", { machineId, root, rel, hidden });
-export const filesListAll = (machineId: string, root: string) => invoke<FileList>("files_list_all", { machineId, root });
+/** Files inside a folder named in `hidden` are left out. */
+export const filesListAll = (machineId: string, root: string, hidden: string[] = []) =>
+  invoke<FileList>("files_list_all", { machineId, root, hidden });
 export const filesRead = (machineId: string, root: string, rel: string) =>
   invoke<FileContent>("files_read", { machineId, root, rel });
 export const filesImage = (machineId: string, root: string, rel: string) =>

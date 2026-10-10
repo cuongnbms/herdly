@@ -35,7 +35,9 @@ describe("files ipc", () => {
     await filesListDir("devtuf", "~/app", "src", [".git"]);
     expect(invoke).toHaveBeenLastCalledWith("files_list_dir", { machineId: "devtuf", root: "~/app", rel: "src", hidden: [".git"] });
     await filesListAll("devtuf", "~/app");
-    expect(invoke).toHaveBeenLastCalledWith("files_list_all", { machineId: "devtuf", root: "~/app" });
+    expect(invoke).toHaveBeenLastCalledWith("files_list_all", { machineId: "devtuf", root: "~/app", hidden: [] });
+    await filesListAll("devtuf", "~/app", ["dist"]);
+    expect(invoke).toHaveBeenLastCalledWith("files_list_all", { machineId: "devtuf", root: "~/app", hidden: ["dist"] });
     await filesImage("local", "/x", "a.png");
     expect(invoke).toHaveBeenLastCalledWith("files_image", { machineId: "local", root: "/x", rel: "a.png" });
   });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { filesListAll } from "../lib/ipc";
+import { useHiddenFolders } from "../settings/hiddenFolders";
 import type { FileList } from "../lib/types";
 import { activeItem, useApp } from "../store/app";
 import { ActionsProvider, useActions } from "../sidebar/actions";
@@ -262,12 +263,14 @@ function PanelBody({ wsRef, root, online, showHeavy, hidden, gotoRef, onMissing 
   const [list, setList] = useState<FileList | null>(null);
   const batch = useFilesBus((s) => s.batches[key] ?? null);
   const reloadKey = useFilesBus((s) => s.reloads[key] ?? 0);
+  // Go to File always leaves these out; the eye button only shows them in the tree.
+  const hiddenFolders = useHiddenFolders((s) => s.folders);
   const [watchError, setWatchError] = useState<string | null>(null);
   const reload = useCallback(() => useFilesBus.getState().reload(key), [key]);
 
   useEffect(() => {
     let gone = false;
-    filesListAll(machineId, root).then(
+    filesListAll(machineId, root, hiddenFolders).then(
       (l) => !gone && setList(l),
       (e) => {
         if (gone) return;
@@ -278,7 +281,7 @@ function PanelBody({ wsRef, root, online, showHeavy, hidden, gotoRef, onMissing 
     return () => {
       gone = true;
     };
-  }, [machineId, root, reloadKey]);
+  }, [machineId, root, reloadKey, hiddenFolders]);
 
   // The mount just listed everything, so the first Resync of a watch that started with it is
   // skipped; a watch started later (back online) or restarted after an error reloads.

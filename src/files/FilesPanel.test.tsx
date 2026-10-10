@@ -24,6 +24,7 @@ import { FilesPanel } from "./FilesPanel";
 import { useFilesPanel } from "./panelStore";
 import { useFilesBus } from "./bus";
 import { useFiles } from "./store";
+import { DEFAULT_HIDDEN_FOLDERS, useHiddenFolders } from "../settings/hiddenFolders";
 
 const ref = { machine_id: "local", session: "default", workspace_id: "w1" };
 
@@ -82,6 +83,21 @@ describe("FilesPanel", () => {
     await waitFor(() =>
       expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "", hidden: [] }),
     );
+  });
+
+  it("lists Go to File without the hidden folders, whatever the eye button, and relists when they change", async () => {
+    render(<FilesPanel />);
+    const listAlls = () => vi.mocked(invoke).mock.calls.filter((c) => c[0] === "files_list_all");
+    const calls = () => listAlls().length;
+    await waitFor(() => expect(listAlls().slice(-1)[0]?.[1]).toEqual({ machineId: "local", root: "/r", hidden: DEFAULT_HIDDEN_FOLDERS }));
+    const before = calls();
+    fireEvent.click(screen.getByRole("button", { name: "Show heavy folders" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls()).toBe(before);
+    act(() => useHiddenFolders.getState().setFolders(["logs"]));
+    await waitFor(() => expect(calls()).toBe(before + 1));
+    expect(listAlls().slice(-1)[0]?.[1]).toEqual({ machineId: "local", root: "/r", hidden: ["logs"] });
+    act(() => useHiddenFolders.getState().reset());
   });
 
   it("shows Machine offline when the machine is not connected", () => {
