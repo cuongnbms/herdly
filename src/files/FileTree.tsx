@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "re
 import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { filesListDir } from "../lib/ipc";
+import { useHiddenFolders } from "../settings/hiddenFolders";
 import type { FileChange, FileEntry } from "../lib/types";
 import { ConfirmDialog, ContextMenu, TextDialog, type MenuItem } from "../sidebar/ContextMenu";
 import {
@@ -33,7 +34,7 @@ interface Props {
   onMoved?: (from: string, to: string | null) => void;
   /** Changing it refetches the root and every expanded folder. */
   reloadKey: number;
-  /** Lists heavy folders (`.git`, `node_modules`…) too; changing it refetches like `reloadKey`. */
+  /** Lists the folders hidden in Settings (`.git`, `node_modules`…) too; changing it refetches like `reloadKey`. */
   showHeavy?: boolean;
   /** A batch from the Files watch; each new `seq` relists the loaded folders it touched. */
   changes?: { seq: number; changes: FileChange[] } | null;
@@ -56,6 +57,8 @@ const kindClass = (kind: FileEntry["kind"]) => (kind === "dirlink" ? "files-tree
 export function FileTree({ machineId, root, filesKey, onOpen, onMoved, reloadKey, showHeavy = false, changes = null }: Props) {
   const expanded = useFiles((s) => s.byWs[filesKey]?.expanded ?? NO_DIRS);
   const toggleDir = useFiles((s) => s.toggleDir);
+  const hiddenFolders = useHiddenFolders((s) => s.folders);
+  const hidden = showHeavy ? NO_DIRS : hiddenFolders;
   const [entries, setEntries] = useState<Record<string, FileEntry[]>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   /** The item Tab lands on: the last focused one, else the first. */
@@ -93,7 +96,7 @@ export function FileTree({ machineId, root, filesKey, onOpen, onMoved, reloadKey
       const token = ++lastToken.current;
       tokens.current.set(rel, token);
       inflight.current.add(rel);
-      filesListDir(machineId, root, rel, showHeavy).then(
+      filesListDir(machineId, root, rel, hidden).then(
         (list) => {
           if (g !== gen.current || tokens.current.get(rel) !== token) return;
           inflight.current.delete(rel);
@@ -107,7 +110,7 @@ export function FileTree({ machineId, root, filesKey, onOpen, onMoved, reloadKey
         },
       );
     },
-    [machineId, root, showHeavy],
+    [machineId, root, hidden],
   );
 
   // Initial mount, a new root, or a reload: refetch the root and open folders. Children of

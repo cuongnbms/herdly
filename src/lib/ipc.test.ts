@@ -31,9 +31,9 @@ describe("files ipc", () => {
   it("passes camelCase args to the other files commands", async () => {
     (invoke as any).mockResolvedValue(null);
     await filesListDir("devtuf", "~/app", "src");
-    expect(invoke).toHaveBeenLastCalledWith("files_list_dir", { machineId: "devtuf", root: "~/app", rel: "src", showHeavy: false });
-    await filesListDir("devtuf", "~/app", "src", true);
-    expect(invoke).toHaveBeenLastCalledWith("files_list_dir", { machineId: "devtuf", root: "~/app", rel: "src", showHeavy: true });
+    expect(invoke).toHaveBeenLastCalledWith("files_list_dir", { machineId: "devtuf", root: "~/app", rel: "src", hidden: [] });
+    await filesListDir("devtuf", "~/app", "src", [".git"]);
+    expect(invoke).toHaveBeenLastCalledWith("files_list_dir", { machineId: "devtuf", root: "~/app", rel: "src", hidden: [".git"] });
     await filesListAll("devtuf", "~/app");
     expect(invoke).toHaveBeenLastCalledWith("files_list_all", { machineId: "devtuf", root: "~/app" });
     await filesImage("local", "/x", "a.png");

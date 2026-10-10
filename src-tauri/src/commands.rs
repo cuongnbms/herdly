@@ -788,11 +788,11 @@ pub async fn files_list_dir(
     machine_id: String,
     root: String,
     rel: String,
-    show_heavy: Option<bool>,
+    hidden: Option<Vec<String>>,
 ) -> Result<Vec<Entry>, AppError> {
     let root = files_root(&mgr, &machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
-    list::list_dir(&*t, &root, &rel, show_heavy.unwrap_or(false)).await
+    list::list_dir(&*t, &root, &rel, &hidden.unwrap_or_default()).await
 }
 
 #[tauri::command]

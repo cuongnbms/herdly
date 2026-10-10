@@ -197,7 +197,7 @@ function WorkspacePanel({ wsRef: ref, section }: { wsRef: WorkspaceRef; section:
             className="icon-btn"
             aria-label="Show heavy folders"
             aria-pressed={showHeavy}
-            title={showHeavy ? "Hide .git, node_modules and other heavy folders" : "Show .git, node_modules and other heavy folders"}
+            title={showHeavy ? "Hide the folders listed in Settings › Files" : "Show the folders hidden in Settings › Files"}
             onClick={() => setShowHeavy((on) => !on)}
           >
             {showHeavy ? <EyeIcon /> : <EyeOffIcon />}

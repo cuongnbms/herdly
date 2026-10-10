@@ -80,7 +80,7 @@ describe("FilesPanel", () => {
     fireEvent.click(btn);
     expect(btn.getAttribute("aria-pressed")).toBe("true");
     await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "", showHeavy: true }),
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "", hidden: [] }),
     );
   });
 

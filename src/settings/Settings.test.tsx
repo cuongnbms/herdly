@@ -5,6 +5,7 @@ vi.mock("../lib/ipc", () => ({
   systemFonts: vi.fn(async () => ["CaskaydiaCove Nerd Font Mono", "Lilex", "Menlo"]),
 }));
 import { loadLensSettings, useLensSettings } from "./lens";
+import { DEFAULT_HIDDEN_FOLDERS, loadHiddenFolders, useHiddenFolders } from "./hiddenFolders";
 import { DEFAULT_QUICK_REPLIES, loadQuickReplies, QUICK_REPLIES_MAX, useQuickReplies } from "./quickReplies";
 import { Settings } from "./Settings";
 import { DEFAULTS, loadFonts, useSettings } from "./store";
@@ -242,5 +243,38 @@ describe("Settings fonts", () => {
     openSettings();
     fireEvent.click(screen.getByRole("button", { name: "Reset fonts" }));
     expect(useSettings.getState()).toMatchObject(DEFAULTS);
+  });
+});
+
+describe("Settings files", () => {
+  beforeEach(() => useHiddenFolders.setState({ folders: loadHiddenFolders() }));
+
+  function openFiles() {
+    render(<Settings />);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+    return screen.getByRole("textbox", { name: "Hidden folders" }) as HTMLTextAreaElement;
+  }
+
+  it("lists the hidden folders one per line and saves the edit on blur", () => {
+    const box = openFiles();
+    expect(box.value).toBe(DEFAULT_HIDDEN_FOLDERS.join("\n"));
+    fireEvent.change(box, { target: { value: "logs\n\n tmp \n" } });
+    expect(useHiddenFolders.getState().folders).toEqual(DEFAULT_HIDDEN_FOLDERS);
+    fireEvent.blur(box);
+    expect(useHiddenFolders.getState().folders).toEqual(["logs", "tmp"]);
+    expect(loadHiddenFolders()).toEqual(["logs", "tmp"]);
+    expect(box.value).toBe("logs\ntmp");
+  });
+
+  it("resets the hidden folders to the defaults", () => {
+    useHiddenFolders.getState().setFolders(["logs"]);
+    const box = openFiles();
+    const reset = screen.getByRole("button", { name: "Reset hidden folders" }) as HTMLButtonElement;
+    expect(reset.disabled).toBe(false);
+    fireEvent.click(reset);
+    expect(useHiddenFolders.getState().folders).toEqual(DEFAULT_HIDDEN_FOLDERS);
+    expect(box.value).toBe(DEFAULT_HIDDEN_FOLDERS.join("\n"));
+    expect(reset.disabled).toBe(true);
   });
 });

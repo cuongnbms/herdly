@@ -125,9 +125,9 @@ export const chatClose = (p: PaneRef) =>
   invoke<void>("chat_close", { machineId: p.machine_id, session: p.session, paneId: p.pane_id });
 export const quotaFetch = (provider: QuotaProvider) => invoke<QuotaOutcome>("quota_fetch", { provider });
 
-/** `showHeavy` also lists `.git`, `node_modules` and the other heavy folders. */
-export const filesListDir = (machineId: string, root: string, rel: string, showHeavy = false) =>
-  invoke<FileEntry[]>("files_list_dir", { machineId, root, rel, showHeavy });
+/** Folders named in `hidden` are left out; files and linked folders with those names are kept. */
+export const filesListDir = (machineId: string, root: string, rel: string, hidden: string[] = []) =>
+  invoke<FileEntry[]>("files_list_dir", { machineId, root, rel, hidden });
 export const filesListAll = (machineId: string, root: string) => invoke<FileList>("files_list_all", { machineId, root });
 export const filesRead = (machineId: string, root: string, rel: string) =>
   invoke<FileContent>("files_read", { machineId, root, rel });

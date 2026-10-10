@@ -2,6 +2,7 @@ import { type CSSProperties, type DragEvent, memo, useEffect, useRef, useState }
 import { notificationsEnabled, setNotificationsEnabled } from "../notify";
 import { CloseIcon, GearIcon, GripIcon } from "../ui/icons";
 import { FontPicker } from "./FontPicker";
+import { DEFAULT_HIDDEN_FOLDERS, useHiddenFolders } from "./hiddenFolders";
 import { NEW_AGENT_LENSES, useLensSettings } from "./lens";
 import { useNewTab } from "./newTab";
 import { AGENTS } from "../agents/openAgentTab";
@@ -302,12 +303,55 @@ function ChatSettings() {
   );
 }
 
+function FilesSettings() {
+  const h = useHiddenFolders();
+  // Edited as text and saved on blur, so a new line can be typed before it holds a name.
+  const [draft, setDraft] = useState(() => h.folders.join("\n"));
+  const isDefault = h.folders.length === DEFAULT_HIDDEN_FOLDERS.length && h.folders.every((f, i) => f === DEFAULT_HIDDEN_FOLDERS[i]);
+  const commit = () => {
+    h.setFolders(draft.split("\n"));
+    setDraft(useHiddenFolders.getState().folders.join("\n"));
+  };
+  return (
+    <>
+      <label className="setting-col">
+        <span>Hidden folders</span>
+        <textarea
+          className="hidden-folders"
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          rows={8}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+        />
+      </label>
+      <p className="note">One folder name per line. The Files tree leaves these folders out until its eye button is on; files with these names still show.</p>
+      <div className="settings-foot">
+        <button
+          className="btn btn-xs"
+          aria-label="Reset hidden folders"
+          disabled={isDefault && draft === h.folders.join("\n")}
+          onClick={() => {
+            h.reset();
+            setDraft(DEFAULT_HIDDEN_FOLDERS.join("\n"));
+          }}
+        >
+          Reset to defaults
+        </button>
+      </div>
+    </>
+  );
+}
+
 /** Add a section here for each new group of settings. */
 const SECTIONS = [
   { id: "general", label: "General", Body: GeneralSettings },
   { id: "appearance", label: "Appearance", Body: AppearanceSettings },
   { id: "fonts", label: "Fonts", Body: FontSettings },
   { id: "chat", label: "Chat", Body: ChatSettings },
+  { id: "files", label: "Files", Body: FilesSettings },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];

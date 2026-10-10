@@ -586,6 +586,14 @@ kbd {
 }
 .quick-reply-row input:focus { border-color: var(--accent); box-shadow: var(--ring); }
 .quick-reply-row input::placeholder { color: var(--fg-3); }
+.setting-col { display: flex; flex-direction: column; gap: 6px; }
+.hidden-folders {
+  min-height: 120px; padding: 6px 8px; box-sizing: border-box; resize: vertical;
+  font-family: var(--mono); font-size: 12px; line-height: 1.5;
+  border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-0); color: var(--fg);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.hidden-folders:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .setting-row > span { white-space: nowrap; }
 .font-picker { position: relative; width: 220px; min-width: 0; }

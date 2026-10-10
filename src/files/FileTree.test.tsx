@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { showToast } from "../ui/Toast";
 import { FileTree } from "./FileTree";
+import { DEFAULT_HIDDEN_FOLDERS, useHiddenFolders } from "../settings/hiddenFolders";
 import { draftKey, useDrafts } from "./drafts";
 
 describe("FileTree", () => {
@@ -206,16 +207,24 @@ describe("FileTree", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Copy Path" }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("/etc"));
   });
-  it("asks for heavy folders only when showHeavy is on, and relists when it changes", async () => {
+  it("hides the folders set in Settings unless showHeavy is on, and relists when either changes", async () => {
     vi.mocked(invoke).mockReset();
     vi.mocked(invoke).mockImplementation(async (_cmd, args: any) =>
-      args.showHeavy ? [{ name: "node_modules", kind: "dir" }, { name: "a.md", kind: "file" }] : [{ name: "a.md", kind: "file" }],
+      args.hidden.includes("node_modules") ? [{ name: "a.md", kind: "file" }] : [{ name: "node_modules", kind: "dir" }, { name: "a.md", kind: "file" }],
     );
-    const { rerender } = render(<FileTree machineId="local" root="/r" filesKey="local/default/w13" onOpen={() => {}} reloadKey={0} />);
+    const props = { machineId: "local", root: "/r", filesKey: "local/default/w13", onOpen: () => {}, reloadKey: 0 };
+    const { rerender } = render(<FileTree {...props} />);
     await screen.findByText("a.md");
-    expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "", showHeavy: false });
-    rerender(<FileTree machineId="local" root="/r" filesKey="local/default/w13" onOpen={() => {}} reloadKey={0} showHeavy />);
+    expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "", hidden: DEFAULT_HIDDEN_FOLDERS });
+    rerender(<FileTree {...props} showHeavy />);
     expect(await screen.findByText("node_modules")).toBeTruthy();
+    expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "", hidden: [] });
+    rerender(<FileTree {...props} />);
+    await waitFor(() => expect(screen.queryByText("node_modules")).toBeNull());
+    act(() => useHiddenFolders.getState().setFolders(["dist"]));
+    expect(await screen.findByText("node_modules")).toBeTruthy();
+    expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "", hidden: ["dist"] });
+    act(() => useHiddenFolders.getState().reset());
   });
 
   it("relists only loaded folders named by a change batch, once per batch", async () => {
@@ -231,7 +240,7 @@ describe("FileTree", () => {
     const batch = { seq: 1, changes: [{ path: "src/new.ts", isDir: false, removed: false }, { path: "lib/y.ts", isDir: false, removed: false }] };
     rerender(<FileTree {...props} changes={batch} />);
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "src", showHeavy: false });
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_dir", { machineId: "local", root: "/r", rel: "src", hidden: DEFAULT_HIDDEN_FOLDERS });
     rerender(<FileTree {...props} changes={batch} />);
     await new Promise((r) => setTimeout(r, 20));
     expect(vi.mocked(invoke)).toHaveBeenCalledTimes(1);
