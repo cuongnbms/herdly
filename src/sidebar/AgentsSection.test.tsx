@@ -15,7 +15,7 @@ const machine = (panes: PaneView[]): MachineView => ({
       { tab_id: "w1:t1", label: "1", number: 1, status: "idle", panes } ] } ] }],
 });
 
-const titles = () => within(screen.getByRole("region", { name: "Agents" })).getAllByRole("button", { name: /^(?!Agents)/ })
+const titles = () => within(screen.getByRole("region", { name: "Working agents" })).getAllByRole("button", { name: /^(?!Working agents)/ })
   .map((b) => b.querySelector(".agents-title")?.textContent);
 
 describe("AgentsSection", () => {
@@ -43,13 +43,13 @@ describe("AgentsSection", () => {
 
   it("collapses", () => {
     render(<AgentsSection />);
-    fireEvent.click(screen.getByRole("button", { name: /^Agents/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Working agents/ }));
     expect(screen.queryByText("Fix login")).toBeNull();
   });
 
   it("is hidden when no agent is blocked, done or working", () => {
     useApp.setState({ machines: { local: machine([pane("c", "Deploy", "idle")]) } });
     render(<AgentsSection />);
-    expect(screen.queryByRole("region", { name: "Agents" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Working agents" })).toBeNull();
   });
 });

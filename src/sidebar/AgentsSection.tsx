@@ -18,8 +18,8 @@ export function AgentsSection() {
   const cards = useMemo(() => sidebarAgents(dashboardCards(machines, order, doneSeen, since)), [machines, order, doneSeen, since]);
   if (cards.length === 0) return null;
   return (
-    <section aria-label="Agents" className="agents-section">
-      <SectionHeader id="agents" label="Agents" count={cards.length} />
+    <section aria-label="Working agents" className="agents-section">
+      <SectionHeader id="agents" label="Working agents" count={cards.length} />
       {open && (
         <ul className="tree">
           {cards.map((c) => (
