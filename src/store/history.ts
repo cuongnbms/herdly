@@ -30,8 +30,13 @@ useApp.subscribe((s, prev) => {
   });
 });
 
-/** Whether `item` can still be shown: a file reopens, a pane must still exist. */
-const reachable = (item: OpenItem) => item.kind === "file" || !!findPane(useApp.getState().machines, item.ref);
+/** Whether `item` can still be shown: its Pane, or its file's Workspace, must still exist. */
+function reachable(item: OpenItem): boolean {
+  const { machines } = useApp.getState();
+  if (item.kind === "agent") return !!findPane(machines, item.ref);
+  const { machine_id, session, workspace_id } = item.ws;
+  return !!machines[machine_id]?.sessions.find((x) => x.name === session)?.workspaces.some((w) => w.workspace_id === workspace_id);
+}
 
 function show(item: OpenItem) {
   navigating = true;

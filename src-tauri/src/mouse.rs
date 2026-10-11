@@ -33,17 +33,16 @@ mod mac {
         let block = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
             // SAFETY: AppKit passes a valid event for the duration of the call.
             let button = unsafe { event.as_ref() }.buttonNumber();
-            match direction(button) {
-                Some(dir) => {
-                    if let Err(e) = app.emit(NAV_EVENT, dir) {
-                        tracing::warn!("emit {NAV_EVENT} failed: {e}");
-                    }
-                    std::ptr::null_mut()
+            if let Some(dir) = direction(button) {
+                if let Err(e) = app.emit(NAV_EVENT, dir) {
+                    tracing::warn!("emit {NAV_EVENT} failed: {e}");
                 }
-                None => event.as_ptr(),
             }
+            // Passed on unchanged: nothing in the page acts on these buttons, and swallowing the
+            // down alone would leave WebKit an unmatched up.
+            event.as_ptr()
         });
-        // SAFETY: the block returns the event it was given or nil, as the monitor requires.
+        // SAFETY: the block returns the event it was given, as the monitor requires.
         let monitor = unsafe {
             NSEvent::addLocalMonitorForEventsMatchingMask_handler(
                 NSEventMask::OtherMouseDown,

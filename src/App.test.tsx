@@ -15,6 +15,7 @@ vi.mock("./terminal/TerminalLens", async () => {
 import App from "./App";
 import { activeItem, useApp, viewedItems } from "./store/app";
 import { itemKey } from "./store/openItems";
+import { useHistory } from "./store/history";
 import { useFilesPanel } from "./files/panelStore";
 import { useLensSettings } from "./settings/lens";
 import { initialSlots, useQuota } from "./quota/store";
@@ -165,6 +166,7 @@ describe("App shell", () => {
     });
 
     it("⌘[ and ⌘] go back and forward through what was shown", () => {
+      useHistory.setState({ back: [], forward: [] });
       render(<App />);
       act(() => useApp.getState().openFile(ws, "/r", "a.txt", { pin: true }));
       fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true });
@@ -174,6 +176,7 @@ describe("App shell", () => {
     });
 
     it("leaves ⌘[ to a focused editor that handled it", () => {
+      useHistory.setState({ back: [], forward: [] });
       render(<App />);
       act(() => useApp.getState().openFile(ws, "/r", "a.txt", { pin: true }));
       const ev = new KeyboardEvent("keydown", { key: "[", code: "BracketLeft", metaKey: true, bubbles: true, cancelable: true });

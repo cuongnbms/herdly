@@ -95,6 +95,18 @@ describe("navigation history", () => {
     expect(shown()).toBe(agent(p1));
   });
 
+  it("skips files whose workspace is gone", () => {
+    useApp.getState().select(p1);
+    useApp.getState().openFile(ws, "/x", "README.md", { pin: false });
+    useApp.getState().select(p3);
+    const gone = structuredClone(machine);
+    gone.sessions[0].workspaces = [];
+    useApp.getState().upsertMachine(gone);
+    goBack();
+    expect(shown()).toBe(agent(p3));
+    expect(useApp.getState().viewed?.session).toBe("other");
+  });
+
   it("keeps the last 50 places", () => {
     for (let i = 0; i < 60; i++) useApp.getState().select(i % 2 ? p1 : p2);
     expect(useHistory.getState().back).toHaveLength(50);
