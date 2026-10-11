@@ -6,7 +6,7 @@ import { useApp } from "../store/app";
 import { SectionHeader } from "./Sidebar";
 import { StatusDot } from "./StatusDot";
 
-/** Agents that are Blocked, Done (not yet seen) or Working, docked above Machines; hidden when there are none. */
+/** Agents that are Blocked, Done (not yet seen) or Working, docked above Machines; shown even when there are none. */
 export function AgentsSection() {
   const machines = useApp((s) => s.machines);
   const order = useApp((s) => s.order);
@@ -16,11 +16,10 @@ export function AgentsSection() {
   const select = useApp((s) => s.select);
   const open = useApp((s) => s.expanded["agents"] ?? true);
   const cards = useMemo(() => sidebarAgents(dashboardCards(machines, order, doneSeen, since)), [machines, order, doneSeen, since]);
-  if (cards.length === 0) return null;
   return (
     <section aria-label="Working agents" className="agents-section">
       <SectionHeader id="agents" label="Working agents" count={cards.length} />
-      {open && (
+      {open && cards.length > 0 && (
         <ul className="tree">
           {cards.map((c) => (
             <li key={c.key}>

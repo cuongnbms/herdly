@@ -47,9 +47,11 @@ describe("AgentsSection", () => {
     expect(screen.queryByText("Fix login")).toBeNull();
   });
 
-  it("is hidden when no agent is blocked, done or working", () => {
+  it("stays visible with a 0 count when no agent is blocked, done or working", () => {
     useApp.setState({ machines: { local: machine([pane("c", "Deploy", "idle")]) } });
     render(<AgentsSection />);
-    expect(screen.queryByRole("region", { name: "Working agents" })).toBeNull();
+    const region = screen.getByRole("region", { name: "Working agents" });
+    expect(within(region).getByRole("button", { name: /^Working agents/ }).textContent).toContain("0");
+    expect(screen.queryByText("Deploy")).toBeNull();
   });
 });
