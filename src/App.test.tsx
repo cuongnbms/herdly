@@ -163,6 +163,24 @@ describe("App shell", () => {
       fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true, shiftKey: true });
       expect(activeItem(useApp.getState())?.kind).toBe("file");
     });
+
+    it("⌘[ and ⌘] go back and forward through what was shown", () => {
+      render(<App />);
+      act(() => useApp.getState().openFile(ws, "/r", "a.txt", { pin: true }));
+      fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true });
+      expect(activeItem(useApp.getState())?.kind).toBe("agent");
+      fireEvent.keyDown(window, { key: "]", code: "BracketRight", metaKey: true });
+      expect(activeItem(useApp.getState())?.kind).toBe("file");
+    });
+
+    it("leaves ⌘[ to a focused editor that handled it", () => {
+      render(<App />);
+      act(() => useApp.getState().openFile(ws, "/r", "a.txt", { pin: true }));
+      const ev = new KeyboardEvent("keydown", { key: "[", code: "BracketLeft", metaKey: true, bubbles: true, cancelable: true });
+      ev.preventDefault();
+      window.dispatchEvent(ev);
+      expect(activeItem(useApp.getState())?.kind).toBe("file");
+    });
   });
 
   it("shows the loading overlay, not the empty state, while a new pane's agent starts before herdr reports the pane", () => {

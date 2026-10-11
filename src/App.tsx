@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, type CSSProperties } from "react";
 import "./fonts/fonts.css";
 import "./styles.css";
-import { appQuit, machinesList, onMachine, onNotifyActivate, onQuitRequested, onPaneStatus, sessionStart } from "./lib/ipc";
+import { appQuit, machinesList, onMachine, onMouseNav, onNotifyActivate, onQuitRequested, onPaneStatus, sessionStart } from "./lib/ipc";
 import { notifyPaneStatus } from "./notify";
 import { Palette } from "./palette/Palette";
 import { Settings } from "./settings/Settings";
@@ -32,6 +32,7 @@ import { defaultLens } from "./lens";
 import { useTranscriptProbe } from "./chat/transcriptProbe";
 import { AlertIcon, LayersIcon, TerminalIcon } from "./ui/icons";
 import { StartingOverlay } from "./terminal/StartingOverlay";
+import { goBack, goForward } from "./store/history";
 
 function EmptyState({ icon, title, children }: { icon: React.ReactNode; title: string; children?: React.ReactNode }) {
   return (
@@ -147,6 +148,12 @@ export default function App() {
       void notifyPaneStatus(ev, selected, machines);
     }).then(keep);
     void onNotifyActivate((pane) => useApp.getState().select(pane)).then(keep);
+    // The mouse's Back and Forward buttons, caught natively: WKWebView does not pass them to the page.
+    void onMouseNav((dir) => {
+      if (document.querySelector(".overlay")) return;
+      if (dir === "back") goBack();
+      else goForward();
+    }).then(keep);
     return () => {
       cancelled = true;
       unlisten.forEach((u) => u());
@@ -210,6 +217,11 @@ export default function App() {
       } else if (e.metaKey && e.shiftKey && !e.altKey && !e.ctrlKey && (e.code === "BracketLeft" || e.code === "BracketRight")) {
         e.preventDefault();
         useApp.getState().cycleItems(e.code === "BracketLeft" ? -1 : 1);
+      } else if (plain && (e.code === "BracketLeft" || e.code === "BracketRight") && !e.defaultPrevented) {
+        // An editor that took ⌘[ (indent) has already prevented it.
+        e.preventDefault();
+        if (e.code === "BracketLeft") goBack();
+        else goForward();
       }
     };
     window.addEventListener("keydown", onKey);

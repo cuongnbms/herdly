@@ -61,6 +61,9 @@ export const notifyPane = (pane: PaneRef, title: string, body: string) =>
 /** Fires with the pane of a desktop notification the user clicked. */
 export const onNotifyActivate = (cb: (pane: PaneRef) => void): Promise<UnlistenFn> =>
   listen<PaneRef>("notify://activate", (e) => cb(e.payload));
+/** Fires when the mouse's Back or Forward button is pressed over the window. */
+export const onMouseNav = (cb: (dir: "back" | "forward") => void): Promise<UnlistenFn> =>
+  listen<"back" | "forward">("mouse://nav", (e) => cb(e.payload));
 
 export interface AttachKey {
   machine_id: string;

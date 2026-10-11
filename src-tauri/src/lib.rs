@@ -8,6 +8,7 @@ pub mod git;
 pub mod herdr;
 pub mod layout;
 pub mod machines;
+pub mod mouse;
 pub mod notify;
 pub mod quota;
 pub mod sshconfig;
@@ -101,6 +102,7 @@ pub fn run() {
             init_logging(app.path().app_log_dir()?)?;
             tracing::info!("herdly starting");
             notify::init(app.handle());
+            mouse::init(app.handle());
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             app.manage(Arc::new(layout::LayoutStore::new(
