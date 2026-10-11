@@ -36,6 +36,7 @@ import {
 import { forgetSessions, resolve, setBookmarked, useLayout } from "./groups";
 import type { RSession } from "./groups";
 import { GroupTree } from "./GroupTree";
+import { AgentsSection } from "./AgentsSection";
 
 const hl = (status: string) => (status === "blocked" ? " blocked" : "");
 
@@ -207,7 +208,7 @@ function AddMachine() {
   );
 }
 
-function SectionHeader({ id, label, icon }: { id: string; label: string; icon?: ReactNode }) {
+export function SectionHeader({ id, label, icon, count }: { id: string; label: string; icon?: ReactNode; count?: number }) {
   const open = useApp((s) => s.expanded[id] ?? true);
   const toggle = useApp((s) => s.toggle);
   return (
@@ -215,6 +216,7 @@ function SectionHeader({ id, label, icon }: { id: string; label: string; icon?: 
       <Chevron open={open} />
       {icon}
       {label}
+      {count !== undefined && <span className="section-count">{count}</span>}
     </button>
   );
 }
@@ -278,6 +280,7 @@ export const Sidebar = memo(function Sidebar() {
         <DashboardEntry />
         {(bookmarks.length > 0 || (draggingSession && emptyBookmarksShown)) && <BookmarksSection bookmarks={bookmarks} />}
         <GroupTree />
+        <AgentsSection />
         <section aria-label="Machines" className="machines-section">
           <div className="section-head">
             <SectionHeader id="machines" label="Machines" />

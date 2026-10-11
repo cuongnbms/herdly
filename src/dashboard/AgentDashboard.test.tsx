@@ -30,7 +30,7 @@ describe("AgentDashboard", () => {
     render(<AgentDashboard />);
     fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "zzz-no-match" } });
     expect(screen.getByRole("region", { name: "Quota" })).toBeTruthy();
-    expect(within(column(/needs you/i)).getByText("None")).toBeTruthy();
+    expect(within(column(/blocked/i)).getByText("None")).toBeTruthy();
   });
 
   it("keeps the Quota column when filters hide every agent", () => {
@@ -41,13 +41,13 @@ describe("AgentDashboard", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /^pi/ }));
     expect(screen.getByText("0 of 4 shown")).toBeTruthy();
     expect(screen.getByRole("region", { name: "Quota" })).toBeTruthy();
-    expect(within(column(/needs you/i)).getByText("None")).toBeTruthy();
+    expect(within(column(/blocked/i)).getByText("None")).toBeTruthy();
   });
 
-  it("sorts agents into Needs you, Working, Done and Idle with counts", () => {
+  it("sorts agents into Blocked, Working, Done and Idle with counts", () => {
     render(<AgentDashboard />);
     expect(screen.getByText("4 total")).toBeTruthy();
-    expect(within(column(/needs you/i)).getByText("Fix login")).toBeTruthy();
+    expect(within(column(/blocked/i)).getByText("Fix login")).toBeTruthy();
     expect(within(column(/working/i)).getByText("Rewrite parser")).toBeTruthy();
     expect(within(column(/done/i)).getByText("Docs")).toBeTruthy();
     expect(within(column(/idle/i)).getByText("Deploy")).toBeTruthy();
@@ -135,7 +135,7 @@ describe("DashboardEntry", () => {
   it("shows per-bucket counts, hiding empty ones, and toggles the dashboard", () => {
     render(<DashboardEntry />);
     const btn = screen.getByRole("button", { name: /agent dashboard/i });
-    expect(within(btn).getByLabelText("1 need you")).toBeTruthy();
+    expect(within(btn).getByLabelText("1 blocked")).toBeTruthy();
     expect(within(btn).getByLabelText("1 working")).toBeTruthy();
     expect(within(btn).getByLabelText("1 done")).toBeTruthy();
     act(() => useApp.setState({ doneSeen: { "local/default/c": true } }));
@@ -148,11 +148,11 @@ describe("DashboardEntry", () => {
   it("highlights the row for a blocked agent first, then for an unseen done one", () => {
     render(<DashboardEntry />);
     const btn = screen.getByRole("button", { name: /agent dashboard/i });
-    expect(btn.classList.contains("needs-you")).toBe(true);
+    expect(btn.classList.contains("has-blocked")).toBe(true);
     expect(btn.classList.contains("has-done")).toBe(false);
     const doneOnly = machine("local", "local", [pane("a", "Fix login", "idle"), pane("c", "Docs", "done")]);
     act(() => useApp.setState({ machines: { local: doneOnly, box } }));
-    expect(btn.classList.contains("needs-you")).toBe(false);
+    expect(btn.classList.contains("has-blocked")).toBe(false);
     expect(btn.classList.contains("has-done")).toBe(true);
     act(() => useApp.setState({ doneSeen: { "local/default/c": true } }));
     expect(btn.classList.contains("has-done")).toBe(false);

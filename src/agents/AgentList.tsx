@@ -45,7 +45,7 @@ function tabRuns(entries: PaneEntry[]): PaneEntry[][] {
 }
 
 const BADGE:Record<AgentStatus, string> = {
-  blocked: "INPUT",
+  blocked: "BLOCKED",
   working: "WORKING",
   done: "DONE",
   idle: "IDLE",

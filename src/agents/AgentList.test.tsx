@@ -55,7 +55,7 @@ describe("AgentList", () => {
     expect(within(items[0]).getByRole("img", { name: "claude" })).toBeTruthy();
     expect(within(items[0]).getByText("DONE")).toBeTruthy();
     expect(within(items[1]).getByRole("img", { name: "codex" })).toBeTruthy();
-    expect(within(items[1]).getByText("INPUT")).toBeTruthy();
+    expect(within(items[1]).getByText("BLOCKED")).toBeTruthy();
     expect(within(items[2]).getByRole("img", { name: "no agent" })).toBeTruthy();
     expect(within(items[3]).getByText("IDLE")).toBeTruthy();
   });

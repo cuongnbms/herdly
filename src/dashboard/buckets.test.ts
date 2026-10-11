@@ -20,8 +20,8 @@ const machine = (id: string, panes: PaneView[], over: Partial<MachineView> = {})
 });
 
 describe("bucketOf", () => {
-  it("puts blocked panes in Needs You and working in Working", () => {
-    expect(bucketOf("blocked", false)).toBe("attention");
+  it("puts blocked panes in Blocked and working in Working", () => {
+    expect(bucketOf("blocked", false)).toBe("blocked");
     expect(bucketOf("working", false)).toBe("working");
   });
   it("keeps done in Done until seen, then Idle", () => {
@@ -42,7 +42,7 @@ describe("dashboardCards", () => {
     };
     const cards = dashboardCards(machines, ["local", "box"], { "local/default/c": true });
     expect(cards.map((c) => [c.key, c.bucket])).toEqual([
-      ["local/default/a", "attention"],
+      ["local/default/a", "blocked"],
       ["local/default/b", "done"],
       ["local/default/c", "idle"],
     ]);
@@ -69,7 +69,7 @@ describe("dashboardCards", () => {
   });
   it("counts cards per bucket", () => {
     const cards = dashboardCards({ local: machine("local", [pane("a", "blocked"), pane("b", "working"), pane("c", "working")]) }, ["local"], {});
-    expect(bucketCounts(cards)).toEqual({ attention: 1, working: 2, done: 0, idle: 0 });
+    expect(bucketCounts(cards)).toEqual({ blocked: 1, working: 2, done: 0, idle: 0 });
   });
 });
 

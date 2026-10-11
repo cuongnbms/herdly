@@ -16,7 +16,7 @@ function useCards(): DashCard[] {
 }
 
 const ENTRY_BADGES: { id: Exclude<Bucket, "idle">; label: string }[] = [
-  { id: "attention", label: "need you" },
+  { id: "blocked", label: "blocked" },
   { id: "working", label: "working" },
   { id: "done", label: "done" },
 ];
@@ -27,7 +27,7 @@ export function DashboardEntry() {
   const setOpen = useApp((s) => s.setDashboardOpen);
   const counts = bucketCounts(useCards());
   // Blocked outranks Done: the row takes one highlight, the more urgent one.
-  const alert = counts.attention > 0 ? " needs-you" : counts.done > 0 ? " has-done" : "";
+  const alert = counts.blocked > 0 ? " has-blocked" : counts.done > 0 ? " has-done" : "";
   return (
     <button
       className={"row dash-entry" + (open ? " active" : "") + alert}
