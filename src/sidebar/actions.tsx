@@ -10,7 +10,7 @@ import type { SessionKey } from "./groups";
 import { NewWorkspaceDialog } from "./NewWorkspaceDialog";
 import { NewSessionDialog } from "./NewSessionDialog";
 import { NewAgentDialog } from "../agents/NewAgentDialog";
-import { setFolder } from "../workspaces/folder";
+import { FOLDER_HINT, setFolder } from "../workspaces/folder";
 import type { WorkspaceRef } from "../workspaces/folder";
 import { AddMachineDialog } from "../machines/AddMachineDialog";
 const ConnectDialog = lazy(() => import("../machines/ConnectDialog").then((m) => ({ default: m.ConnectDialog })));
@@ -132,7 +132,8 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
     );
   } else if (dialog?.kind === "folder") {
     modal = (
-      <TextDialog title="Workspace folder" initial={dialog.initial} submitLabel="Save" folderOn={dialog.ref.machine_id} onClose={closeDialog}
+      <TextDialog title="Workspace folder" initial={dialog.initial} submitLabel="Save" folderOn={dialog.ref.machine_id} hint={FOLDER_HINT}
+        onClose={closeDialog}
         onSubmit={(v) => v.trim() && setFolder(dialog.ref, v)} />
     );
   } else if (dialog?.kind === "move") {

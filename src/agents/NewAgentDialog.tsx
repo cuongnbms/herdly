@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { WorkspaceView } from "../lib/types";
 import { PathInput } from "../ui/PathInput";
-import { getFolder, setFolder, suggestFolder } from "../workspaces/folder";
+import { FOLDER_HINT, getFolder, setFolder, suggestFolder } from "../workspaces/folder";
 import { AgentIcon } from "./AgentIcon";
 import { AGENTS, openAgentTab, type Agent } from "./openAgentTab";
 
@@ -58,7 +58,11 @@ export function NewAgentDialog({
           <kbd aria-hidden="true">esc</kbd>
         </div>
         {stored === null && (
-          <PathInput machineId={machineId} label="Folder" autoFocus value={folder} placeholder="/path/to/project" onChange={setFolderValue} />
+          <>
+            <PathInput machineId={machineId} label="Folder" autoFocus value={folder} placeholder="/path/to/project" onChange={setFolderValue}
+              aria-describedby="new-agent-folder-hint" />
+            <p id="new-agent-folder-hint" className="note">Saved as the workspace folder, so this is asked only once. {FOLDER_HINT}</p>
+          </>
         )}
         <div className="agent-pick" role="group" aria-label="Agent">
           {AGENTS.map((a, i) => (

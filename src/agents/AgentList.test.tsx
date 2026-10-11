@@ -217,6 +217,9 @@ describe("AgentList", () => {
     fireEvent.contextMenu(screen.getByText("web", { selector: ".ws-label" }));
     expect(screen.getAllByRole("menuitem").map((b) => b.textContent)).toEqual(["New claude", "New pi", "New shell", "Browse files", "Change folder…", "Rename workspace…", "Close workspace"]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Change folder…" }));
+    // The field says what the folder is for.
+    const hintId = screen.getByRole("combobox").getAttribute("aria-describedby")!;
+    expect(document.getElementById(hintId)?.textContent).toMatch(/New agents and ⌘T tabs/);
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "/srv/web-app" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(within(screen.getByRole("group", { name: "web" })).getByText("web-app", { selector: ".ws-folder" })).toBeTruthy();

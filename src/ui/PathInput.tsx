@@ -12,6 +12,7 @@ type Props = {
   placeholder?: string;
   autoFocus?: boolean;
   "aria-label"?: string;
+  "aria-describedby"?: string;
   inputRef?: React.Ref<HTMLInputElement>;
   /** Called for keys the dropdown does not take. */
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;

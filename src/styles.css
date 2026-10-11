@@ -662,6 +662,7 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 }
 .dialog h3 { margin: 0; font-size: 15px; font-weight: 600; }
 .dialog p { margin: 0; color: var(--fg-2); line-height: 1.5; }
+.dialog .note { margin: -6px 0 0; color: var(--fg-3); }
 .dialog label { display: flex; flex-direction: column; gap: 6px; color: var(--fg-2); font-size: 12px; font-weight: 500; }
 .dialog input, .dialog select {
   height: 32px; padding: 0 10px; box-sizing: border-box;

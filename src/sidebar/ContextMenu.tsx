@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ComponentType, SVGProps } from "react";
 import { PathInput } from "../ui/PathInput";
 
@@ -90,6 +90,7 @@ export function TextDialog({
   initial,
   submitLabel,
   folderOn,
+  hint,
   onSubmit,
   onClose,
 }: {
@@ -98,11 +99,15 @@ export function TextDialog({
   submitLabel: string;
   /** Machine whose folders the field suggests, for a folder path. */
   folderOn?: string;
+  /** What the value is for, shown under the field. */
+  hint?: string;
   onSubmit: (value: string) => void;
   onClose: () => void;
 }) {
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
+  const hintId = useId();
+  const describedBy = hint ? hintId : undefined;
   useEffect(() => ref.current?.select(), []);
   const submit = () => {
     onClose();
@@ -117,6 +122,7 @@ export function TextDialog({
           autoFocus
           value={value}
           aria-label={title}
+          aria-describedby={describedBy}
           onChange={setValue}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
@@ -129,10 +135,12 @@ export function TextDialog({
           autoFocus
           value={value}
           aria-label={title}
+          aria-describedby={describedBy}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
       )}
+      {hint && <p id={hintId} className="note">{hint}</p>}
       <div className="actions">
         <button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn btn-primary" onClick={submit}>{submitLabel}</button>

@@ -4,7 +4,7 @@ import { paneKey } from "../lib/types";
 import { newAgentOnTerminal } from "../settings/lens";
 import { useApp } from "../store/app";
 import { PathInput } from "../ui/PathInput";
-import { setFolder } from "../workspaces/folder";
+import { FOLDER_HINT, setFolder } from "../workspaces/folder";
 import { AgentChoice } from "../agents/AgentChoice";
 import { launchAgent } from "../agents/launchAgent";
 
@@ -68,7 +68,9 @@ export function NewWorkspaceDialog({
         }}
       >
         <h3>New workspace in {session}</h3>
-        <PathInput machineId={machineId} label="Directory" autoFocus value={cwd} placeholder="/path/to/project" onChange={setCwd} />
+        <PathInput machineId={machineId} label="Directory" autoFocus value={cwd} placeholder="/path/to/project" onChange={setCwd}
+          aria-describedby="new-ws-folder-hint" />
+        <p id="new-ws-folder-hint" className="note">The first tab opens here, and it is saved as the workspace folder. {FOLDER_HINT}</p>
         <label>
           Label (optional)
           <input spellCheck={false} autoCorrect="off" autoCapitalize="off" value={label} onChange={(e) => setLabel(e.target.value)} />

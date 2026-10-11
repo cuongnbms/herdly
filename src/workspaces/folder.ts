@@ -9,6 +9,9 @@ export interface WorkspaceRef {
 
 const PREFIX = "herdr-app:ws-folder:";
 
+/** What a Workspace folder is for, shown wherever one is set. */
+export const FOLDER_HINT = "New agents and ⌘T tabs in this workspace start here, and the Files panel opens it. Only this app remembers it; herdr does not.";
+
 const listeners = new Set<() => void>();
 function notify() {
   listeners.forEach((l) => l());
