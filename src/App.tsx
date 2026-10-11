@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo, type CSSProperties } from "react";
 import "./fonts/fonts.css";
 import "./styles.css";
 import { appQuit, machinesList, onMachine, onNotifyActivate, onQuitRequested, onPaneStatus, sessionStart } from "./lib/ipc";
@@ -10,6 +10,8 @@ import { applyTheme, useTheme } from "./settings/theme";
 import { Header } from "./main/Header";
 import { OpenStrip } from "./main/OpenStrip";
 import { Sidebar } from "./sidebar/Sidebar";
+import { ResizeHandle } from "./sidebar/ResizeHandle";
+import { useSidebarWidths } from "./settings/sidebarWidths";
 import { guardFileDrops } from "./sidebar/dnd";
 import { AgentList } from "./agents/AgentList";
 import { AgentDashboard } from "./dashboard/AgentDashboard";
@@ -223,18 +225,23 @@ export default function App() {
   const key = ref ? paneKey(ref) : "";
   useTranscriptProbe(ref, pane?.status);
 
+  const sidebarW = useSidebarWidths((s) => s.sidebar);
+  const agentsW = useSidebarWidths((s) => s.agents);
+
   return (
-    <div className="app">
+    <div className="app" style={{ "--sidebar-w": `${sidebarW}px`, "--agents-w": `${agentsW}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Machines">
         <div className="titlebar" data-tauri-drag-region />
         <div className="sidebar-scroll">
           <Sidebar />
         </div>
         <Settings />
+        <ResizeHandle column="sidebar" label="Resize Machines" />
       </nav>
       <aside className="agents" aria-label="Agents">
         <AgentList />
         <FilesPanel />
+        <ResizeHandle column="agents" label="Resize Agents" />
       </aside>
       <main className="main">
         {item?.kind === "file" ? (
