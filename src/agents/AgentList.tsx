@@ -247,6 +247,7 @@ function ViewSwitch() {
 export const AgentList = memo(function AgentList() {
   const viewed = useApp((s) => s.viewed);
   const listHidden = useFilesPanel((s) => s.view === "files");
+  const machineLabel = useApp((s) => (s.viewed ? s.machines[s.viewed.machine_id]?.label : undefined));
   const session = useApp((s) =>
     s.viewed ? s.machines[s.viewed.machine_id]?.sessions.find((x) => x.name === s.viewed!.session) : undefined,
   );
@@ -264,8 +265,6 @@ export const AgentList = memo(function AgentList() {
   return (
     <ActionsProvider>
       <div className="agents-head" data-tauri-drag-region>
-        <span className="agents-title">{session.name}</span>
-        <span className="count">{total}</span>
         <ViewSwitch />
       </div>
       {/* Only the list scrolls, so the head needs no background of its own: a second layer of the
@@ -273,7 +272,8 @@ export const AgentList = memo(function AgentList() {
       {/* Hidden rather than unmounted in the files view, so the list keeps its scroll. */}
       {!listHidden && (
         <header className="panes-head">
-          <span className="files-title">{`PANES · ${session.name}`}</span>
+          <span className="files-title">{`PANES · ${machineLabel}:${session.name}`}</span>
+          <span className="count">{total}</span>
         </header>
       )}
       <div className="agents-list" hidden={listHidden}>

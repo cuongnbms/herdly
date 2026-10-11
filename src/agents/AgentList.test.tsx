@@ -195,7 +195,7 @@ describe("AgentList", () => {
   it("titles the pane list with the session, like the Files panel, and drops it in the files view", () => {
     useFilesPanel.setState({ view: "split" });
     const { container, rerender } = render(<AgentList />);
-    expect(container.querySelector(".panes-head")!.textContent).toBe("PANES · default");
+    expect(container.querySelector(".panes-head .files-title")!.textContent).toBe("PANES · local:default");
     useFilesPanel.setState({ view: "files" });
     rerender(<AgentList />);
     expect(container.querySelector(".panes-head")).toBeNull();
