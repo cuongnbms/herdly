@@ -54,6 +54,11 @@ cargo test -- --ignored --test-threads=1   # integration tests against a real lo
 pnpm tauri build    # produces src-tauri/target/release/bundle/macos/Herdr.app
 ```
 
+To use a local build day to day, `mise run sign:setup` once, then `mise run install:app`. The
+install signs Herdr.app with that local identity: an ad-hoc signed build is a new app to macOS
+on every install, so it would ask again for each permission (network volumes, Desktop, ...).
+The first signing asks once for keychain access to the key: choose "Always Allow".
+
 ### Releasing
 
 Bump `version` in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, commit, then push a matching tag:

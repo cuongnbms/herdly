@@ -20,11 +20,17 @@ description = "Build the release bundle and open it"
 depends = ["build"]
 run = "open $APP"
 
-# Replaces any previous copy so files removed from the bundle don't linger.
+# Replaces any previous copy so files removed from the bundle don't linger, then signs it with
+# the `sign:setup` identity so macOS keeps its permission grants across installs.
 [tasks."install:app"]
 description = "Build the release bundle and install it into /Applications"
 depends = ["build"]
-run = ["rm -rf /Applications/Herdr.app", "ditto $APP /Applications/Herdr.app"]
+run = ["rm -rf /Applications/Herdr.app", "ditto $APP /Applications/Herdr.app", "scripts/sign-app.sh /Applications/Herdr.app"]
+
+# Ad-hoc signed builds get a new identity each time, so macOS asks again for every permission.
+[tasks."sign:setup"]
+description = "One-time: create the local signing identity install:app signs Herdr.app with"
+run = "scripts/sign-setup.sh"
 
 [tasks.typecheck]
 description = "Type-check the frontend"
@@ -44,9 +50,14 @@ description = "Backend tests (cargo)"
 dir = "src-tauri"
 run = "cargo test"
 
+# A throwaway keychain and a tiny bundle; never the login keychain or /Applications.
+[tasks."test:sign"]
+description = "Tests for the local signing scripts (macOS)"
+run = "scripts/sign.test.sh"
+
 [tasks.test]
-description = "Frontend and backend tests"
-depends = ["test:frontend", "test:backend"]
+description = "Frontend, backend and signing script tests"
+depends = ["test:frontend", "test:backend", "test:sign"]
 
 # Starts isolated `herdrapp-test-*` sessions on the local herdr and always
 # stops and deletes them. The SSH test only runs when HERDR_APP_SSH_TEST is set.
