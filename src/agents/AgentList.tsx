@@ -261,7 +261,6 @@ export const AgentList = memo(function AgentList() {
       </>
     );
   const groups = workspaceGroups(session);
-  const total = groups.reduce((n, g) => n + g.entries.length, 0);
   return (
     <ActionsProvider>
       <div className="agents-head" data-tauri-drag-region>
@@ -273,7 +272,6 @@ export const AgentList = memo(function AgentList() {
       {!listHidden && (
         <header className="panes-head">
           <span className="files-title">{`PANES · ${machineLabel}:${session.name}`}</span>
-          <span className="count">{total}</span>
         </header>
       )}
       <div className="agents-list" hidden={listHidden}>
