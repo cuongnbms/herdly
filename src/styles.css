@@ -1376,8 +1376,9 @@ button.composer-model:disabled { cursor: default; }
 .files-panel.full { flex: 1 1 auto; border-top: 0; }
 .files-panel.full .files-panel-head { cursor: default; }
 .files-panel[hidden] { display: none; }
-.files-panel-head { flex: none; display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 16px; box-sizing: border-box; cursor: pointer; user-select: none; }
-.files-panel-head .files-title { font-weight: 600; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 10.5px; letter-spacing: 0.06em; color: var(--fg-3); pointer-events: auto; }
+.panes-head, .files-panel-head { flex: none; display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 16px; box-sizing: border-box; cursor: pointer; user-select: none; }
+.panes-head .files-title, .files-panel-head .files-title { font-weight: 600; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 10.5px; letter-spacing: 0.06em; color: var(--fg-3); pointer-events: auto; }
+.panes-head { cursor: default; }
 .files-panel-head .icon-btn { width: 22px; height: 22px; }
 .files-panel-head .icon-btn .icon { width: 14px; height: 14px; }
 .files-panel-head .icon-btn[aria-pressed="true"] { color: var(--accent); }

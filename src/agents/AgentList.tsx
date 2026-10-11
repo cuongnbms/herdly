@@ -271,6 +271,11 @@ export const AgentList = memo(function AgentList() {
       {/* Only the list scrolls, so the head needs no background of its own: a second layer of the
           translucent chrome would darken it against the column. */}
       {/* Hidden rather than unmounted in the files view, so the list keeps its scroll. */}
+      {!listHidden && (
+        <header className="panes-head">
+          <span className="files-title">{`PANES · ${session.name}`}</span>
+        </header>
+      )}
       <div className="agents-list" hidden={listHidden}>
         {groups.length === 0 ? (
           <p className="agents-empty">{session.running ? "No panes" : "Session stopped"}</p>

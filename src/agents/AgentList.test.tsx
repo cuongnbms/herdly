@@ -192,6 +192,16 @@ describe("AgentList", () => {
     expect(groups[groups.length - 1].compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("titles the pane list with the session, like the Files panel, and drops it in the files view", () => {
+    useFilesPanel.setState({ view: "split" });
+    const { container, rerender } = render(<AgentList />);
+    expect(container.querySelector(".panes-head")!.textContent).toBe("PANES · default");
+    useFilesPanel.setState({ view: "files" });
+    rerender(<AgentList />);
+    expect(container.querySelector(".panes-head")).toBeNull();
+    useFilesPanel.setState({ view: "split" });
+  });
+
   it("switches the column between agents, files and both from the header", () => {
     useFilesPanel.setState({ view: "split" });
     const { container } = render(<AgentList />);
