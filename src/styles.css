@@ -782,7 +782,7 @@ kbd {
 /* Full row width, so the bubble's max-width stays a share of the row. */
 .chat-user-line { align-self: stretch; display: flex; justify-content: flex-end; align-items: flex-end; gap: 6px; }
 .chat-bubble {
-  max-width: 78%; white-space: pre-wrap; line-height: 1.5; font-size: var(--chat-font);
+  max-width: 78%; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; font-size: var(--chat-font);
   background: var(--accent-soft); border: 1px solid var(--accent-line);
   border-radius: 14px 14px 4px 14px; padding: 9px 14px;
 }
