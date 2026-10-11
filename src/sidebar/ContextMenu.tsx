@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ComponentType, SVGProps } from "react";
+import { InfoTip } from "../ui/InfoTip";
 import { PathInput } from "../ui/PathInput";
 
 export interface MenuItem {
@@ -36,7 +37,13 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
   );
 }
 
-export function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+export function Modal({ title, titleExtra, children, onClose }: {
+  title: string;
+  /** Shown after the title, outside the dialog's name. */
+  titleExtra?: React.ReactNode;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", key);
@@ -45,7 +52,7 @@ export function Modal({ title, children, onClose }: { title: string; children: R
   return (
     <div className="overlay" onMouseDown={onClose}>
       <div className="dialog" role="dialog" aria-label={title} onMouseDown={(e) => e.stopPropagation()}>
-        <h3>{title}</h3>
+        <h3>{title}{titleExtra}</h3>
         {children}
       </div>
     </div>
@@ -99,7 +106,7 @@ export function TextDialog({
   submitLabel: string;
   /** Machine whose folders the field suggests, for a folder path. */
   folderOn?: string;
-  /** What the value is for, shown under the field. */
+  /** What the value is for, behind an ⓘ next to the title. */
   hint?: string;
   onSubmit: (value: string) => void;
   onClose: () => void;
@@ -114,7 +121,7 @@ export function TextDialog({
     onSubmit(value);
   };
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} titleExtra={hint && <InfoTip id={hintId} text={hint} />} onClose={onClose}>
       {folderOn ? (
         <PathInput
           machineId={folderOn}
@@ -140,7 +147,6 @@ export function TextDialog({
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
       )}
-      {hint && <p id={hintId} className="note">{hint}</p>}
       <div className="actions">
         <button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn btn-primary" onClick={submit}>{submitLabel}</button>

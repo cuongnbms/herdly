@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { completeDirs } from "../lib/ipc";
 import { dirSuggestions, splitDirPrefix } from "../lib/pathInput";
+import { InfoTip } from "./InfoTip";
 
 type Props = {
   /** Machine whose folders are listed. */
   machineId: string;
   /** Visible label above the field; the dropdown stays outside it so its text is not part of the name. */
   label?: string;
+  /** What the folder is for, behind an ⓘ next to the label. */
+  hint?: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -24,7 +27,9 @@ const basename = (p: string) => p.slice(p.lastIndexOf("/") + 1);
  * Folder field with a dropdown of the folders on the Machine: ↑/↓ highlight, Tab or Enter completes the highlighted
  * folder (and lists its children), Esc closes the dropdown. With nothing highlighted, Tab moves on and Enter submits.
  */
-export function PathInput({ machineId, label, value, onChange, placeholder, autoFocus, inputRef, onKeyDown, ...rest }: Props) {
+export function PathInput({ machineId, label, hint, value, onChange, placeholder, autoFocus, inputRef, onKeyDown, ...rest }: Props) {
+  const hintId = useId();
+  const inputId = useId();
   const [items, setItems] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -99,6 +104,8 @@ export function PathInput({ machineId, label, value, onChange, placeholder, auto
 
   const field = (
     <input
+      id={inputId}
+      aria-describedby={hint ? hintId : undefined}
       {...rest}
       ref={inputRef}
       value={value}
@@ -123,7 +130,16 @@ export function PathInput({ machineId, label, value, onChange, placeholder, auto
 
   return (
     <div className="path-input">
-      {label ? (
+      {label && hint ? (
+        // The ⓘ sits beside the label, not in it, so its text stays out of the field's name.
+        <div className="field">
+          <span className="label-row">
+            <label htmlFor={inputId}>{label}</label>
+            <InfoTip id={hintId} text={hint} />
+          </span>
+          {field}
+        </div>
+      ) : label ? (
         <label>
           {label}
           {field}

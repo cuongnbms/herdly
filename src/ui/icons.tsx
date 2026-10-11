@@ -56,6 +56,12 @@ export const ChatIcon = (p: SVGProps<SVGSVGElement>) => (
 );
 export const ArrowUpIcon = (p: SVGProps<SVGSVGElement>) => <Icon {...p}><path d="M12 19V5M6 11l6-6 6 6" /></Icon>;
 export const ArrowDownIcon = (p: SVGProps<SVGSVGElement>) => <Icon {...p}><path d="M12 5v14M6 13l6 6 6-6" /></Icon>;
+export const InfoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 16v-4.5M12 8h.01" />
+  </Icon>
+);
 export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <circle cx="12" cy="12" r="9" />

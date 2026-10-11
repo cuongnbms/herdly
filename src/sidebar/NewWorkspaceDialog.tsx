@@ -69,8 +69,7 @@ export function NewWorkspaceDialog({
       >
         <h3>New workspace in {session}</h3>
         <PathInput machineId={machineId} label="Directory" autoFocus value={cwd} placeholder="/path/to/project" onChange={setCwd}
-          aria-describedby="new-ws-folder-hint" />
-        <p id="new-ws-folder-hint" className="note">The first tab opens here, and it is saved as the workspace folder. {FOLDER_HINT}</p>
+          hint={`The first tab opens here, and it is saved as the workspace folder. ${FOLDER_HINT}`} />
         <label>
           Label (optional)
           <input spellCheck={false} autoCorrect="off" autoCapitalize="off" value={label} onChange={(e) => setLabel(e.target.value)} />

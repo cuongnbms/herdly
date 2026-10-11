@@ -662,8 +662,17 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 }
 .dialog h3 { margin: 0; font-size: 15px; font-weight: 600; }
 .dialog p { margin: 0; color: var(--fg-2); line-height: 1.5; }
-.dialog .note { margin: -6px 0 0; color: var(--fg-3); }
-.dialog label { display: flex; flex-direction: column; gap: 6px; color: var(--fg-2); font-size: 12px; font-weight: 500; }
+.dialog .label-row, .dialog h3 { display: flex; align-items: center; gap: 6px; }
+.info-tip { position: relative; display: inline-flex; color: var(--fg-3); cursor: help; }
+.info-tip:hover { color: var(--fg-2); }
+.info-tip .icon { width: 14px; height: 14px; }
+.info-tip-text {
+  display: none; position: absolute; top: calc(100% + 6px); left: -10px; z-index: 3; width: 260px;
+  padding: 8px 10px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-0); box-shadow: var(--shadow-pop);
+  color: var(--fg-2); font-size: 11.5px; font-weight: 400; line-height: 1.5; white-space: normal;
+}
+.info-tip:hover .info-tip-text { display: block; }
+.dialog label, .dialog .field { display: flex; flex-direction: column; gap: 6px; color: var(--fg-2); font-size: 12px; font-weight: 500; }
 .dialog input, .dialog select {
   height: 32px; padding: 0 10px; box-sizing: border-box;
   border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-0); color: var(--fg); font-size: 13px;
