@@ -370,7 +370,6 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .ws-new:hover { color: var(--fg); background: var(--hover); border-color: var(--line-2); border-style: solid; }
 .ws-new:focus-visible { outline: none; box-shadow: var(--ring); }
 .ws-new svg { flex: none; width: 14px; height: 14px; }
-.agents-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .count {
   flex: none; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; display: grid; place-items: center;
   border-radius: 999px; background: var(--active); color: var(--fg-2); font-size: 11px; font-weight: 600; pointer-events: none;
