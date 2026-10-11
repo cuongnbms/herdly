@@ -1594,7 +1594,8 @@ button.composer-model:disabled { cursor: default; }
 .files-editor .cm-panel.cm-search [name="close"] { color: var(--fg-3); background: none; border: 0; }
 
 /* ---------- Sidebar Agents list (above Machines) ---------- */
-.section-count { margin-left: 2px; color: var(--fg-3); font-weight: 500; letter-spacing: 0; }
+/* Right-aligned, centred over the column of the Machines header's 22px add button. */
+.section-count { margin-left: auto; margin-right: -8px; min-width: 22px; text-align: center; color: var(--fg-3); font-weight: 500; letter-spacing: 0; }
 .agents-section { margin-bottom: 6px; }
 .agents-row { height: auto; min-height: 36px; padding: 4px 8px; }
 .agents-row .agent-tile { flex: 0 0 20px; width: 20px; height: 20px; border-radius: 5px; }
