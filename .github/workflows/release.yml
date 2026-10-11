@@ -1,4 +1,4 @@
-# Builds a universal (Apple Silicon + Intel) Herdr.dmg and attaches it to a
+# Builds a universal (Apple Silicon + Intel) Herdly.dmg and attaches it to a
 # draft GitHub Release. Trigger by pushing a tag that matches the app version:
 #   git tag v0.1.0 && git push origin v0.1.0
 # The app is ad-hoc signed, not notarized: see "Install" in README.md.
@@ -61,7 +61,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: Herdr ${{ github.ref_name }}
+          releaseName: Herdly ${{ github.ref_name }}
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           args: --target universal-apple-darwin --bundles dmg

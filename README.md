@@ -1,4 +1,4 @@
-# Herdr
+# Herdly
 
 A macOS desktop client for the [herdr](https://herdr.dev) terminal multiplexer. It shows the local machine and any number of SSH machines in one sidebar (machines, sessions, workspaces, tabs, panes with agent status), and opens a pane as a real terminal or as a Chat lens for coding agents, and browses the selected workspace's files in a Files panel under the agent list, opening them as tabs next to the open agents. Built with Tauri v2, React 19 and zustand 5.
 
@@ -19,15 +19,15 @@ Press **Edit** (⌘⇧E) on a text file to change it. ⌘S saves, Esc or **Done*
 ## Install
 
 1. Install [herdr](https://herdr.dev) (see Requirements below).
-2. Download `Herdr_<version>_universal.dmg` from the [latest release](https://github.com/cuongnbms/herdr-app/releases/latest). It runs on both Apple Silicon and Intel Macs.
-3. Open the `.dmg` and drag Herdr into Applications.
+2. Download `Herdly_<version>_universal.dmg` from the [latest release](https://github.com/cuongnbms/herdly/releases/latest). It runs on both Apple Silicon and Intel Macs.
+3. Open the `.dmg` and drag Herdly into Applications.
 4. The app is not notarized by Apple, so macOS blocks the first launch. Clear the quarantine flag once:
 
    ```sh
-   xattr -dr com.apple.quarantine /Applications/Herdr.app
+   xattr -dr com.apple.quarantine /Applications/Herdly.app
    ```
 
-   Or try to open Herdr, then go to System Settings → Privacy & Security and click **Open Anyway**.
+   Or try to open Herdly, then go to System Settings → Privacy & Security and click **Open Anyway**.
 
 To update, download the new `.dmg`, replace the app in Applications and run the `xattr` command again.
 
@@ -51,11 +51,11 @@ cd src-tauri
 cargo test          # backend tests
 cargo clippy -- -D warnings
 cargo test -- --ignored --test-threads=1   # integration tests against a real local herdr
-pnpm tauri build    # produces src-tauri/target/release/bundle/macos/Herdr.app
+pnpm tauri build    # produces src-tauri/target/release/bundle/macos/Herdly.app
 ```
 
 To use a local build day to day, `mise run sign:setup` once, then `mise run install:app`. The
-install signs Herdr.app with that local identity: an ad-hoc signed build is a new app to macOS
+install signs Herdly.app with that local identity: an ad-hoc signed build is a new app to macOS
 on every install, so it would ask again for each permission (network volumes, Desktop, ...).
 The first signing asks once for keychain access to the key: choose "Always Allow".
 
@@ -69,7 +69,7 @@ git tag v0.1.0 && git push origin v0.1.0
 
 `.github/workflows/release.yml` builds a universal, ad-hoc signed `.dmg` and attaches it to a draft GitHub Release. Review the draft and publish it.
 
-The ignored integration tests start isolated sessions named `herdrapp-test-*` on the local herdr and always stop and delete them. The SSH test only runs when `HERDR_APP_SSH_TEST` is set.
+The ignored integration tests start isolated sessions named `herdly-test-*` on the local herdr and always stop and delete them. The SSH test only runs when `HERDLY_SSH_TEST` is set.
 
 ## Known limits
 

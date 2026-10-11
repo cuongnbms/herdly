@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 /** Shared with store.ts, theme.ts and notify.ts: one JSON object, each writer merges its own keys. */
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 export const DEFAULT_QUICK_REPLIES = ["continue", "yes", "no", "commit and push", "retry"];
 export const QUICK_REPLIES_MAX = 12;

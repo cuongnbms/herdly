@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { AGENTS, type Agent } from "../agents/openAgentTab";
 
 /** Shared with store.ts, theme.ts, lens.ts, quickReplies.ts and notify.ts: one JSON object, each writer merges its own keys. */
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 function readRaw(): Record<string, unknown> {
   try {

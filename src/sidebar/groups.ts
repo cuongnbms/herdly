@@ -273,7 +273,7 @@ export function groupPaths(layout: Layout): { id: string; path: string }[] {
 }
 
 /** Where the layout lived before it moved to a file; read once to migrate, removed once the file holds it. */
-export const LAYOUT_KEY = "herdr-app:sidebar-layout";
+export const LAYOUT_KEY = "herdly:sidebar-layout";
 
 function parseLayout(v: unknown): Layout | null {
   const p = v as Partial<Layout> | null;

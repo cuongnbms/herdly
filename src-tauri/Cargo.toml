@@ -1,13 +1,13 @@
 [package]
-name = "herdr-app"
+name = "herdly"
 version = "1.2.1"
-description = "Herdr desktop app"
+description = "Herdly desktop app"
 authors = ["Cuong Nguyen"]
 edition = "2021"
 
 [lib]
 # The `_lib` suffix is necessary to keep the lib name unique from the bin name.
-name = "herdr_app_lib"
+name = "herdly_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

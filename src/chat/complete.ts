@@ -58,7 +58,7 @@ export function splitParentQuery(query: string): { dir: string; prefix: string }
   return { dir: query.slice(0, slash + 1), prefix: query.slice(slash + 1) };
 }
 
-const usageKey = (agent: string) => `herdr-app:slash-usage:${agent}`;
+const usageKey = (agent: string) => `herdly:slash-usage:${agent}`;
 
 export function readUsage(agent: string): Record<string, number> {
   try {

@@ -1,9 +1,9 @@
 //! Needs a real herdr (`/opt/homebrew/bin/herdr`). Run with
 //! `cargo test --test attach_herdr -- --ignored --test-threads=1`.
-use herdr_app_lib::attach::{attach_argv, AttachEvent, AttachKey, AttachManager, Sink};
-use herdr_app_lib::herdr::rpc;
-use herdr_app_lib::transport::local::LocalTransport;
-use herdr_app_lib::transport::{parse_session_list, MachineInfo, Transport};
+use herdly_lib::attach::{attach_argv, AttachEvent, AttachKey, AttachManager, Sink};
+use herdly_lib::herdr::rpc;
+use herdly_lib::transport::local::LocalTransport;
+use herdly_lib::transport::{parse_session_list, MachineInfo, Transport};
 use serde_json::json;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const HERDR: &str = "/opt/homebrew/bin/herdr";
-const SESSION: &str = "herdrapp-test-attach";
+const SESSION: &str = "herdly-test-attach";
 
 /// Stops and deletes the test session, even when the test fails.
 struct SessionGuard;

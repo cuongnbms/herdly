@@ -118,7 +118,7 @@ describe("Composer", () => {
     const box = screen.getByRole("textbox") as HTMLTextAreaElement;
     expect(box.value).toBe("half a thought");
     fireEvent.keyDown(box, { key: "Enter" });
-    expect(localStorage.getItem("herdr-app:draft:devtuf/default/w1:p1")).toBeNull();
+    expect(localStorage.getItem("herdly:draft:devtuf/default/w1:p1")).toBeNull();
   });
 
   it("restores the draft when the send fails", async () => {
@@ -129,7 +129,7 @@ describe("Composer", () => {
     await act(async () => fireEvent.keyDown(box, { key: "Enter" }));
     expect(box.value).toBe("try again");
     // Written once the debounce passes.
-    await waitFor(() => expect(localStorage.getItem("herdr-app:draft:devtuf/default/w1:p1")).toBe("try again"));
+    await waitFor(() => expect(localStorage.getItem("herdly:draft:devtuf/default/w1:p1")).toBe("try again"));
   });
 
   it("reports a send before it goes out and settles it once it went through", async () => {
@@ -377,7 +377,7 @@ describe("Composer completion", () => {
     expect((box as HTMLTextAreaElement).value).toBe("/compact ");
     expect(herdrCall).not.toHaveBeenCalled();
     expect(screen.queryByRole("listbox")).toBeNull();
-    expect(JSON.parse(localStorage.getItem("herdr-app:slash-usage:claude")!)).toEqual({ compact: 1 });
+    expect(JSON.parse(localStorage.getItem("herdly:slash-usage:claude")!)).toEqual({ compact: 1 });
   });
 
   it("dismisses with Escape, after which Enter sends", async () => {
@@ -513,7 +513,7 @@ describe("Composer completion", () => {
       await screen.findByRole("option", { name: /\/clear/ });
       first.unmount();
       // Start blank rather than from the "/c" draft, so typing it again is a change.
-      localStorage.removeItem("herdr-app:draft:devtuf/default/w1:p1");
+      localStorage.removeItem("herdly:draft:devtuf/default/w1:p1");
 
       render(<Composer pane={pane} agent="claude" />);
       const box = screen.getByRole("textbox");

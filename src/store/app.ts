@@ -34,7 +34,7 @@ export interface SessionRef {
 
 export type Lens = "terminal" | "chat";
 
-const STORAGE_KEY = "herdr-app:ui";
+const STORAGE_KEY = "herdly:ui";
 
 interface Persisted {
   lens: Record<string, Lens>;

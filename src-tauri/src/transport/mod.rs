@@ -454,7 +454,7 @@ fn socket_at_column(line: &str, col: usize) -> Option<&str> {
 }
 
 fn runtime_dir_path() -> PathBuf {
-    PathBuf::from(format!("/tmp/herdr-app-{}", unsafe { libc::getuid() }))
+    PathBuf::from(format!("/tmp/herdly-{}", unsafe { libc::getuid() }))
 }
 
 fn not_private(dir: &std::path::Path, why: impl std::fmt::Display) -> AppError {
@@ -498,7 +498,7 @@ fn secure_dir(dir: &std::path::Path) -> AppResult<()> {
     verify_private_dir(dir)
 }
 
-/// Create (mode 0700) and verify `/tmp/herdr-app-<uid>`, holding ssh control sockets and
+/// Create (mode 0700) and verify `/tmp/herdly-<uid>`, holding ssh control sockets and
 /// forwarded herdr sockets. Every caller must go through this; there is no unverified path.
 pub fn secure_runtime_dir() -> AppResult<PathBuf> {
     let dir = runtime_dir_path();

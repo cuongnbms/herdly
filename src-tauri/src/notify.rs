@@ -2,7 +2,7 @@
 //!
 //! On macOS this talks to `NSUserNotificationCenter` directly instead of going through
 //! tauri-plugin-notification: the plugin's delegate never answers `shouldPresentNotification:`,
-//! so while Herdr is the frontmost app macOS files every notification silently in Notification
+//! so while Herdly is the frontmost app macOS files every notification silently in Notification
 //! Center with no banner, and it exposes no click callback to route back to a pane.
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -48,14 +48,14 @@ mod mac {
     define_class!(
         // SAFETY: NSObject has no subclassing requirements and `Delegate` does not implement Drop.
         #[unsafe(super(NSObject))]
-        #[name = "HerdrNotificationDelegate"]
+        #[name = "HerdlyNotificationDelegate"]
         #[ivars = Ivars]
         struct Delegate;
 
         unsafe impl NSObjectProtocol for Delegate {}
 
         unsafe impl NSUserNotificationCenterDelegate for Delegate {
-            /// Show the banner even while Herdr is the frontmost app.
+            /// Show the banner even while Herdly is the frontmost app.
             #[unsafe(method(userNotificationCenter:shouldPresentNotification:))]
             fn should_present(
                 &self,

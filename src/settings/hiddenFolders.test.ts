@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HIDDEN_FOLDERS, loadHiddenFolders, normalizeFolders, useHiddenFolders } from "./hiddenFolders";
 
-const KEY = "herdr-app:settings";
+const KEY = "herdly:settings";
 
 beforeEach(() => {
   localStorage.clear();

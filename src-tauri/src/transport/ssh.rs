@@ -291,7 +291,7 @@ mod tests {
         .map(|s| s.to_string())
         .collect();
         let w = ssh_wrap(
-            Path::new("/tmp/herdr-app-501/devtuf.ctl"),
+            Path::new("/tmp/herdly-501/devtuf.ctl"),
             "devtuf",
             &argv,
             false,
@@ -301,7 +301,7 @@ mod tests {
             [
                 "ssh",
                 "-S",
-                "/tmp/herdr-app-501/devtuf.ctl",
+                "/tmp/herdly-501/devtuf.ctl",
                 "-o",
                 "BatchMode=yes",
                 "devtuf"

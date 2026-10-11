@@ -13,7 +13,7 @@ Two forces shaped how Upload is started:
 
 - remora, the reference project, uploads by dropping Finder items on the tree through Tauri's
   native drag and drop, which hands the app absolute paths.
-- herdr-app sets `"dragDropEnabled": false` (commit 63b42d0) because native drag and drop
+- Herdly sets `"dragDropEnabled": false` (commit 63b42d0) because native drag and drop
   swallows the HTML5 drag events that the sidebar (Sessions, groups) and Agent tabs use.
 
 Source: [design spec](../superpowers/specs/2026-10-07-files-upload-download-design.md).

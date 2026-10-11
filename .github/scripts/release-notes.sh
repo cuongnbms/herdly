@@ -5,7 +5,7 @@
 set -euo pipefail
 
 tag=${1:?usage: release-notes.sh <tag>}
-repo=${GITHUB_REPOSITORY:-cuongnbms/herdr-app}
+repo=${GITHUB_REPOSITORY:-cuongnbms/herdly}
 prev=$(git describe --tags --abbrev=0 --match 'v*' "${tag}^" 2>/dev/null || true)
 range=${prev:+${prev}..}${tag}
 
@@ -31,11 +31,11 @@ fi
 cat <<'EOF'
 ## Install
 
-Download `Herdr_*_universal.dmg`, open it and drag Herdr into Applications.
+Download `Herdly_*_universal.dmg`, open it and drag Herdly into Applications.
 
 This build is not notarized by Apple. Before the first launch, run:
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/Herdr.app
+xattr -dr com.apple.quarantine /Applications/Herdly.app
 ```
 EOF

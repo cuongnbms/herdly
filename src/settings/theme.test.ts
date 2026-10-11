@@ -6,7 +6,7 @@ vi.mock("../lib/ipc", () => ({ setWindowTheme: (t: unknown) => setTheme(t) }));
 import { TERM_THEME, TERM_THEME_LIGHT } from "../terminal/theme";
 import { DEFAULT_THEME, applyTheme, loadThemePref, resolveTheme, useTheme, watchTermTheme } from "./theme";
 
-const KEY = "herdr-app:settings";
+const KEY = "herdly:settings";
 
 beforeEach(() => {
   localStorage.clear();

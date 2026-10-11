@@ -11,17 +11,17 @@ describe("outline width", () => {
   });
 
   it("defaults until one is saved, then keeps it beside the other settings", () => {
-    localStorage.setItem("herdr-app:settings", JSON.stringify({ theme: "dark" }));
+    localStorage.setItem("herdly:settings", JSON.stringify({ theme: "dark" }));
     expect(loadOutlineWidth()).toBe(OUTLINE_DEFAULT);
     saveOutlineWidth(333);
     expect(loadOutlineWidth()).toBe(333);
-    expect(JSON.parse(localStorage.getItem("herdr-app:settings")!)).toEqual({ theme: "dark", outlineWidth: 333 });
+    expect(JSON.parse(localStorage.getItem("herdly:settings")!)).toEqual({ theme: "dark", outlineWidth: 333 });
   });
 
   it("ignores a stored width that is not a number and clamps one out of range", () => {
-    localStorage.setItem("herdr-app:settings", JSON.stringify({ outlineWidth: "wide" }));
+    localStorage.setItem("herdly:settings", JSON.stringify({ outlineWidth: "wide" }));
     expect(loadOutlineWidth()).toBe(OUTLINE_DEFAULT);
-    localStorage.setItem("herdr-app:settings", JSON.stringify({ outlineWidth: 5000 }));
+    localStorage.setItem("herdly:settings", JSON.stringify({ outlineWidth: 5000 }));
     expect(loadOutlineWidth()).toBe(OUTLINE_MAX);
   });
 });

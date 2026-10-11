@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 /** Shared with store.ts, theme.ts, lens.ts, newTab.ts, quickReplies.ts, tabLayout.ts and notify.ts: one JSON object, each writer merges its own keys. */
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 /** The two left columns the user can drag wider or narrower: Machines and Agents. */
 export type Column = "sidebar" | "agents";

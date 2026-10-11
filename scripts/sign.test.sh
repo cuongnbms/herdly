@@ -6,22 +6,22 @@ set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
-export HERDR_SIGN_KEYCHAIN="$tmp/test.keychain-db"
-export HERDR_SIGN_KEYCHAIN_PASSWORD=test
-export HERDR_SIGN_IDENTITY="Herdr Sign Test $$"
+export HERDLY_SIGN_KEYCHAIN="$tmp/test.keychain-db"
+export HERDLY_SIGN_KEYCHAIN_PASSWORD=test
+export HERDLY_SIGN_IDENTITY="Herdly Sign Test $$"
 # codesign only finds an identity in a keychain on the user search list (`--keychain` alone
 # is not enough), so the throwaway keychain joins it for the run and the list is put back.
 search=$(security list-keychains -d user) # quoted paths, one per line
 cleanup() {
   eval "security list-keychains -d user -s $search"
-  security delete-keychain "$HERDR_SIGN_KEYCHAIN" >/dev/null 2>&1
+  security delete-keychain "$HERDLY_SIGN_KEYCHAIN" >/dev/null 2>&1
   rm -rf "$tmp"
 }
 trap cleanup EXIT
 trap 'exit 1' INT TERM
-security create-keychain -p test "$HERDR_SIGN_KEYCHAIN" || exit 1
-security unlock-keychain -p test "$HERDR_SIGN_KEYCHAIN" || exit 1
-eval "security list-keychains -d user -s $search \"\$HERDR_SIGN_KEYCHAIN\"" || exit 1
+security create-keychain -p test "$HERDLY_SIGN_KEYCHAIN" || exit 1
+security unlock-keychain -p test "$HERDLY_SIGN_KEYCHAIN" || exit 1
+eval "security list-keychains -d user -s $search \"\$HERDLY_SIGN_KEYCHAIN\"" || exit 1
 
 fails=0
 check() { # check <name> <command...>
@@ -37,7 +37,7 @@ bundle() { # bundle [binary]: a minimal app bundle with a real Mach-O to sign
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>dev.cuongnb.herdrapp.signtest</string>
+<key>CFBundleIdentifier</key><string>dev.cuongnb.herdly.signtest</string>
 <key>CFBundleExecutable</key><string>test</string>
 </dict></plist>
 EOF
@@ -57,10 +57,10 @@ check "no identity: stays ad-hoc" has "$(requirement)" cdhash
 # Setup creates the identity once; a second run leaves it alone.
 "$here/sign-setup.sh" >"$tmp/setup1.log" 2>&1; rc=$?
 check "setup: exit 0" [ "$rc" -eq 0 ]
-check "setup: identity in keychain" sh -c 'security find-identity -p codesigning "$HERDR_SIGN_KEYCHAIN" | grep -q "\"$HERDR_SIGN_IDENTITY\""'
+check "setup: identity in keychain" sh -c 'security find-identity -p codesigning "$HERDLY_SIGN_KEYCHAIN" | grep -q "\"$HERDLY_SIGN_IDENTITY\""'
 "$here/sign-setup.sh" >"$tmp/setup2.log" 2>&1; rc=$?
 check "setup again: exit 0" [ "$rc" -eq 0 ]
-check "setup again: still one identity" [ "$(security find-identity -p codesigning "$HERDR_SIGN_KEYCHAIN" | grep -c "\"$HERDR_SIGN_IDENTITY\"")" -eq 1 ]
+check "setup again: still one identity" [ "$(security find-identity -p codesigning "$HERDLY_SIGN_KEYCHAIN" | grep -c "\"$HERDLY_SIGN_IDENTITY\"")" -eq 1 ]
 
 # With the identity: the requirement names the certificate, not the build's hash, and two
 # builds with different content get the same requirement (what TCC grants are keyed on).

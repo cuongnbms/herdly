@@ -1,5 +1,5 @@
 /** Shared with settings/*.ts: one JSON object, each writer merges its own keys. */
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 export const OUTLINE_MIN = 200;
 export const OUTLINE_MAX = 420;

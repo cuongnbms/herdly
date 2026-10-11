@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 /** Shared with store.ts, theme.ts, lens.ts, newTab.ts, quickReplies.ts and notify.ts: one JSON object, each writer merges its own keys. */
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 /** How an Open strip tab shows its Workspace: before the title, or on a second line under it. */
 export type TabLayout = "one-line" | "two-lines";

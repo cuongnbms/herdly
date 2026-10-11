@@ -18,13 +18,13 @@ describe("workspace folder", () => {
     expect(getFolder(ref)).toBeNull();
     setFolder(ref, "  /Users/me/app  ");
     expect(getFolder(ref)).toBe("/Users/me/app");
-    expect(localStorage.getItem("herdr-app:ws-folder:local/default/w1")).toBe("/Users/me/app");
+    expect(localStorage.getItem("herdly:ws-folder:local/default/w1")).toBe("/Users/me/app");
     setFolder(ref, "   ");
     expect(getFolder(ref)).toBeNull();
   });
 
   it("encodes key parts", () => {
-    expect(folderKey({ machine_id: "a/b", session: "s", workspace_id: "w1" })).toBe("herdr-app:ws-folder:a%2Fb/s/w1");
+    expect(folderKey({ machine_id: "a/b", session: "s", workspace_id: "w1" })).toBe("herdly:ws-folder:a%2Fb/s/w1");
   });
 
   it("reads as no folder when storage throws", () => {

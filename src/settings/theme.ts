@@ -4,7 +4,7 @@ import { setWindowTheme } from "../lib/ipc";
 import { TERM_THEME, TERM_THEME_LIGHT } from "../terminal/theme";
 
 /** Shared with store.ts and notify.ts: one JSON object, each writer merges its own keys. */
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 export type ThemePref = "system" | "light" | "dark";
 export type Theme = "light" | "dark";

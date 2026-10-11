@@ -68,7 +68,7 @@ describe("new tab setting", () => {
     expect(loadNewTabAgent()).toBe("claude");
     useNewTab.getState().setAgent("pi");
     expect(loadNewTabAgent()).toBe("pi");
-    localStorage.setItem("herdr-app:settings", JSON.stringify({ newTabAgent: "vim" }));
+    localStorage.setItem("herdly:settings", JSON.stringify({ newTabAgent: "vim" }));
     expect(loadNewTabAgent()).toBe("claude");
   });
 });

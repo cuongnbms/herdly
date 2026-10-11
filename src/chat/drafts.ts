@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 // Each pane's unsent Composer text, kept outside the Composer: it unmounts on a pane switch,
 // a lens switch, and while the agent is blocked.
-const draftKey = (paneKey: string) => `herdr-app:draft:${paneKey}`;
+const draftKey = (paneKey: string) => `herdly:draft:${paneKey}`;
 
 /** How long typing must pause before the draft is written. */
 export const DRAFT_WRITE_MS = 300;

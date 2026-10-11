@@ -36,7 +36,7 @@ describe("usage", () => {
     expect(recordUse("claude", "compact")).toEqual({ compact: 2 });
     expect(readUsage("claude")).toEqual({ compact: 2 });
     expect(readUsage("pi")).toEqual({});
-    localStorage.setItem("herdr-app:slash-usage:codex", "not json");
+    localStorage.setItem("herdly:slash-usage:codex", "not json");
     expect(readUsage("codex")).toEqual({});
   });
 });

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { LensName } from "../lens";
 
 /** Shared with store.ts, theme.ts, quickReplies.ts and notify.ts: one JSON object, each writer merges its own keys. */
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 export const NEW_AGENT_LENSES: readonly LensName[] = ["terminal", "chat"];
 

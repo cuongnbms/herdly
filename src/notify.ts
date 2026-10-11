@@ -2,7 +2,7 @@ import { notifyPane } from "./lib/ipc";
 import type { MachineView, PaneRef, PaneStatusEvent } from "./lib/types";
 import { paneKey } from "./lib/types";
 
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 export function notificationsEnabled(): boolean {
   try {

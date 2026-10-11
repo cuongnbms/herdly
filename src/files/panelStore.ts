@@ -3,7 +3,7 @@ import { create } from "zustand";
 /** What the agents column shows: the agent list, the Files panel, or both split. */
 export type SidebarView = "agents" | "files" | "split";
 
-const VIEW_KEY = "herdr-app:sidebar-view";
+const VIEW_KEY = "herdly:sidebar-view";
 
 function storedView(): SidebarView {
   try {

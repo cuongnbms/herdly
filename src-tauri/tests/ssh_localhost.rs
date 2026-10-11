@@ -1,14 +1,14 @@
 //! Needs Remote Login enabled and a real herdr. Run with
-//! `HERDR_APP_SSH_TEST=1 cargo test --test ssh_localhost -- --ignored --test-threads=1`.
-use herdr_app_lib::herdr::rpc;
-use herdr_app_lib::transport::ssh::{master_alive, master_argv, master_exit, SshTransport};
-use herdr_app_lib::transport::{exec, parse_session_list, probe_argv, Transport};
+//! `HERDLY_SSH_TEST=1 cargo test --test ssh_localhost -- --ignored --test-threads=1`.
+use herdly_lib::herdr::rpc;
+use herdly_lib::transport::ssh::{master_alive, master_argv, master_exit, SshTransport};
+use herdly_lib::transport::{exec, parse_session_list, probe_argv, Transport};
 use serde_json::json;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 const HERDR: &str = "/opt/homebrew/bin/herdr";
-const SESSION: &str = "herdrapp-test-ssh";
+const SESSION: &str = "herdly-test-ssh";
 
 fn herdr(args: &[&str]) -> std::process::Output {
     Command::new(HERDR)
@@ -30,8 +30,8 @@ impl Drop for SessionGuard {
 #[tokio::test]
 #[ignore]
 async fn ssh_localhost_master_exec_and_forward() {
-    if std::env::var("HERDR_APP_SSH_TEST").as_deref() != Ok("1") {
-        eprintln!("HERDR_APP_SSH_TEST != 1; skipping");
+    if std::env::var("HERDLY_SSH_TEST").as_deref() != Ok("1") {
+        eprintln!("HERDLY_SSH_TEST != 1; skipping");
         return;
     }
     let ssh = SshTransport::new("sshtest", "localhost").unwrap();

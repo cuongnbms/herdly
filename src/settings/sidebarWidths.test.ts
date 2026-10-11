@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { COLUMNS, loadWidths, useSidebarWidths } from "./sidebarWidths";
 
-const KEY = "herdr-app:settings";
+const KEY = "herdly:settings";
 
 beforeEach(() => {
   localStorage.clear();

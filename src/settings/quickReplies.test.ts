@@ -10,7 +10,7 @@ import {
   useQuickReplies,
 } from "./quickReplies";
 
-const KEY = "herdr-app:settings";
+const KEY = "herdly:settings";
 
 beforeEach(() => {
   localStorage.clear();

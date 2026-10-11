@@ -2,11 +2,11 @@
 # sign-app.sh <bundle>: re-sign an installed bundle with the identity from sign-setup.sh, so
 # macOS privacy grants survive the next install. Without the identity the bundle keeps its
 # ad-hoc signature: the install still works, it just asks for permissions again.
-# Same env as sign-setup.sh (HERDR_SIGN_IDENTITY, HERDR_SIGN_KEYCHAIN).
+# Same env as sign-setup.sh (HERDLY_SIGN_IDENTITY, HERDLY_SIGN_KEYCHAIN).
 set -eu
 app=$1
-identity=${HERDR_SIGN_IDENTITY:-Herdr Local Signing}
-keychain=${HERDR_SIGN_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}
+identity=${HERDLY_SIGN_IDENTITY:-Herdly Local Signing}
+keychain=${HERDLY_SIGN_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}
 
 if ! security find-identity -p codesigning "$keychain" | grep -qF "\"$identity\""; then
   echo "sign: no \"$identity\" identity, $app stays ad-hoc and macOS will ask for its permissions again." >&2

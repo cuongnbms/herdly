@@ -99,7 +99,7 @@ pub fn run() {
         ])
         .setup(|app| {
             init_logging(app.path().app_log_dir()?)?;
-            tracing::info!("herdr-app starting");
+            tracing::info!("herdly starting");
             notify::init(app.handle());
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -188,7 +188,7 @@ fn init_logging(dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error
     std::fs::create_dir_all(&dir)?;
     let appender = Builder::new()
         .rotation(Rotation::DAILY)
-        .filename_prefix("herdr-app")
+        .filename_prefix("herdly")
         .filename_suffix("log")
         .max_log_files(5)
         .build(&dir)?;
@@ -209,6 +209,6 @@ mod tests {
 
     #[test]
     fn the_quit_item_names_the_app() {
-        assert_eq!(quit_label("Herdr"), "Quit Herdr");
+        assert_eq!(quit_label("Herdly"), "Quit Herdly");
     }
 }

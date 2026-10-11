@@ -2,7 +2,7 @@ import type { Located } from "../lib/types";
 
 const basename = (p: string) => p.split("/").pop() ?? p;
 
-export const transcriptKey = (paneKey: string) => `herdr-app:transcript:${paneKey}`;
+export const transcriptKey = (paneKey: string) => `herdly:transcript:${paneKey}`;
 
 export function rememberedTranscript(paneKey: string): string | null {
   try {

@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { fontFace, systemFonts } from "../lib/ipc";
 
 /** Shared with notify.ts: one JSON object, each writer merges its own keys. */
-const SETTINGS_KEY = "herdr-app:settings";
+const SETTINGS_KEY = "herdly:settings";
 
 export interface FontSettings {
   terminalFontSize: number;

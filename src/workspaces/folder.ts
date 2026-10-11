@@ -7,7 +7,7 @@ export interface WorkspaceRef {
   workspace_id: string;
 }
 
-const PREFIX = "herdr-app:ws-folder:";
+const PREFIX = "herdly:ws-folder:";
 
 /** What a Workspace folder is for, shown wherever one is set. */
 export const FOLDER_HINT = "New agents and ⌘T tabs in this workspace start here, and the Files panel opens it. Only this app remembers it; herdr does not.";

@@ -1,4 +1,4 @@
-# herdr-app
+# Herdly
 
 A desktop client for [herdr](https://github.com/herdrdev/herdr) that browses and drives agent panes on the local computer and on remote computers.
 

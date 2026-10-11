@@ -1,7 +1,7 @@
-# Herdr — Tauri 2 (pnpm + cargo). `mise tasks` lists them, `mise run <task>` runs one.
+# Herdly — Tauri 2 (pnpm + cargo). `mise tasks` lists them, `mise run <task>` runs one.
 
 [env]
-APP = "src-tauri/target/release/bundle/macos/Herdr.app"
+APP = "src-tauri/target/release/bundle/macos/Herdly.app"
 
 [tasks.install]
 description = "Install frontend dependencies"
@@ -12,7 +12,7 @@ description = "Run the app with hot reload"
 run = "pnpm tauri dev"
 
 [tasks.build]
-description = "Build the release bundle (Herdr.app)"
+description = "Build the release bundle (Herdly.app)"
 run = "pnpm tauri build --bundles app"
 
 [tasks.run]
@@ -25,11 +25,11 @@ run = "open $APP"
 [tasks."install:app"]
 description = "Build the release bundle and install it into /Applications"
 depends = ["build"]
-run = ["rm -rf /Applications/Herdr.app", "ditto $APP /Applications/Herdr.app", "scripts/sign-app.sh /Applications/Herdr.app"]
+run = ["rm -rf /Applications/Herdly.app", "ditto $APP /Applications/Herdly.app", "scripts/sign-app.sh /Applications/Herdly.app"]
 
 # Ad-hoc signed builds get a new identity each time, so macOS asks again for every permission.
 [tasks."sign:setup"]
-description = "One-time: create the local signing identity install:app signs Herdr.app with"
+description = "One-time: create the local signing identity install:app signs Herdly.app with"
 run = "scripts/sign-setup.sh"
 
 [tasks.typecheck]
@@ -59,8 +59,8 @@ run = "scripts/sign.test.sh"
 description = "Frontend, backend and signing script tests"
 depends = ["test:frontend", "test:backend", "test:sign"]
 
-# Starts isolated `herdrapp-test-*` sessions on the local herdr and always
-# stops and deletes them. The SSH test only runs when HERDR_APP_SSH_TEST is set.
+# Starts isolated `herdly-test-*` sessions on the local herdr and always
+# stops and deletes them. The SSH test only runs when HERDLY_SSH_TEST is set.
 [tasks."test:integration"]
 description = "Integration tests against a real local herdr"
 dir = "src-tauri"

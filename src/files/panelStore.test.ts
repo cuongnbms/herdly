@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const VIEW_KEY = "herdr-app:sidebar-view";
+const VIEW_KEY = "herdly:sidebar-view";
 
 async function fresh() {
   vi.resetModules();

@@ -33,7 +33,7 @@ describe("Settings dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Light" }));
     expect(useTheme.getState()).toMatchObject({ pref: "light", theme: "light" });
     expect(screen.getByRole("button", { name: "Light" }).getAttribute("aria-pressed")).toBe("true");
-    expect(JSON.parse(localStorage.getItem("herdr-app:settings")!).theme).toBe("light");
+    expect(JSON.parse(localStorage.getItem("herdly:settings")!).theme).toBe("light");
   });
 
   it("switches the tab layout from the Appearance section and keeps it", () => {
@@ -50,7 +50,7 @@ describe("Settings dialog", () => {
 
   it("reads one line when no tab layout or an unknown one is saved", () => {
     expect(loadTabLayout()).toBe("one-line");
-    localStorage.setItem("herdr-app:settings", JSON.stringify({ tabLayout: "three-lines" }));
+    localStorage.setItem("herdly:settings", JSON.stringify({ tabLayout: "three-lines" }));
     expect(loadTabLayout()).toBe("one-line");
   });
 
