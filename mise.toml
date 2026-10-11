@@ -20,12 +20,21 @@ description = "Build the release bundle and open it"
 depends = ["build"]
 run = "open $APP"
 
-# Replaces any previous copy so files removed from the bundle don't linger, then signs it with
-# the `sign:setup` identity so macOS keeps its permission grants across installs.
+# Quits a running copy, replaces it so files removed from the bundle don't linger, then signs
+# it with the `sign:setup` identity so macOS keeps its permission grants across installs.
+# The build output is unregistered from Launch Services so Launchpad lists only the installed
+# app, and the new install is opened.
 [tasks."install:app"]
-description = "Build the release bundle and install it into /Applications"
+description = "Build the release bundle, install it into /Applications and open it"
 depends = ["build"]
-run = ["rm -rf /Applications/Herdly.app", "ditto $APP /Applications/Herdly.app", "scripts/sign-app.sh /Applications/Herdly.app"]
+run = [
+  "osascript -e 'if application id \"dev.cuongnb.herdly\" is running then tell application id \"dev.cuongnb.herdly\" to quit'",
+  "rm -rf /Applications/Herdly.app",
+  "ditto $APP /Applications/Herdly.app",
+  "scripts/sign-app.sh /Applications/Herdly.app",
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u \"$PWD/$APP\"",
+  "open /Applications/Herdly.app",
+]
 
 # Ad-hoc signed builds get a new identity each time, so macOS asks again for every permission.
 [tasks."sign:setup"]
