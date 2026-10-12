@@ -1421,10 +1421,9 @@ button.composer-model:disabled { cursor: default; }
 .files-tree-head .icon-btn .icon { width: 14px; height: 14px; }
 .files-tree-head .icon-btn[aria-pressed="true"] { color: var(--accent); }
 .files-tree { flex: 1 0 auto; box-sizing: border-box; padding: 4px 0; font-size: 12.5px; outline: none; }
-.files-tree-row { display: flex; align-items: center; gap: 4px; height: 24px; padding-right: 8px; color: var(--fg-2); cursor: pointer; white-space: nowrap; user-select: none; }
+.files-tree-row { display: flex; align-items: center; gap: 4px; height: 24px; padding-right: 8px; color: var(--fg); cursor: pointer; white-space: nowrap; user-select: none; }
 .files-tree-row:hover { background: var(--hover); color: var(--fg); }
 .files-tree-row:focus-visible { background: var(--active); color: var(--fg); outline: none; box-shadow: inset 2px 0 0 var(--accent); }
-.files-tree-dir { color: var(--fg); }
 .files-tree-symlink .files-tree-name { font-style: italic; }
 .files-tree-caret { flex: none; display: flex; width: 12px; color: var(--fg-3); }
 .files-tree-caret .icon { width: 12px; height: 12px; transition: transform 0.1s; }
