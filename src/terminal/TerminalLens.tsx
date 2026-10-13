@@ -8,7 +8,7 @@ import "../fonts/fonts.css";
 import { attachKeyString, imageSaveTemp, termAck, termOpen, termRelease, termResize, termWrite } from "../lib/ipc";
 import type { AttachEvent, PaneRef } from "../lib/types";
 import { useApp } from "../store/app";
-import { showToast } from "../ui/Toast";
+import { dismissToast, showToast } from "../ui/Toast";
 import { Banner } from "./Banner";
 import { StartingOverlay } from "./StartingOverlay";
 import { ensureTermFont, useSettings, watchTermFont } from "../settings/store";
@@ -33,6 +33,14 @@ interface Props {
   terminalId: string;
 }
 
+let copiedToast: number | null = null;
+
+/** Says a selection reached the clipboard; a new copy replaces the last notice instead of stacking. */
+function showCopied() {
+  if (copiedToast !== null) dismissToast(copiedToast);
+  copiedToast = showToast("Copied", { alert: false });
+}
+
 function createEntry(key: string) {
   const term = new Terminal({
     cursorBlink: true,
@@ -47,7 +55,9 @@ function createEntry(key: string) {
   term.loadAddon(fit);
   applyUnicode11(term);
   applyOsc52(term, (text) => void writeText(text).catch((e) => console.error("OSC 52 copy failed", e)));
-  const stopCopyOnSelect = applyCopyOnSelect(term, (text) => void writeText(text).catch((e) => console.error("selection copy failed", e)));
+  const stopCopyOnSelect = applyCopyOnSelect(term, (text) =>
+    void writeText(text).then(showCopied, (e) => console.error("selection copy failed", e)),
+  );
   const stopHoldSelection = applyHoldSelection(term);
   term.attachCustomKeyEventHandler(createKeyHandler((text) => term.input(text)));
   applyWheelScroll(term);

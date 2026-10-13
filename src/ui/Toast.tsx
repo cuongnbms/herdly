@@ -28,11 +28,12 @@ export function dismissToast(id: number) {
 }
 
 /** Show a toast that dismisses itself after 5 s. */
-export function showToast(text: string, { alert = true }: { alert?: boolean } = {}) {
+export function showToast(text: string, { alert = true }: { alert?: boolean } = {}): number {
   const id = nextId++;
   items = [...items, { id, text, alert }];
   emit();
   setTimeout(() => dismissToast(id), DISMISS_MS);
+  return id;
 }
 
 /** Show a toast that stays until `updateToast` replaces it. Returns its id. */
