@@ -10,6 +10,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-theme",
     "core:window:allow-destroy",
+    "core:window:allow-set-badge-count",
     "clipboard-manager:allow-write-text",
     "notification:default",
     "opener:default",

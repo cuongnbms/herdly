@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue([]), Channel: class {} }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ onCloseRequested: vi.fn().mockResolvedValue(() => {}), destroy: vi.fn(), setTheme: vi.fn() }),
+  getCurrentWindow: () => ({ onCloseRequested: vi.fn().mockResolvedValue(() => {}), destroy: vi.fn(), setTheme: vi.fn(), setBadgeCount: vi.fn().mockResolvedValue(undefined) }),
 }));
 // xterm needs a real window; the Terminal lens is stood in for by its loading overlay.
 vi.mock("./terminal/TerminalLens", async () => {

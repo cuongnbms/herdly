@@ -21,7 +21,7 @@ function counted<P extends object>(name: string, C: unknown): ComponentType<P> {
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async (cmd: string) => (cmd === "files_list_all" ? { paths: [], capped: false, refused: false } : [])), Channel: class {} }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ onCloseRequested: vi.fn().mockResolvedValue(() => {}), destroy: vi.fn(), setTheme: vi.fn() }),
+  getCurrentWindow: () => ({ onCloseRequested: vi.fn().mockResolvedValue(() => {}), destroy: vi.fn(), setTheme: vi.fn(), setBadgeCount: vi.fn().mockResolvedValue(undefined) }),
 }));
 // Called exactly once per App render.
 vi.mock("./chat/transcriptProbe", () => ({ useTranscriptProbe: () => bump("App") }));

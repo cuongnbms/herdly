@@ -21,6 +21,7 @@ import { openNewTabHere } from "./agents/newTabShortcut";
 import { paneKey } from "./lib/types";
 import { activeItem, chosenLens, selectedPane, useApp, viewedItems } from "./store/app";
 import { itemKey } from "./store/openItems";
+import { syncDockBadge } from "./store/dockBadge";
 import { syncSeenToHerdr } from "./store/seenSync";
 import { closeItemsGuarded, settleDrafts } from "./files/closeGuard";
 import { useDrafts } from "./files/drafts";
@@ -117,6 +118,7 @@ export default function App() {
   useEffect(() => applyChatFont(chatFontSize), [chatFontSize]);
   useEffect(() => applyTheme(theme, themePref), [theme, themePref]);
   useEffect(() => syncSeenToHerdr(), []);
+  useEffect(() => syncDockBadge(), []);
   useEffect(() => guardFileDrops(), []);
 
   useEffect(() => {
