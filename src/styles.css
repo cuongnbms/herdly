@@ -521,7 +521,7 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 }
 .term-host { flex: 1; min-height: 0; overflow: hidden; }
 /* Padding on .xterm (not the host) so FitAddon subtracts it when sizing rows. */
-.term-host .xterm { padding: 10px 0 0 14px; }
+.term-host .xterm { padding: 10px 0 10px 14px; }
 /* xterm.css paints the viewport (which spans the padding) pure black. */
 .xterm .xterm-viewport { background-color: var(--surface-term) !important; }
 .term-banner, .chat-notice {
