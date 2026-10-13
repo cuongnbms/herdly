@@ -13,7 +13,8 @@ vi.mock("./terminal/TerminalLens", async () => {
 });
 
 import App from "./App";
-import { activeItem, useApp, viewedItems } from "./store/app";
+import { activeItem, chosenLens, useApp, viewedItems } from "./store/app";
+import { paneKey } from "./lib/types";
 import { itemKey } from "./store/openItems";
 import { useHistory } from "./store/history";
 import { useFilesPanel } from "./files/panelStore";
@@ -136,12 +137,15 @@ describe("App shell", () => {
       expect(await screen.findByText("Select a pane")).toBeTruthy();
     });
 
-    it("⌘E expands the Files panel and focuses it", () => {
-      useFilesPanel.setState({ collapsed: true });
+    it("⌘E flips the selected agent between the Chat and Terminal lenses", () => {
       render(<App />);
+      const lens = () => chosenLens(useApp.getState(), paneKey(p1)) ?? "chat";
+      expect(lens()).toBe("chat");
       fireEvent.keyDown(window, { key: "e", metaKey: true });
-      expect(useFilesPanel.getState().collapsed).toBe(false);
-      expect(useFilesPanel.getState().focusTick).toBe(1);
+      expect(lens()).toBe("terminal");
+      fireEvent.keyDown(window, { key: "e", metaKey: true });
+      expect(lens()).toBe("chat");
+      expect(useFilesPanel.getState().focusTick).toBe(0);
     });
 
     it("⌘P focuses Go to file, but not while the palette is open", () => {

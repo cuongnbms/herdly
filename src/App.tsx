@@ -206,7 +206,12 @@ export default function App() {
       if (plain && k === "e") {
         e.preventDefault();
         if (e.repeat) return;
-        useFilesPanel.getState().focusTree();
+        // Flips the shown pane between the Terminal and Chat lenses; a file item has no lens.
+        const s = useApp.getState();
+        const sel = selectedPane(s);
+        if (!sel?.pane.agent || activeItem(s)?.kind === "file") return;
+        const key = paneKey({ machine_id: sel.machine.id, session: sel.session.name, pane_id: sel.pane.pane_id });
+        s.setLens(key, defaultLens(sel.pane, chosenLens(s, key)) === "chat" ? "terminal" : "chat");
       } else if (plain && k === "p") {
         e.preventDefault();
         if (e.repeat || useApp.getState().paletteOpen) return;
