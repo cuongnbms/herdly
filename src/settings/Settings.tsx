@@ -8,6 +8,7 @@ import { useNewTab } from "./newTab";
 import { AGENTS } from "../agents/openAgentTab";
 import { DEFAULT_QUICK_REPLIES, moveReply, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, useQuickReplies } from "./quickReplies";
 import { dropZone } from "../sidebar/dnd";
+import { IDLE_MINUTES, useRecentAgents } from "./recentAgents";
 import { CHAT_SIZE, DEFAULTS, TERM_SIZE, useSettings } from "./store";
 import { THEME_PREFS, useTheme } from "./theme";
 import { TAB_LAYOUTS, useTabLayout } from "./tabLayout";
@@ -20,21 +21,25 @@ function Stepper({
   value,
   range,
   onChange,
+  step = SIZE_STEP,
+  format = (v) => `${v}px`,
 }: {
   label: string;
   value: number;
   range: { min: number; max: number };
   onChange: (v: number) => void;
+  step?: number;
+  format?: (v: number) => string;
 }) {
   return (
     <div className="setting-row">
       <span>{label}</span>
       <div className="stepper">
-        <button aria-label={`Decrease ${label.toLowerCase()}`} disabled={value <= range.min} onClick={() => onChange(value - SIZE_STEP)}>
+        <button aria-label={`Decrease ${label.toLowerCase()}`} disabled={value <= range.min} onClick={() => onChange(value - step)}>
           −
         </button>
-        <output>{value}px</output>
-        <button aria-label={`Increase ${label.toLowerCase()}`} disabled={value >= range.max} onClick={() => onChange(value + SIZE_STEP)}>
+        <output>{format(value)}</output>
+        <button aria-label={`Increase ${label.toLowerCase()}`} disabled={value >= range.max} onClick={() => onChange(value + step)}>
           +
         </button>
       </div>
@@ -45,6 +50,7 @@ function Stepper({
 function GeneralSettings() {
   const [notify, setNotify] = useState(notificationsEnabled);
   const newTab = useNewTab();
+  const recent = useRecentAgents();
   return (
     <>
       <div className="setting-row">
@@ -64,6 +70,15 @@ function GeneralSettings() {
         </div>
       </div>
       <p className="note">⌘T opens a tab next to the selected pane, in its workspace's folder.</p>
+      <Stepper
+        label="Keep idle agents"
+        value={recent.idleMinutes}
+        range={IDLE_MINUTES}
+        step={1}
+        format={(v) => (v === 0 ? "Off" : `${v} min`)}
+        onChange={recent.setIdleMinutes}
+      />
+      <p className="note">How long an agent stays in Recent agents after it goes idle. Off lists only blocked, done and working agents.</p>
       <label className="switch">
         <span>Notifications</span>
         <input

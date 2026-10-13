@@ -7,6 +7,7 @@ vi.mock("../lib/ipc", () => ({
 import { loadLensSettings, useLensSettings } from "./lens";
 import { DEFAULT_HIDDEN_FOLDERS, loadHiddenFolders, useHiddenFolders } from "./hiddenFolders";
 import { DEFAULT_QUICK_REPLIES, loadQuickReplies, QUICK_REPLIES_MAX, useQuickReplies } from "./quickReplies";
+import { DEFAULT_IDLE_MINUTES, loadIdleMinutes, useRecentAgents } from "./recentAgents";
 import { Settings } from "./Settings";
 import { DEFAULTS, loadFonts, useSettings } from "./store";
 import { useTheme } from "./theme";
@@ -73,6 +74,23 @@ describe("Settings dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("Settings recent agents", () => {
+  beforeEach(() => useRecentAgents.setState({ idleMinutes: DEFAULT_IDLE_MINUTES }));
+
+  it("sets how long idle agents stay in Recent agents, down to Off, and remembers it", () => {
+    render(<Settings />);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByText("3 min")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Increase keep idle agents" }));
+    expect(loadIdleMinutes()).toBe(4);
+    for (let i = 0; i < 4; i++) fireEvent.click(screen.getByRole("button", { name: "Decrease keep idle agents" }));
+    expect(useRecentAgents.getState().idleMinutes).toBe(0);
+    expect(screen.getByText("Off")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Decrease keep idle agents" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(loadIdleMinutes()).toBe(0);
   });
 });
 

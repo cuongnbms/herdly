@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MachineView, PaneView } from "../lib/types";
-import { bucketCounts, bucketOf, dashboardCards, matchesQuery } from "./buckets";
+import { bucketCounts, bucketOf, dashboardCards, matchesQuery, nextIdleExpiry, sidebarAgents } from "./buckets";
 
 const pane = (id: string, status: PaneView["status"], extra: Partial<PaneView> = {}): PaneView => ({
   pane_id: id, terminal_id: "t" + id, title: "pane " + id, cwd: "/x", agent: "claude", status, ...extra,
@@ -78,5 +78,28 @@ describe("matchesQuery", () => {
   it("matches title, agent, workspace, session and machine case-insensitively", () => {
     for (const q of ["rewrite", "PI", "herdr-app", "default", "local-label", ""]) expect(matchesQuery(card, q)).toBe(true);
     expect(matchesQuery(card, "nope")).toBe(false);
+  });
+});
+
+describe("sidebarAgents", () => {
+  const machines = { local: machine("local", [pane("a", "idle"), pane("b", "working"), pane("c", "idle"), pane("d", "idle"), pane("e", "blocked")]) };
+  const since = { "local/default/a": 1_000, "local/default/c": 170_000, "local/default/d": 100_000 };
+  const cards = dashboardCards(machines, ["local"], {}, since);
+  const keys = (cs: { key: string }[]) => cs.map((c) => c.key.split("/")[2]);
+  it("keeps idle agents out when the window is 0", () => {
+    expect(keys(sidebarAgents(cards, since, 0, 180_000))).toEqual(["e", "b"]);
+  });
+  it("adds agents idle for less than the window, newest first, after the rest", () => {
+    // a went idle 179s ago, d 80s ago, c 10s ago; with a 3-minute window a still makes it, at 181s it is gone.
+    expect(keys(sidebarAgents(cards, since, 180_000, 180_000))).toEqual(["e", "b", "c", "d", "a"]);
+    expect(keys(sidebarAgents(cards, since, 180_000, 181_000))).toEqual(["e", "b", "c", "d"]);
+  });
+  it("leaves out idle agents with no known time", () => {
+    expect(keys(sidebarAgents(cards, {}, 180_000, 0))).toEqual(["e", "b"]);
+  });
+  it("reports when the first recent idle agent expires", () => {
+    expect(nextIdleExpiry(cards, since, 180_000, 180_000)).toBe(181_000);
+    expect(nextIdleExpiry(cards, since, 180_000, 181_000)).toBe(280_000);
+    expect(nextIdleExpiry(cards, {}, 180_000, 0)).toBeNull();
   });
 });

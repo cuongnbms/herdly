@@ -75,7 +75,18 @@ export function matchesQuery(card: DashCard, query: string): boolean {
 
 const SIDEBAR_ORDER: Bucket[] = ["blocked", "done", "working"];
 
-/** The sidebar's Agents list: Blocked, then Done, then Working cards, each in dashboard order. */
-export function sidebarAgents(cards: DashCard[]): DashCard[] {
-  return SIDEBAR_ORDER.flatMap((b) => cards.filter((c) => c.bucket === b));
+/** The sidebar's Recent agents list: Blocked, then Done, then Working cards, each in dashboard order, then the Idle
+ *  cards whose status changed less than `keepIdleMs` before `now` (`since`), newest first. */
+export function sidebarAgents(cards: DashCard[], since: Record<string, number> = {}, keepIdleMs = 0, now = Date.now()): DashCard[] {
+  const recentIdle = cards.filter((c) => c.bucket === "idle" && c.key in since && now - since[c.key] < keepIdleMs);
+  return [...SIDEBAR_ORDER.flatMap((b) => cards.filter((c) => c.bucket === b)), ...recentIdle];
+}
+
+/** When the next of `cards`' recent Idle cards leaves the list after `now`, or null when none will. */
+export function nextIdleExpiry(cards: DashCard[], since: Record<string, number>, keepIdleMs: number, now: number): number | null {
+  const ends = cards
+    .filter((c) => c.bucket === "idle" && c.key in since)
+    .map((c) => since[c.key] + keepIdleMs)
+    .filter((t) => t > now);
+  return ends.length ? Math.min(...ends) : null;
 }
