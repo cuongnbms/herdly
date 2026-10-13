@@ -97,3 +97,13 @@ export async function openInFiles(pane: PaneRef, path: string, hash?: string | n
   useFilesBus.getState().setJump(hash ? { key: itemKey({ kind: "file", ws: ref, root: root.path, rel }), hash } : null);
   useApp.getState().openFile(ref, root.path, rel, { pin: false });
 }
+
+/** Marks `<html>` with `cmd-held` while ⌘ is down, so file links in Chat look clickable only then. */
+export function trackCmdHeld(): void {
+  const root = document.documentElement;
+  const sync = (e: KeyboardEvent | MouseEvent) => root.classList.toggle("cmd-held", e.metaKey);
+  window.addEventListener("keydown", sync, true);
+  window.addEventListener("keyup", sync, true);
+  window.addEventListener("mousemove", sync, true);
+  window.addEventListener("blur", () => root.classList.remove("cmd-held"));
+}

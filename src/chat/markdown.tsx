@@ -41,7 +41,7 @@ export function ExternalLink({ href, children, className, title }: { href?: stri
   );
 }
 
-/** Inline code that reads as a file path, in a Chat lens: opens the file as a file item in the File viewer. */
+/** Inline code that reads as a file path, in a Chat lens: ⌘-click opens the file as a file item in the File viewer. */
 function InlineCode({ children, className }: { children?: ReactNode; className?: string }) {
   const pane = useContext(ChatPaneContext);
   const inLink = useContext(InLinkContext);
@@ -52,10 +52,10 @@ function InlineCode({ children, className }: { children?: ReactNode; className?:
     <a
       href="#"
       className="chat-file-link"
-      title="Open in Files"
+      title="⌘-click to open in Files"
       onClick={(e) => {
         e.preventDefault();
-        void openInFiles(pane, text);
+        if (e.metaKey) void openInFiles(pane, text);
       }}
     >
       <code>{text}</code>

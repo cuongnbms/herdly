@@ -874,9 +874,10 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .chat-assistant :not(pre) > code { padding: 1px 5px; border-radius: 4px; background: var(--active); color: var(--code-inline); }
 .chat-assistant a { cursor: pointer; color: var(--link); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--link) 35%, transparent); }
 .chat-assistant a:hover { border-bottom-color: currentColor; }
-/* A file path opens in Files: the code keeps its look, underlined on hover. */
-.chat-assistant a.chat-file-link { border-bottom: none; }
-.chat-assistant a.chat-file-link:hover code { text-decoration: underline; color: var(--link); }
+/* A file path opens in Files on ⌘-click: the code keeps its look, underlined on hover while ⌘ is held. */
+.chat-assistant a.chat-file-link { border-bottom: none; cursor: text; }
+.cmd-held .chat-assistant a.chat-file-link { cursor: pointer; }
+.cmd-held .chat-assistant a.chat-file-link:hover code { text-decoration: underline; color: var(--link); }
 .chat-thinking summary { cursor: pointer; color: var(--fg-3); font-size: 12px; font-style: italic; list-style: none; }
 .chat-thinking summary::-webkit-details-marker { display: none; }
 .chat-thinking summary { display: inline-flex; align-items: center; gap: 6px; }
@@ -907,7 +908,7 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .chat-tool-name { font-weight: 700; color: var(--link); flex: none; }
 .chat-tool-sep { color: var(--fg-3); flex: none; }
 .chat-tool-summary { color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-tool-summary.chat-file-link:hover { color: var(--link); text-decoration: underline; }
+.cmd-held .chat-tool-summary.chat-file-link:hover { color: var(--link); text-decoration: underline; }
 .chat-tool-body { padding: 0 8px 8px; border-top: 1px solid var(--line); }
 .chat-result, .chat-diff {
   margin: 8px 0 0; padding: 8px 10px; background: var(--surface-code); border: 1px solid var(--line); border-radius: var(--r-sm);

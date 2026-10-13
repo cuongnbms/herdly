@@ -59,7 +59,7 @@ function Checklist({ rows }: { rows: ChecklistRow[] }) {
   );
 }
 
-/** The call's summary; when it names the file the tool works on, a click opens that file in Files. */
+/** The call's summary; when it names the file the tool works on, ⌘-click opens that file in Files. */
 function ToolSummary({ summary, input }: { summary: string; input: Record<string, unknown> }) {
   const pane = useContext(ChatPaneContext);
   const file = str(input.file_path) ? input.file_path : str(input.path) ? input.path : null;
@@ -70,8 +70,10 @@ function ToolSummary({ summary, input }: { summary: string; input: Record<string
     <span
       role="link"
       className="chat-tool-summary chat-file-link"
-      title="Open in Files"
+      title="⌘-click to open in Files"
       onClick={(e) => {
+        // A plain click falls through to the row and toggles it.
+        if (!e.metaKey) return;
         e.stopPropagation();
         void openInFiles(pane, file);
       }}

@@ -138,9 +138,12 @@ describe("file paths open in Files", () => {
   });
   const inPane = (ui: React.ReactNode) => render(<ChatPaneContext.Provider value={pane}>{ui}</ChatPaneContext.Provider>);
 
-  it("opens inline code that reads as a path", () => {
+  it("opens inline code that reads as a path on ⌘-click", () => {
     inPane(<ChatItemView item={{ kind: "assistant_text", markdown: "Wrote `docs/a.md` and `/point`." }} />);
+    const before = viewedItems(useApp.getState()).items;
     fireEvent.click(screen.getByRole("link", { name: "docs/a.md" }));
+    expect(viewedItems(useApp.getState()).items).toBe(before);
+    fireEvent.click(screen.getByRole("link", { name: "docs/a.md" }), { metaKey: true });
     expect(viewedItems(useApp.getState()).active).toBe("file:local/default/w1|/w/app|docs/a.md");
     expect(useApp.getState().selected).toEqual(pane);
     expect(screen.queryByRole("link", { name: "/point" })).toBeNull();
@@ -151,16 +154,23 @@ describe("file paths open in Files", () => {
     inPane(<ChatItemView item={{ kind: "assistant_text", markdown: "```\ndocs/b.md\n```" }} />);
     expect(screen.queryByRole("link", { name: /docs\/b\.md/ })).toBeNull();
   });
-  it("opens a tool call's file without toggling the call", () => {
+  it("opens a tool call's file on ⌘-click without toggling the call", () => {
     inPane(<ChatItemView item={{ kind: "tool_call", id: "t1", name: "Write", input_summary: "/w/app/src/x.ts", input: { file_path: "/w/app/src/x.ts", content: "x" } }} />);
-    fireEvent.click(screen.getByRole("link", { name: "/w/app/src/x.ts" }));
+    fireEvent.click(screen.getByRole("link", { name: "/w/app/src/x.ts" }), { metaKey: true });
     expect(viewedItems(useApp.getState()).active).toBe("file:local/default/w1|/w/app|src/x.ts");
     expect(screen.getByRole("button", { name: /Write/ }).getAttribute("aria-expanded")).toBe("false");
+  });
+  it("toggles the tool call on a plain click of its file", () => {
+    inPane(<ChatItemView item={{ kind: "tool_call", id: "t1", name: "Write", input_summary: "/w/app/src/x.ts", input: { file_path: "/w/app/src/x.ts", content: "x" } }} />);
+    const before = viewedItems(useApp.getState()).items;
+    fireEvent.click(screen.getByRole("link", { name: "/w/app/src/x.ts" }));
+    expect(viewedItems(useApp.getState()).items).toBe(before);
+    expect(screen.getByRole("button", { name: /Write/ }).getAttribute("aria-expanded")).toBe("true");
   });
   it("says so when the file is outside the workspace folder", () => {
     inPane(<ChatItemView item={{ kind: "assistant_text", markdown: "`/etc/x.conf`" }} />);
     const before = viewedItems(useApp.getState()).items;
-    fireEvent.click(screen.getByRole("link", { name: "/etc/x.conf" }));
+    fireEvent.click(screen.getByRole("link", { name: "/etc/x.conf" }), { metaKey: true });
     expect(viewedItems(useApp.getState()).items).toBe(before);
   });
 });
@@ -178,7 +188,7 @@ describe("a long tool path", () => {
         <ChatItemView item={{ kind: "tool_call", id: "t1", name: "Read", input_summary: file.slice(0, 120) + "…", input: { file_path: file } }} />
       </ChatPaneContext.Provider>,
     );
-    fireEvent.click(screen.getByRole("link"));
+    fireEvent.click(screen.getByRole("link"), { metaKey: true });
     expect(viewedItems(useApp.getState()).active).toMatch(/^file:local\/default\/w1\|\/w\/app\|d\/d\//);
   });
 });
