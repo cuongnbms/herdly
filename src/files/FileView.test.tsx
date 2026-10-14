@@ -1,12 +1,34 @@
 import { StrictMode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), Channel: class {} }));
+import { invoke } from "@tauri-apps/api/core";
 import { FileView } from "./FileView";
 
 const base = { machineId: "local", root: "/r", onMode: () => {}, onOpen: () => {}, find: null, initialScroll: 0, saveScroll: () => {} };
 
 describe("FileView", () => {
+  it("renders an HTML file in a frame in render mode and as source otherwise", async () => {
+    vi.mocked(invoke).mockResolvedValue("t1");
+    const content = { kind: "text" as const, text: "<h1>Hi</h1>", truncated: false, size: 11, mtime: 1, cksum: null, editable: false };
+    const { container, rerender } = render(<FileView {...base} rel="r.HTML" mode="render" content={content} />);
+    await waitFor(() => expect(container.querySelector("iframe.files-html")?.getAttribute("sandbox")).toBe(""));
+    rerender(<FileView {...base} rel="r.HTML" mode="source" content={content} />);
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector(".files-text")).not.toBeNull();
+  });
+  it("passes Scripts on to the frame of an .htm file", async () => {
+    vi.mocked(invoke).mockResolvedValue("t1");
+    const content = { kind: "text" as const, text: "<p>x</p>", truncated: false, size: 8, mtime: 1, cksum: null, editable: false };
+    const { container } = render(<FileView {...base} rel="r.htm" mode="render" scripts content={content} />);
+    await waitFor(() => expect(container.querySelector("iframe.files-html")?.getAttribute("sandbox")).toBe("allow-scripts"));
+  });
+  it("shows a cut HTML file as source even in render mode", () => {
+    const content = { kind: "text" as const, text: "<p>cut", truncated: true, size: 3e6, mtime: 1, cksum: null, editable: false };
+    const { container } = render(<FileView {...base} rel="r.html" mode="render" content={content} />);
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector(".files-text")).not.toBeNull();
+  });
   it("shows the binary notice", () => {
     render(<FileView {...base} rel="a.bin" mode="render" content={{ kind: "binary", text: null, truncated: false, size: 2048, mtime: 1, cksum: null, editable: false }} />);
     expect(screen.getByText("Binary file, not shown")).toBeTruthy();
