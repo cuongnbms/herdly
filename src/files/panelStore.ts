@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { PickedWorkspace } from "./root";
 
 /** What the agents column shows: the agent list, the Files panel, or both split. */
 export type SidebarView = "agents" | "files" | "split";
@@ -27,8 +28,11 @@ interface FilesPanelState {
   /** The ticks already acted on; a panel that mounts with a newer tick still has a request to act on. */
   focusHandled: number;
   gotoHandled: number;
+  /** The Workspace picked from the panel's title; see `shownWorkspace`. Not persisted. */
+  picked: PickedWorkspace | null;
   setView(view: SidebarView): void;
   setHeight(px: number): void;
+  pickWorkspace(picked: PickedWorkspace | null): void;
   setCollapsed(on: boolean): void;
   /** Expands the panel (out of the agents view) and asks for the tree's focus. */
   focusTree(): void;
@@ -47,6 +51,7 @@ export const useFilesPanel = create<FilesPanelState>((set) => ({
   gotoTick: 0,
   focusHandled: 0,
   gotoHandled: 0,
+  picked: null,
   setView: (view) => {
     try {
       localStorage.setItem(VIEW_KEY, view);
@@ -56,6 +61,7 @@ export const useFilesPanel = create<FilesPanelState>((set) => ({
     set({ view });
   },
   setHeight: (height) => set({ height }),
+  pickWorkspace: (picked) => set({ picked }),
   setCollapsed: (collapsed) => set({ collapsed }),
   focusTree: () => set((s) => ({ collapsed: false, view: shownView(s.view), focusTick: s.focusTick + 1 })),
   focusGoto: () => set((s) => ({ collapsed: false, view: shownView(s.view), gotoTick: s.gotoTick + 1 })),

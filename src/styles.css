@@ -1382,6 +1382,9 @@ button.composer-model:disabled { cursor: default; }
 .files-panel-head .icon-btn { width: 22px; height: 22px; }
 .files-panel-head .icon-btn .icon { width: 14px; height: 14px; }
 .files-panel-head .icon-btn[aria-pressed="true"] { color: var(--accent); }
+.files-pick-ws { flex: none; margin-left: -4px; }
+.files-panel-head .files-pick-ws .icon { width: 12px; height: 12px; transform: rotate(90deg); }
+.files-ws-menu button { white-space: nowrap; }
 .files-collapse .icon { transform: rotate(90deg); transition: transform 0.1s; }
 .files-collapse.collapsed .icon { transform: none; }
 .files-set-folder-row { flex: none; padding: 0 12px 6px; }

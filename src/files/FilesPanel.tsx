@@ -2,17 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { filesListAll } from "../lib/ipc";
 import { useHiddenFolders } from "../settings/hiddenFolders";
-import type { FileList } from "../lib/types";
+import type { FileList, WorkspaceView } from "../lib/types";
 import { activeItem, useApp } from "../store/app";
 import { ActionsProvider, useActions } from "../sidebar/actions";
-import { ChevronIcon, EyeIcon, EyeOffIcon, RefreshIcon } from "../ui/icons";
+import { CheckIcon, ChevronIcon, EyeIcon, EyeOffIcon, RefreshIcon } from "../ui/icons";
 import { FOLDER_HINT, setFolder, suggestFolder, useFolder } from "../workspaces/folder";
 import type { WorkspaceRef } from "../workspaces/folder";
 import { useFilesBus } from "./bus";
 import { FileTree } from "./FileTree";
 import { GoToFile } from "./GoToFile";
 import { filesHidden, useFilesPanel } from "./panelStore";
-import { panelRoot, panelWorkspace, type Root } from "./root";
+import { panelAnchor, panelRoot, shownWorkspace, type Root } from "./root";
 import { filesKey, useFiles, wsKey } from "./store";
 import { useWatch } from "./useWatch";
 
@@ -21,7 +21,13 @@ const HALF_MIN = 120;
 
 /** The file tree of the active item's Workspace (else the selected Pane's), under the agent list. */
 export function FilesPanel() {
-  const ws = useApp(useShallow(panelWorkspace));
+  const picked = useFilesPanel((s) => s.picked);
+  const ws = useApp(useShallow((s) => shownWorkspace(s, picked)));
+  // A pick ends the first time the active item or selection moves, even if it later moves back.
+  const anchor = useApp(panelAnchor);
+  useEffect(() => {
+    if (picked && picked.anchor !== anchor) useFilesPanel.getState().pickWorkspace(null);
+  }, [picked, anchor]);
   const view = useFilesPanel((s) => s.view);
   const collapsed = useFilesPanel(filesHidden);
   const height = useFilesPanel((s) => s.height);
@@ -190,6 +196,7 @@ function WorkspacePanel({ wsRef: ref, section }: { wsRef: WorkspaceRef; section:
         <span className="files-title" title={root?.path}>
           {`FILES · ${label}`}
         </span>
+        {machine && <WorkspacePicker wsRef={ref} workspaces={machine.sessions.find((s) => s.name === ref.session)?.workspaces ?? []} />}
         {machine?.kind === "ssh" && <span className="files-machine">{machine.label}</span>}
         <span className="files-head-spacer" />
         {root && !rootMissing && (
@@ -240,6 +247,59 @@ function WorkspacePanel({ wsRef: ref, section }: { wsRef: WorkspaceRef; section:
             </button>
           </div>
         )
+      )}
+    </>
+  );
+}
+
+/** Lists the Session's other Workspaces; picking one shows it until the active item or selection moves. */
+function WorkspacePicker({ wsRef: ref, workspaces }: { wsRef: WorkspaceRef; workspaces: WorkspaceView[] }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!at) return;
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setAt(null);
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [at]);
+  if (workspaces.length < 2) return null;
+  const pick = (workspace_id: string) => {
+    setAt(null);
+    const ws = { machine_id: ref.machine_id, session: ref.session, workspace_id };
+    useFilesPanel.getState().pickWorkspace({ ws, anchor: panelAnchor(useApp.getState()) });
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className="icon-btn files-pick-ws"
+        aria-label="Choose workspace"
+        aria-haspopup="menu"
+        aria-expanded={at !== null}
+        title="Show another workspace of this session"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setAt(at ? null : { x: r.left, y: r.bottom + 4 });
+        }}
+      >
+        <ChevronIcon />
+      </button>
+      {at && (
+        // Clicks stay out of the header, which would toggle the panel.
+        <div className="overlay clear" onMouseDown={() => setAt(null)} onClick={(e) => e.stopPropagation()}>
+          <ul className="ctx-menu files-ws-menu" role="menu" aria-label="Workspaces" style={{ left: at.x, top: at.y }} onMouseDown={(e) => e.stopPropagation()}>
+            {workspaces.map((w) => {
+              const current = w.workspace_id === ref.workspace_id;
+              return (
+                <li key={w.workspace_id} role="none">
+                  <button type="button" role="menuitemradio" aria-checked={current} onClick={() => pick(w.workspace_id)}>
+                    {current ? <CheckIcon /> : <span className="icon" />}
+                    {w.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
     </>
   );

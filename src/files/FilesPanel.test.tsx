@@ -30,6 +30,8 @@ const ref = { machine_id: "local", session: "default", workspace_id: "w1" };
 
 const selected = { machine_id: "local", session: "default", pane_id: "p1" };
 
+const select = (pane_id: string) => act(() => useApp.getState().select({ machine_id: "local", session: "default", pane_id }));
+
 describe("FilesPanel", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -124,6 +126,51 @@ describe("FilesPanel", () => {
     expect(screen.getByText(/FILES/).textContent).toContain("other");
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_all", expect.objectContaining({ root: "/o" })));
     expect(useApp.getState().selected?.pane_id).toBe("p1");
+  });
+
+  it("picks another workspace of the session from the title, until the selection moves", async () => {
+    useApp.setState((s) => {
+      const m = s.machines.local;
+      const [w1, w2] = m.sessions[0].workspaces;
+      const w1b = { ...w1, tabs: [{ ...w1.tabs[0], panes: [...w1.tabs[0].panes, { pane_id: "p3", cwd: "/r" }] }] };
+      return { machines: { local: { ...m, sessions: [{ ...m.sessions[0], workspaces: [w1b, w2] }] } } as never };
+    });
+    select("p1");
+    render(<FilesPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose workspace" }));
+    const items = screen.getAllByRole("menuitemradio");
+    expect(items.map((i) => i.textContent)).toEqual(["app", "other"]);
+    expect(items[0].getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(items[1]);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_all", expect.objectContaining({ root: "/o" })));
+    expect(useFilesPanel.getState().collapsed).toBe(false);
+    select("p1");
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
+    select("p3");
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · app");
+  });
+
+  it("does not bring a pick back when the selection returns to where it was made", () => {
+    select("p1");
+    render(<FilesPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose workspace" }));
+    fireEvent.click(screen.getAllByRole("menuitemradio")[1]);
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
+    select("p2");
+    select("p1");
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · app");
+  });
+
+  it("offers no workspace choice in a session with one workspace", () => {
+    useApp.setState((s) => {
+      const m = s.machines.local;
+      return { machines: { local: { ...m, sessions: [{ ...m.sessions[0], workspaces: [m.sessions[0].workspaces[0]] }] } } as never };
+    });
+    render(<FilesPanel />);
+    expect(screen.queryByRole("button", { name: "Choose workspace" })).toBeNull();
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · app");
   });
 
   it("clicking a file opens it as the active preview item", async () => {

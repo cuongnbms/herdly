@@ -1,5 +1,5 @@
-import type { WorkspaceView } from "../lib/types";
-import { activeItem, selectedPane } from "../store/app";
+import { paneKey, type WorkspaceView } from "../lib/types";
+import { activeItem, selectedPane, viewedItems } from "../store/app";
 import type { AppState } from "../store/app";
 import { getFolder, suggestFolder } from "../workspaces/folder";
 import type { WorkspaceRef } from "../workspaces/folder";
@@ -46,4 +46,22 @@ export function workspaceOfSelection(state: Pick<AppState, "machines" | "selecte
 export function panelWorkspace(s: Pick<AppState, "machines" | "selected" | "tabs" | "viewed">): WorkspaceRef | null {
   const item = activeItem(s);
   return item?.kind === "file" ? item.ws : workspaceOfSelection(s);
+}
+
+/** A Workspace the user picked in the Files panel, kept while the active item and selection are still `anchor`. */
+export type PickedWorkspace = { ws: WorkspaceRef; anchor: string };
+
+/** What the Files panel follows: the active item and the selected Pane. A pick lasts until it changes. */
+export function panelAnchor(s: Pick<AppState, "selected" | "tabs" | "viewed">): string {
+  return `${viewedItems(s).active ?? ""}|${s.selected ? paneKey(s.selected) : ""}`;
+}
+
+/** The Workspace the Files panel shows: the picked one while its anchor holds and it still exists, else the followed one. */
+export function shownWorkspace(s: Pick<AppState, "machines" | "selected" | "tabs" | "viewed">, picked: PickedWorkspace | null): WorkspaceRef | null {
+  if (picked && picked.anchor === panelAnchor(s)) {
+    const { machine_id, session, workspace_id } = picked.ws;
+    const exists = s.machines[machine_id]?.sessions.find((x) => x.name === session)?.workspaces.some((w) => w.workspace_id === workspace_id);
+    if (exists) return picked.ws;
+  }
+  return panelWorkspace(s);
 }
