@@ -306,6 +306,13 @@ export function FileViewer({ item, online }: Props) {
             <OutlineIcon />
           </button>
         )}
+        {html && mode === "render" && !draft && shown?.kind === "text" && (
+          <div className="files-mode">
+            <button type="button" aria-pressed={scripts} onClick={() => setScripts((on) => !on)}>
+              Scripts
+            </button>
+          </div>
+        )}
         {(md || (html && !htmlCut)) && !draft && shown?.kind === "text" && (
           <div className="files-mode" role="group" aria-label={md ? "Markdown view" : "HTML view"}>
             {(["render", "source"] as const).map((m) => (
@@ -313,13 +320,6 @@ export function FileViewer({ item, online }: Props) {
                 {m === "render" ? "Render" : "Source"}
               </button>
             ))}
-          </div>
-        )}
-        {html && mode === "render" && !draft && shown?.kind === "text" && (
-          <div className="files-mode">
-            <button type="button" aria-pressed={scripts} onClick={() => setScripts((on) => !on)}>
-              Scripts
-            </button>
           </div>
         )}
         <div className="files-mode files-edit" role="group" aria-label="Edit">
