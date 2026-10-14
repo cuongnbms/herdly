@@ -5,6 +5,7 @@ import { paneKey } from "../lib/types";
 import { LIST_HEIGHT, useRecentAgents } from "../settings/recentAgents";
 import { useApp } from "../store/app";
 import { SectionHeader } from "./Sidebar";
+import { useListMotion } from "./listMotion";
 import { StatusDot } from "./StatusDot";
 
 /** Agents that are Blocked, Done (not yet seen) or Working, plus those that went idle within the last few minutes
@@ -31,15 +32,16 @@ export function AgentsSection() {
     const timer = setTimeout(() => setTick((n) => n + 1), next - now);
     return () => clearTimeout(timer);
   }, [all, since, keepIdleMs, tick]);
+  const { rows, ref } = useListMotion(cards, (c) => c.key, open);
   return (
     <section aria-label="Recent agents" className="agents-section">
       {open && <HeightHandle list={list} />}
       <SectionHeader id="agents" label="Recent agents" count={cards.length} />
       {/* A dragged height keeps the list's room even while it is empty. */}
-      {open && (cards.length > 0 || height !== null) && (
+      {open && (rows.length > 0 || height !== null) && (
         <ul className="tree agents-list" ref={list} style={height === null ? undefined : { height }}>
-          {cards.map((c) => (
-            <li key={c.key}>
+          {rows.map(({ item: c, leaving }) => (
+            <li key={c.key} ref={ref(c.key)} className={leaving ? "agents-leaving" : undefined} inert={leaving}>
               <button
                 className={"row agents-row agents-row-" + c.bucket + (c.key === selectedKey ? " active" : "")}
                 title={c.pane.cwd ?? undefined}
