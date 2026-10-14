@@ -7,6 +7,8 @@ export interface MenuItem {
   label: string;
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   onSelect: () => void;
+  /** Starts a new group: a line is drawn above it. */
+  group?: boolean;
 }
 
 export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
@@ -18,7 +20,8 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
   return (
     <div className="overlay clear" onMouseDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>
       <ul className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
-        {items.map((it) => (
+        {items.map((it, i) => [
+          it.group && i > 0 && <li key={`${it.label}-sep`} role="separator" className="ctx-menu-sep" />,
           <li key={it.label} role="none">
             <button
               role="menuitem"
@@ -30,8 +33,8 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
               <it.icon />
               {it.label}
             </button>
-          </li>
-        ))}
+          </li>,
+        ])}
       </ul>
     </div>
   );

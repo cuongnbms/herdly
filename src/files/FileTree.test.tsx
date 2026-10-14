@@ -314,6 +314,27 @@ describe("FileTree context menu", () => {
     expect(menuLabels()).toEqual(["New File…", "New Folder…", "Upload Files…", "Upload Folder…"]);
   });
 
+  it("draws a line between the menu's groups", async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(listing as any);
+    render(<FileTree machineId="m" root="/r" filesKey="m/default/c7" onOpen={() => {}} reloadKey={0} />);
+    const groups = () =>
+      Array.from(screen.getByRole("menu").children).reduce<string[][]>(
+        (gs, li) => (li.getAttribute("role") === "separator" ? [...gs, []] : (gs[gs.length - 1].push(li.textContent!), gs)),
+        [[]],
+      );
+    fireEvent.contextMenu(await screen.findByText("src"));
+    expect(groups()).toEqual([
+      ["New File…", "New Folder…"],
+      ["Copy Path", "Copy Relative Path"],
+      ["Upload Files…", "Upload Folder…", "Download"],
+      ["Rename…", "Delete…"],
+    ]);
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.contextMenu(screen.getByRole("tree"));
+    expect(groups()).toEqual([["New File…", "New Folder…"], ["Upload Files…", "Upload Folder…"]]);
+  });
+
   it("a right-click on the open menu does not swap it for the root menu", async () => {
     vi.mocked(invoke).mockReset();
     vi.mocked(invoke).mockImplementation(listing as any);

@@ -653,6 +653,7 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .ctx-menu button .icon { flex: none; width: 14px; height: 14px; opacity: 0.85; }
 .ctx-menu button:hover .icon, .ctx-menu button:focus-visible .icon { opacity: 1; }
 .ctx-menu button:hover, .ctx-menu button:focus-visible { background: var(--accent); color: var(--accent-fg); box-shadow: none; }
+.ctx-menu-sep { height: 1px; margin: 4px 6px; background: var(--line-2); }
 
 .dialog {
   display: flex; flex-direction: column; gap: 14px; width: 380px; max-width: 90vw; padding: 20px; box-sizing: border-box;
