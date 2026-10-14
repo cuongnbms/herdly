@@ -48,6 +48,28 @@ beforeEach(() => {
 });
 
 describe("Composer", () => {
+  it("takes the focus on mount when nothing else has it, as a new agent's Chat opens", () => {
+    render(<Composer pane={pane} agent="claude" />);
+    expect(document.activeElement).toBe(screen.getByRole("textbox"));
+  });
+  it("leaves the focus where the user is typing on mount", () => {
+    const other = document.body.appendChild(document.createElement("input"));
+    other.focus();
+    render(<Composer pane={pane} agent="claude" />);
+    expect(document.activeElement).toBe(other);
+    other.remove();
+  });
+  it("takes the focus on mount when nothing else has it, as a new agent's Chat opens", () => {
+    render(<Composer pane={pane} agent="claude" />);
+    expect(document.activeElement).toBe(screen.getByRole("textbox"));
+  });
+  it("leaves the focus where the user is typing on mount", () => {
+    const other = document.body.appendChild(document.createElement("input"));
+    other.focus();
+    render(<Composer pane={pane} agent="claude" />);
+    expect(document.activeElement).toBe(other);
+    other.remove();
+  });
   it("sends on Enter, newline on Shift+Enter", () => {
     render(<Composer pane={pane} agent="claude" />);
     const box = screen.getByRole("textbox");
@@ -361,8 +383,12 @@ describe("Composer suggestion", () => {
   });
 });
 
-const type = (box: HTMLElement, value: string) =>
+// A browser reports the moved caret with `selectionchange`; without it React's onSelect would
+// later replay a stale caret into the focused box.
+const type = (box: HTMLElement, value: string) => {
   fireEvent.change(box, { target: { value, selectionStart: value.length, selectionEnd: value.length } });
+  fireEvent(document, new Event("selectionchange"));
+};
 
 describe("Composer completion", () => {
   it("inserts the chosen slash command without sending and counts the pick", async () => {

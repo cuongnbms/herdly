@@ -140,6 +140,12 @@ export function Composer({
     if (!btwPath) return;
     setBtwMode(key, !btwOn);
   };
+  // A shown Composer takes the keyboard when nothing else holds it (as the Terminal does), so a
+  // new agent's Chat is ready to type into once the Terminal it replaced has taken its focus away.
+  useEffect(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body) box.current?.focus({ preventScroll: true });
+  }, []);
   // Entering the mode (by button or Cmd+B) puts the caret in the box.
   useEffect(() => {
     if (btwOn) box.current?.focus();
