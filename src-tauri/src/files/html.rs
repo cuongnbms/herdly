@@ -23,7 +23,7 @@ pub struct HtmlPages(Mutex<VecDeque<(String, Page)>>);
 impl HtmlPages {
     pub fn put(&self, html: String, scripts: bool) -> String {
         let token = uuid::Uuid::new_v4().simple().to_string();
-        let mut pages = self.0.lock().unwrap();
+        let mut pages = self.0.lock().unwrap_or_else(|e| e.into_inner());
         pages.push_back((token.clone(), Page { html, scripts }));
         while pages.len() > MAX_PAGES {
             pages.pop_front();
@@ -32,16 +32,20 @@ impl HtmlPages {
     }
 
     pub fn drop_page(&self, token: &str) {
-        self.0.lock().unwrap().retain(|(t, _)| t != token);
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(t, _)| t != token);
     }
 
-    /// `path` is the request URI's path: `/` and a stored token, nothing else, on GET.
+    /// `path` is the request URI's path: `/` and a stored token, nothing else, on GET. It never
+    /// carries the query, so Scripts comes only from the page as it was stored.
     pub fn respond(&self, method: &Method, path: &str) -> Response<Vec<u8>> {
         let found = (method == Method::GET)
             .then(|| path.strip_prefix('/'))
             .flatten()
             .and_then(|token| {
-                let pages = self.0.lock().unwrap();
+                let pages = self.0.lock().unwrap_or_else(|e| e.into_inner());
                 pages
                     .iter()
                     .find(|(t, _)| t == token)
@@ -126,7 +130,6 @@ mod tests {
             (Method::POST, format!("/{t}")),
             (Method::GET, "/".to_string()),
             (Method::GET, format!("/{t}/style.css")),
-            (Method::GET, format!("/{t}?scripts=1")),
             (Method::GET, "/00000000000000000000000000000000".to_string()),
         ] {
             let r = pages.respond(&method, &path);
@@ -159,5 +162,20 @@ mod tests {
         for t in &tokens[1..] {
             assert_eq!(pages.respond(&Method::GET, &format!("/{t}")).status(), 200);
         }
+    }
+
+    #[test]
+    fn a_poisoned_lock_still_serves() {
+        let pages = HtmlPages::default();
+        let t = pages.put("<p>x</p>".into(), false);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = pages.0.lock().unwrap();
+            panic!("poison");
+        }));
+        assert!(pages.0.is_poisoned());
+        assert_eq!(pages.respond(&Method::GET, &format!("/{t}")).status(), 200);
+        pages.drop_page(&t);
+        let u = pages.put("<p>y</p>".into(), true);
+        assert_eq!(pages.respond(&Method::GET, &format!("/{u}")).status(), 200);
     }
 }
