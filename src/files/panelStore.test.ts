@@ -39,3 +39,29 @@ describe("useFilesPanel view", () => {
     expect(panel.getState().view).toBe("files");
   });
 });
+
+describe("useFilesPanel pinned workspaces", () => {
+  beforeEach(() => localStorage.clear());
+  const w2 = { machine_id: "local", session: "default", workspace_id: "w2" };
+
+  it("pins one workspace per session and remembers it across launches", async () => {
+    const panel = await fresh();
+    panel.getState().pinWorkspace(w2);
+    panel.getState().pinWorkspace({ machine_id: "devbox", session: "s", workspace_id: "w9" });
+    expect((await fresh()).getState().pinned).toEqual({ "local/default": "w2", "devbox/s": "w9" });
+  });
+
+  it("unpins a session with null", async () => {
+    const panel = await fresh();
+    panel.getState().pinWorkspace(w2);
+    panel.getState().pinWorkspace({ machine_id: "local", session: "default", workspace_id: null });
+    expect((await fresh()).getState().pinned).toEqual({});
+  });
+
+  it("starts with none pinned on a stored value it does not read", async () => {
+    localStorage.setItem("herdly:files-pinned", "[1]");
+    expect((await fresh()).getState().pinned).toEqual({});
+    localStorage.setItem("herdly:files-pinned", "{");
+    expect((await fresh()).getState().pinned).toEqual({});
+  });
+});

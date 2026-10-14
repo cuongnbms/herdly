@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { panelAnchor, resolveRoot, shownWorkspace, workspaceOfSelection } from "./root";
+import { resolveRoot, shownWorkspace, workspaceOfSelection } from "./root";
 import { setFolder } from "../workspaces/folder";
 
 const ref = { machine_id: "local", session: "default", workspace_id: "w1" };
@@ -52,21 +52,15 @@ describe("shownWorkspace", () => {
       viewed: null,
     }) as never;
 
-  it("is the followed workspace with nothing picked", () => {
-    expect(shownWorkspace(state("p-w1"), null)).toEqual(w1);
+  it("is the followed workspace with nothing pinned", () => {
+    expect(shownWorkspace(state("p-w1"), {})).toEqual(w1);
+    expect(shownWorkspace(state("p-w1"), { "local/other": "w2" })).toEqual(w1);
   });
-  it("is the picked workspace while the anchor it was picked on holds", () => {
-    const s = state("p-w1");
-    expect(shownWorkspace(s, { ws: w2, anchor: panelAnchor(s) })).toEqual(w2);
+  it("is the session's pinned workspace, whichever of its panes is selected", () => {
+    expect(shownWorkspace(state("p-w1"), { "local/default": "w2" })).toEqual(w2);
+    expect(shownWorkspace(state("p-w2"), { "local/default": "w1" })).toEqual(w1);
   });
-  it("follows again once the selection moves", () => {
-    const picked = { ws: w2, anchor: panelAnchor(state("p-w1")) };
-    expect(panelAnchor(state("p-w2"))).not.toBe(picked.anchor);
-    expect(shownWorkspace(state("p-w2"), picked)).toEqual(w2);
-    expect(shownWorkspace(state("p-w1"), { ws: w2, anchor: "other" })).toEqual(w1);
-  });
-  it("follows when the picked workspace is gone", () => {
-    const s = state("p-w1", ["w1"]);
-    expect(shownWorkspace(s, { ws: w2, anchor: panelAnchor(s) })).toEqual(w1);
+  it("follows when the pinned workspace is gone", () => {
+    expect(shownWorkspace(state("p-w1", ["w1"]), { "local/default": "w2" })).toEqual(w1);
   });
 });

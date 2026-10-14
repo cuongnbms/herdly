@@ -1385,6 +1385,7 @@ button.composer-model:disabled { cursor: default; }
 .files-pick-ws { flex: none; margin-left: -4px; }
 .files-panel-head .files-pick-ws .icon { width: 12px; height: 12px; transform: rotate(90deg); }
 .files-ws-menu button { white-space: nowrap; }
+.files-ws-follow { margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .files-collapse .icon { transform: rotate(90deg); transition: transform 0.1s; }
 .files-collapse.collapsed .icon { transform: none; }
 .files-set-folder-row { flex: none; padding: 0 12px 6px; }

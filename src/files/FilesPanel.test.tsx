@@ -128,39 +128,35 @@ describe("FilesPanel", () => {
     expect(useApp.getState().selected?.pane_id).toBe("p1");
   });
 
-  it("picks another workspace of the session from the title, until the selection moves", async () => {
-    useApp.setState((s) => {
-      const m = s.machines.local;
-      const [w1, w2] = m.sessions[0].workspaces;
-      const w1b = { ...w1, tabs: [{ ...w1.tabs[0], panes: [...w1.tabs[0].panes, { pane_id: "p3", cwd: "/r" }] }] };
-      return { machines: { local: { ...m, sessions: [{ ...m.sessions[0], workspaces: [w1b, w2] }] } } as never };
-    });
+  it("pins another workspace of the session from the title, kept whichever pane is selected", async () => {
     select("p1");
     render(<FilesPanel />);
     fireEvent.click(screen.getByRole("button", { name: "Choose workspace" }));
     const items = screen.getAllByRole("menuitemradio");
-    expect(items.map((i) => i.textContent)).toEqual(["app", "other"]);
+    expect(items.map((i) => i.textContent)).toEqual(["Follow active item", "app", "other"]);
     expect(items[0].getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(items[1]);
+    expect(items[1].getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(items[2]);
     expect(screen.queryByRole("menu")).toBeNull();
     expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_all", expect.objectContaining({ root: "/o" })));
     expect(useFilesPanel.getState().collapsed).toBe(false);
-    select("p1");
-    expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
-    select("p3");
-    expect(screen.getByText(/FILES/).textContent).toBe("FILES · app");
-  });
-
-  it("does not bring a pick back when the selection returns to where it was made", () => {
-    select("p1");
-    render(<FilesPanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Choose workspace" }));
-    fireEvent.click(screen.getAllByRole("menuitemradio")[1]);
-    expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
     select("p2");
     select("p1");
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
+    fireEvent.click(screen.getByRole("button", { name: "Choose workspace" }));
+    expect(screen.getAllByRole("menuitemradio").map((i) => i.getAttribute("aria-checked"))).toEqual(["false", "false", "true"]);
+  });
+
+  it("Follow active item unpins the session", () => {
+    useFilesPanel.getState().pinWorkspace({ machine_id: "local", session: "default", workspace_id: "w2" });
+    select("p1");
+    render(<FilesPanel />);
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
+    fireEvent.click(screen.getByRole("button", { name: "Choose workspace" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Follow active item" }));
     expect(screen.getByText(/FILES/).textContent).toBe("FILES · app");
+    expect(useFilesPanel.getState().pinned).toEqual({});
   });
 
   it("offers no workspace choice in a session with one workspace", () => {

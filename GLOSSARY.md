@@ -57,7 +57,7 @@ A way of viewing a Pane: the **Terminal lens** (the raw attached terminal) or th
 _Avoid_: mode, view
 
 **Files panel**:
-The file tree of one Workspace under the agent list, following the active Open item (the user may pick another Workspace of the same Session from its title, kept until the active item or selected Pane changes), rooted at its Workspace folder (else the selected Pane's cwd). It reads files, creates, renames and deletes files and folders, and moves files in by Upload and out by Download; it never overwrites an item (editing a file's content is the File viewer's **Edit mode**).
+The file tree of one Workspace under the agent list, following the active Open item (or the Workspace the user pinned from its title for that Session, kept across Panes and launches until they choose Follow active item), rooted at its Workspace folder (else the selected Pane's cwd). It reads files, creates, renames and deletes files and folders, and moves files in by Upload and out by Download; it never overwrites an item (editing a file's content is the File viewer's **Edit mode**).
 _Avoid_: files overlay, file browser
 
 **Open item**:

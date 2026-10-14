@@ -1,10 +1,12 @@
 import { create } from "zustand";
-import type { PickedWorkspace } from "./root";
+import { sessionKey } from "../sidebar/groups";
+import type { WorkspaceRef } from "../workspaces/folder";
 
 /** What the agents column shows: the agent list, the Files panel, or both split. */
 export type SidebarView = "agents" | "files" | "split";
 
 const VIEW_KEY = "herdly:sidebar-view";
+const PINNED_KEY = "herdly:files-pinned";
 
 function storedView(): SidebarView {
   try {
@@ -14,6 +16,18 @@ function storedView(): SidebarView {
     /* storage unavailable */
   }
   return "split";
+}
+
+function storedPinned(): Record<string, string> {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(PINNED_KEY) ?? "{}");
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      return Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => typeof e[1] === "string"));
+    }
+  } catch {
+    /* storage unavailable or unreadable */
+  }
+  return {};
 }
 
 interface FilesPanelState {
@@ -28,11 +42,12 @@ interface FilesPanelState {
   /** The ticks already acted on; a panel that mounts with a newer tick still has a request to act on. */
   focusHandled: number;
   gotoHandled: number;
-  /** The Workspace picked from the panel's title; see `shownWorkspace`. Not persisted. */
-  picked: PickedWorkspace | null;
+  /** The workspace_id pinned from the panel's title for each Session (by sessionKey); see `shownWorkspace`. Persisted. */
+  pinned: Record<string, string>;
   setView(view: SidebarView): void;
   setHeight(px: number): void;
-  pickWorkspace(picked: PickedWorkspace | null): void;
+  /** Pins a Workspace for its Session; a null workspace_id goes back to following the active item. */
+  pinWorkspace(ref: Omit<WorkspaceRef, "workspace_id"> & { workspace_id: string | null }): void;
   setCollapsed(on: boolean): void;
   /** Expands the panel (out of the agents view) and asks for the tree's focus. */
   focusTree(): void;
@@ -42,7 +57,7 @@ interface FilesPanelState {
   handled(which: "tree" | "goto" | "both"): void;
 }
 
-/** Layout of the Files panel for the running app; only the view is persisted. */
+/** Layout of the Files panel for the running app; only the view and the pinned Workspaces are persisted. */
 export const useFilesPanel = create<FilesPanelState>((set) => ({
   view: storedView(),
   height: null,
@@ -51,7 +66,7 @@ export const useFilesPanel = create<FilesPanelState>((set) => ({
   gotoTick: 0,
   focusHandled: 0,
   gotoHandled: 0,
-  picked: null,
+  pinned: storedPinned(),
   setView: (view) => {
     try {
       localStorage.setItem(VIEW_KEY, view);
@@ -61,7 +76,17 @@ export const useFilesPanel = create<FilesPanelState>((set) => ({
     set({ view });
   },
   setHeight: (height) => set({ height }),
-  pickWorkspace: (picked) => set({ picked }),
+  pinWorkspace: ({ machine_id, session, workspace_id }) =>
+    set((s) => {
+      const { [sessionKey(machine_id, session)]: _, ...rest } = s.pinned;
+      const pinned = workspace_id === null ? rest : { ...rest, [sessionKey(machine_id, session)]: workspace_id };
+      try {
+        localStorage.setItem(PINNED_KEY, JSON.stringify(pinned));
+      } catch {
+        /* storage unavailable */
+      }
+      return { pinned };
+    }),
   setCollapsed: (collapsed) => set({ collapsed }),
   focusTree: () => set((s) => ({ collapsed: false, view: shownView(s.view), focusTick: s.focusTick + 1 })),
   focusGoto: () => set((s) => ({ collapsed: false, view: shownView(s.view), gotoTick: s.gotoTick + 1 })),

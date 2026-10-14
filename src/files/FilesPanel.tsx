@@ -12,8 +12,9 @@ import { useFilesBus } from "./bus";
 import { FileTree } from "./FileTree";
 import { GoToFile } from "./GoToFile";
 import { filesHidden, useFilesPanel } from "./panelStore";
-import { panelAnchor, panelRoot, shownWorkspace, type Root } from "./root";
+import { panelRoot, shownWorkspace, type Root } from "./root";
 import { filesKey, useFiles, wsKey } from "./store";
+import { sessionKey } from "../sidebar/groups";
 import { useWatch } from "./useWatch";
 
 /** Each half of the agents column keeps at least this many pixels. */
@@ -21,13 +22,8 @@ const HALF_MIN = 120;
 
 /** The file tree of the active item's Workspace (else the selected Pane's), under the agent list. */
 export function FilesPanel() {
-  const picked = useFilesPanel((s) => s.picked);
-  const ws = useApp(useShallow((s) => shownWorkspace(s, picked)));
-  // A pick ends the first time the active item or selection moves, even if it later moves back.
-  const anchor = useApp(panelAnchor);
-  useEffect(() => {
-    if (picked && picked.anchor !== anchor) useFilesPanel.getState().pickWorkspace(null);
-  }, [picked, anchor]);
+  const pinned = useFilesPanel((s) => s.pinned);
+  const ws = useApp(useShallow((s) => shownWorkspace(s, pinned)));
   const view = useFilesPanel((s) => s.view);
   const collapsed = useFilesPanel(filesHidden);
   const height = useFilesPanel((s) => s.height);
@@ -252,9 +248,10 @@ function WorkspacePanel({ wsRef: ref, section }: { wsRef: WorkspaceRef; section:
   );
 }
 
-/** Lists the Session's other Workspaces; picking one shows it until the active item or selection moves. */
+/** Pins one of the Session's Workspaces to the panel, or goes back to following the active item. */
 function WorkspacePicker({ wsRef: ref, workspaces }: { wsRef: WorkspaceRef; workspaces: WorkspaceView[] }) {
   const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const pinned = useFilesPanel((s) => s.pinned[sessionKey(ref.machine_id, ref.session)] ?? null);
   useEffect(() => {
     if (!at) return;
     const key = (e: KeyboardEvent) => e.key === "Escape" && setAt(null);
@@ -262,11 +259,16 @@ function WorkspacePicker({ wsRef: ref, workspaces }: { wsRef: WorkspaceRef; work
     return () => window.removeEventListener("keydown", key);
   }, [at]);
   if (workspaces.length < 2) return null;
-  const pick = (workspace_id: string) => {
+  const pin = (workspace_id: string | null) => {
     setAt(null);
-    const ws = { machine_id: ref.machine_id, session: ref.session, workspace_id };
-    useFilesPanel.getState().pickWorkspace({ ws, anchor: panelAnchor(useApp.getState()) });
+    useFilesPanel.getState().pinWorkspace({ machine_id: ref.machine_id, session: ref.session, workspace_id });
   };
+  // A pin to a Workspace that is gone shows as following: that is what the panel does.
+  const shownPin = pinned !== null && workspaces.some((w) => w.workspace_id === pinned) ? pinned : null;
+  const choices: { id: string | null; label: string }[] = [
+    { id: null, label: "Follow active item" },
+    ...workspaces.map((w) => ({ id: w.workspace_id, label: w.label })),
+  ];
   return (
     <>
       <button
@@ -275,7 +277,7 @@ function WorkspacePicker({ wsRef: ref, workspaces }: { wsRef: WorkspaceRef; work
         aria-label="Choose workspace"
         aria-haspopup="menu"
         aria-expanded={at !== null}
-        title="Show another workspace of this session"
+        title="Pin a workspace of this session to Files"
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           setAt(at ? null : { x: r.left, y: r.bottom + 4 });
@@ -287,17 +289,14 @@ function WorkspacePicker({ wsRef: ref, workspaces }: { wsRef: WorkspaceRef; work
         // Clicks stay out of the header, which would toggle the panel.
         <div className="overlay clear" onMouseDown={() => setAt(null)} onClick={(e) => e.stopPropagation()}>
           <ul className="ctx-menu files-ws-menu" role="menu" aria-label="Workspaces" style={{ left: at.x, top: at.y }} onMouseDown={(e) => e.stopPropagation()}>
-            {workspaces.map((w) => {
-              const current = w.workspace_id === ref.workspace_id;
-              return (
-                <li key={w.workspace_id} role="none">
-                  <button type="button" role="menuitemradio" aria-checked={current} onClick={() => pick(w.workspace_id)}>
-                    {current ? <CheckIcon /> : <span className="icon" />}
-                    {w.label}
-                  </button>
-                </li>
-              );
-            })}
+            {choices.map((c) => (
+              <li key={c.id ?? ""} role="none" className={c.id === null ? "files-ws-follow" : undefined}>
+                <button type="button" role="menuitemradio" aria-checked={c.id === shownPin} onClick={() => pin(c.id)}>
+                  {c.id === shownPin ? <CheckIcon /> : <span className="icon" />}
+                  {c.label}
+                </button>
+              </li>
+            ))}
           </ul>
         </div>
       )}
