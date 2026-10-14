@@ -66,11 +66,17 @@ is blocked by the app's policy.
 
 Layers that keep a page away from `herdr_call`:
 
-1. `sandbox` without `allow-same-origin`: the frame has an opaque origin, `parent.document` throws.
-2. Tauri's IPC and init scripts are injected into the main frame only (`for_main_frame_only: true`
-   in tauri 2.12 `manager/webview.rs`, and in the dialog, opener and notification plugins'
-   `js_init_script`), so the frame has no `__TAURI_INTERNALS__`.
-3. The page's own CSP has `connect-src 'none'`, so it cannot reach `ipc://` either.
+1. The invoke key, the gate that matters. The frame can post to WebKit's IPC bridge, and Tauri
+   counts `herdly-html://` as a local origin (`is_local_url` accepts every registered custom
+   scheme), but Tauri rejects any IPC message without the per-launch `__TAURI_INVOKE_KEY__`.
+2. The frame cannot get the key: Tauri's init scripts, which carry it, are injected into the main
+   frame only (`for_main_frame_only: true` in tauri 2.12 `manager/webview.rs`, and in the dialog,
+   opener and notification plugins' `js_init_script`), so the frame has no `__TAURI_INTERNALS__`;
+   and `sandbox` without `allow-same-origin` gives it an opaque origin, so `parent.document` throws.
+3. The page's own CSP has `connect-src 'none'`, which closes the `ipc://` fetch path (not the
+   message bridge).
+
+See [ADR 0009](../../adr/0009-html-preview-own-scheme.md) for what to re-check when upgrading tauri.
 
 ## Frontend
 
@@ -85,6 +91,10 @@ after a newer one, or after unmount, drop their token at once.
 
 A reload (Files watch, ⌘R) gives a new `text`, so a new token and a reloaded frame; the page's
 scroll position is lost, since a cross-origin frame's scroll cannot be read.
+
+Keys typed while the frame has focus go to the page, not to the app's shortcuts. When the pointer
+leaves a focused frame, focus moves to the wrapper (`tabIndex={-1}`, no outline), which gives the
+keys back; WebKit leaves focus in the frame on the iframe's own `blur()`.
 
 ### `src/files/FileView.tsx`
 

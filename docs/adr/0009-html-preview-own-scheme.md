@@ -23,9 +23,19 @@ policies chosen when it was stored (Scripts off: no script, no network; Scripts 
 The frame is always `sandbox`ed without `allow-same-origin`. The app policy (`csp` and `devCsp`)
 gains exactly `frame-src herdly-html:`; all of 0004 otherwise stands.
 
-This wins over relaxing the app's own `script-src` because the page runs in an opaque origin with
-no Tauri IPC (Tauri injects its init and IPC scripts into the main frame only), so the app keeps
-0004's guarantee that no injected script runs beside `herdr_call`.
+This wins over relaxing the app's own `script-src` because the page runs in an opaque origin
+without the invoke key, so the app keeps 0004's guarantee that no injected script runs beside
+`herdr_call`.
+
+What actually keeps a page with Scripts on away from `herdr_call` is Tauri's invoke key. A frame
+can reach WebKit's IPC bridge (`window.webkit.messageHandlers` exists in every frame), and Tauri
+treats any registered custom scheme as a local origin (`is_local_url`, tauri 2.12
+`webview/mod.rs`), so `herdly-html://` passes the origin check, and the app has no ACL manifest
+for its own commands. A request without the per-launch `__TAURI_INVOKE_KEY__` is rejected
+(`on_message`, `webview/mod.rs`; the postMessage format requires the key, `ipc/protocol.rs`). The
+frame cannot learn the key: Tauri's init scripts, which carry it, run in the main frame only
+(`for_main_frame_only: true`), and the opaque origin stops the frame reading the parent. The
+page's `connect-src 'none'` closes the `ipc://` fetch path, but not the message bridge.
 
 ## Consequences
 
@@ -36,8 +46,11 @@ no Tauri IPC (Tauri injects its init and IPC scripts into the main frame only), 
   with Scripts on may read.
 - With Scripts on, a page can still send data out through an `https:` image or script URL. The
   user turned Scripts on for that file; `connect-src 'none'` closes `fetch`/XHR/WebSocket only.
-- If Tauri ever injects its IPC into all frames, layer 2 is gone; the opaque origin and the page's
-  `connect-src 'none'` still stand. Re-check `for_main_frame_only` when upgrading tauri.
+- If Tauri ever injects its init scripts into all frames, a page with Scripts on gets the invoke
+  key and passes as local, and nothing else stops it calling `herdr_call`. When upgrading tauri,
+  re-check that its init scripts (and the plugins' `js_init_script`) stay `for_main_frame_only`,
+  how `is_local_url` treats custom schemes, and that IPC messages still must carry
+  `__TAURI_INVOKE_KEY__`.
 
 ## Alternatives considered
 
