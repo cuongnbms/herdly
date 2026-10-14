@@ -1,21 +1,51 @@
 import { create } from "zustand";
 import { sessionKey } from "../sidebar/groups";
+import { useApp } from "../store/app";
 import type { WorkspaceRef } from "../workspaces/folder";
 
 /** What the agents column shows: the agent list, the Files panel, or both split. */
 export type SidebarView = "agents" | "files" | "split";
 
+/** The last chosen view: what a Session that never chose one shows. */
 const VIEW_KEY = "herdly:sidebar-view";
+const VIEWS_KEY = "herdly:sidebar-views";
 const PINNED_KEY = "herdly:files-pinned";
+
+const isView = (v: unknown): v is SidebarView => v === "agents" || v === "files" || v === "split";
 
 function storedView(): SidebarView {
   try {
     const v = localStorage.getItem(VIEW_KEY);
-    if (v === "agents" || v === "files" || v === "split") return v;
+    if (isView(v)) return v;
   } catch {
     /* storage unavailable */
   }
   return "split";
+}
+
+function storedViews(): Record<string, SidebarView> {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(VIEWS_KEY) ?? "{}");
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      return Object.fromEntries(Object.entries(v).filter((e): e is [string, SidebarView] => isView(e[1])));
+    }
+  } catch {
+    /* storage unavailable or unreadable */
+  }
+  return {};
+}
+
+function store(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** The viewed Session's sessionKey, or null with none viewed. */
+function viewedKey(v = useApp.getState().viewed): string | null {
+  return v ? sessionKey(v.machine_id, v.session) : null;
 }
 
 function storedPinned(): Record<string, string> {
@@ -31,7 +61,10 @@ function storedPinned(): Record<string, string> {
 }
 
 interface FilesPanelState {
+  /** The viewed Session's view (see `views`), else the last chosen one. */
   view: SidebarView;
+  /** The view chosen in each Session (by sessionKey). Persisted. */
+  views: Record<string, SidebarView>;
   /** Pixels of the panel; null is half the column. */
   height: number | null;
   collapsed: boolean;
@@ -44,6 +77,7 @@ interface FilesPanelState {
   gotoHandled: number;
   /** The workspace_id pinned from the panel's title for each Session (by sessionKey); see `shownWorkspace`. Persisted. */
   pinned: Record<string, string>;
+  /** Chooses the view for the viewed Session, and for Sessions that never chose one. */
   setView(view: SidebarView): void;
   setHeight(px: number): void;
   /** Pins a Workspace for its Session; a null workspace_id goes back to following the active item. */
@@ -57,9 +91,10 @@ interface FilesPanelState {
   handled(which: "tree" | "goto" | "both"): void;
 }
 
-/** Layout of the Files panel for the running app; only the view and the pinned Workspaces are persisted. */
+/** Layout of the Files panel for the running app; only the views and the pinned Workspaces are persisted. */
 export const useFilesPanel = create<FilesPanelState>((set) => ({
   view: storedView(),
+  views: storedViews(),
   height: null,
   collapsed: false,
   focusTick: 0,
@@ -67,24 +102,20 @@ export const useFilesPanel = create<FilesPanelState>((set) => ({
   focusHandled: 0,
   gotoHandled: 0,
   pinned: storedPinned(),
-  setView: (view) => {
-    try {
-      localStorage.setItem(VIEW_KEY, view);
-    } catch {
-      /* storage unavailable */
-    }
-    set({ view });
-  },
+  setView: (view) =>
+    set((s) => {
+      const key = viewedKey();
+      const views = key === null ? s.views : { ...s.views, [key]: view };
+      store(VIEW_KEY, view);
+      store(VIEWS_KEY, JSON.stringify(views));
+      return { view, views };
+    }),
   setHeight: (height) => set({ height }),
   pinWorkspace: ({ machine_id, session, workspace_id }) =>
     set((s) => {
       const { [sessionKey(machine_id, session)]: _, ...rest } = s.pinned;
       const pinned = workspace_id === null ? rest : { ...rest, [sessionKey(machine_id, session)]: workspace_id };
-      try {
-        localStorage.setItem(PINNED_KEY, JSON.stringify(pinned));
-      } catch {
-        /* storage unavailable */
-      }
+      store(PINNED_KEY, JSON.stringify(pinned));
       return { pinned };
     }),
   setCollapsed: (collapsed) => set({ collapsed }),
@@ -96,6 +127,13 @@ export const useFilesPanel = create<FilesPanelState>((set) => ({
       gotoHandled: which === "tree" ? s.gotoHandled : s.gotoTick,
     })),
 }));
+
+// Viewing another Session shows the view it chose, else the last chosen one.
+useApp.subscribe((s, prev) => {
+  const key = viewedKey(s.viewed);
+  if (key === viewedKey(prev.viewed)) return;
+  useFilesPanel.setState({ view: (key !== null && useFilesPanel.getState().views[key]) || storedView() });
+});
 
 /** A view that shows the Files panel: the agents view gives way to split, unpersisted. */
 function shownView(view: SidebarView): SidebarView {
