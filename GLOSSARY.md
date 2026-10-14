@@ -72,6 +72,10 @@ _Avoid_: file lens (a Lens views a Pane)
 The File viewer's editor for a text file, entered with Edit and left with Done. Save writes only when the file on disk is still the version the edit started from; otherwise the user picks Reload or Overwrite.
 _Avoid_: editor view, write mode
 
+**Scripts**:
+Whether an HTML file rendered in the File viewer may run its own JavaScript and load scripts, styles, images and fonts from the web. Off every time the file is shown again; the user turns it on per file.
+_Avoid_: JS mode, trusted page
+
 **Draft**:
 The unsaved content of one file Open item in Edit mode, based on one version of the file on disk. It survives switching Open items, and is never replaced by the Files watch while it differs from that version.
 _Avoid_: buffer, unsaved file

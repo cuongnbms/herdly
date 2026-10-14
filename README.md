@@ -77,4 +77,4 @@ The ignored integration tests start isolated sessions named `herdly-test-*` on t
 - The Chat lens supports Claude Code and pi only; other agents open in the Terminal lens.
 - A terminal that is attached elsewhere is held: use Take over to attach it here.
 
-See `CONTEXT.md` for the domain vocabulary, `docs/` for the design spec and ADRs, and `THIRD_PARTY_NOTICES.md` for upstream credits.
+See `GLOSSARY.md` for the domain vocabulary, `docs/` for the design spec and ADRs, and `THIRD_PARTY_NOTICES.md` for upstream credits.
