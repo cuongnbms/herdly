@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), Channel: class {} }));
 const dialogOpen = vi.fn();
@@ -559,5 +559,142 @@ describe("FileTree edits", () => {
     finish("b.md");
     await waitFor(() => expect(onMoved).toHaveBeenCalledWith("a.md", "b.md"));
     expect(vi.mocked(invoke).mock.calls.slice(before)).toEqual([]);
+  });
+});
+
+describe("FileTree drag and drop", () => {
+  const listing = async (cmd: string, args: any) => {
+    if (cmd === "files_move") return args.toDir ? `${args.toDir}/${args.rel.split("/").pop()}` : args.rel.split("/").pop();
+    if (cmd !== "files_list_dir") return null;
+    if (args.rel === "") return [{ name: "lib", kind: "dir" }, { name: "src", kind: "dir" }, { name: "a.md", kind: "file" }];
+    return args.rel === "src" ? [{ name: "x.ts", kind: "file" }] : [{ name: "y.ts", kind: "file" }];
+  };
+  const calls = (cmd: string) => vi.mocked(invoke).mock.calls.filter(([c]) => c === cmd).map(([, a]) => a);
+  const lists = (rel: string) => calls("files_list_dir").filter((a: any) => a.rel === rel).length;
+  const dt = () => {
+    const data: Record<string, string> = {};
+    return {
+      data,
+      types: [] as string[],
+      effectAllowed: "",
+      dropEffect: "",
+      setData(t: string, v: string) {
+        data[t] = v;
+        this.types.push(t);
+      },
+      getData: (t: string) => data[t] ?? "",
+      setDragImage() {},
+    };
+  };
+  const row = (name: string) => screen.getByText(name).closest("[role=treeitem]") as HTMLElement;
+  /** Drags `from` over `to`; `taken` tells whether the drop would be accepted. */
+  const over = (from: HTMLElement, to: HTMLElement) => {
+    const dataTransfer = dt();
+    fireEvent.dragStart(from, { dataTransfer });
+    fireEvent.dragEnter(to, { dataTransfer });
+    const ev = createEvent.dragOver(to, { dataTransfer });
+    fireEvent(to, ev);
+    return { dataTransfer, taken: ev.defaultPrevented };
+  };
+  const drag = (from: HTMLElement, to: HTMLElement) => {
+    const { dataTransfer, taken } = over(from, to);
+    fireEvent.drop(to, { dataTransfer });
+    fireEvent.dragEnd(from, { dataTransfer });
+    return taken;
+  };
+  const setup = async (fk: string, onMoved = vi.fn()) => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(listing as any);
+    vi.mocked(showToast).mockClear();
+    const view = render(<FileTree machineId="m" root="/r" filesKey={fk} onOpen={() => {}} onMoved={onMoved} reloadKey={0} />);
+    await screen.findByText("src");
+    return { ...view, onMoved };
+  };
+
+  it("moves a file into the folder it is dropped on, then relists both and opens the folder", async () => {
+    const { onMoved } = await setup("m/default/d1");
+    const [root, src] = [lists(""), lists("src")];
+    expect(drag(row("a.md"), row("src"))).toBe(true);
+    await waitFor(() => expect(onMoved).toHaveBeenCalledWith("a.md", "src/a.md"));
+    expect(calls("files_move")).toEqual([{ machineId: "m", root: "/r", rel: "a.md", toDir: "src" }]);
+    await waitFor(() => expect(lists("")).toBeGreaterThan(root));
+    expect(lists("src")).toBeGreaterThan(src);
+    expect(row("src").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("moves into the folder of a file row, and to the root from empty space", async () => {
+    const { onMoved } = await setup("m/default/d2");
+    fireEvent.click(row("src"));
+    await screen.findByText("x.ts");
+    expect(drag(row("x.ts"), row("a.md"))).toBe(true);
+    await waitFor(() => expect(onMoved).toHaveBeenCalledWith("src/x.ts", "x.ts"));
+    fireEvent.click(row("lib"));
+    await screen.findByText("y.ts");
+    expect(drag(row("y.ts"), screen.getByRole("tree"))).toBe(true);
+    await waitFor(() => expect(onMoved).toHaveBeenCalledWith("lib/y.ts", "y.ts"));
+    expect(calls("files_move").map((a: any) => a.toDir)).toEqual(["", ""]);
+  });
+
+  it("moves a folder into another folder", async () => {
+    const { onMoved } = await setup("m/default/d3");
+    expect(drag(row("lib"), row("src"))).toBe(true);
+    await waitFor(() => expect(onMoved).toHaveBeenCalledWith("lib", "src/lib"));
+  });
+
+  it("refuses a drop on the item itself, inside it, or into the folder it is already in", async () => {
+    const { onMoved } = await setup("m/default/d4");
+    fireEvent.click(row("src"));
+    await screen.findByText("x.ts");
+    expect(drag(row("src"), row("src"))).toBe(false);
+    expect(drag(row("src"), row("x.ts"))).toBe(false);
+    expect(drag(row("a.md"), row("a.md"))).toBe(false);
+    expect(drag(row("a.md"), screen.getByRole("tree"))).toBe(false);
+    expect(drag(row("x.ts"), row("src"))).toBe(false);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls("files_move")).toEqual([]);
+    expect(onMoved).not.toHaveBeenCalled();
+  });
+
+  it("highlights the folder a drop goes into, or the tree for the root, until the drag ends", async () => {
+    await setup("m/default/d5");
+    let { dataTransfer } = over(row("a.md"), row("src"));
+    expect(row("src").classList.contains("drop-into")).toBe(true);
+    fireEvent.dragEnd(row("a.md"), { dataTransfer });
+    expect(row("src").classList.contains("drop-into")).toBe(false);
+    fireEvent.click(row("lib"));
+    await screen.findByText("y.ts");
+    ({ dataTransfer } = over(row("y.ts"), row("a.md")));
+    expect(screen.getByRole("tree").classList.contains("drop-into")).toBe(true);
+    fireEvent.dragEnd(row("y.ts"), { dataTransfer });
+    expect(screen.getByRole("tree").classList.contains("drop-into")).toBe(false);
+  });
+
+  it("opens a collapsed folder held under the drag", async () => {
+    await setup("m/default/d6");
+    over(row("a.md"), row("src"));
+    expect(row("src").getAttribute("aria-expanded")).toBe("false");
+    await waitFor(() => expect(row("src").getAttribute("aria-expanded")).toBe("true"), { timeout: 1500 });
+  });
+
+  it("ignores drags that did not start in the tree", async () => {
+    await setup("m/default/d7");
+    const dataTransfer = dt();
+    const ev = createEvent.dragOver(row("src"), { dataTransfer });
+    fireEvent(row("src"), ev);
+    expect(ev.defaultPrevented).toBe(false);
+    fireEvent.drop(row("src"), { dataTransfer });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls("files_move")).toEqual([]);
+  });
+
+  it("shows why a move failed and reports nothing", async () => {
+    const { onMoved } = await setup("m/default/d8");
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args: any) => {
+      if (cmd === "files_move") throw { code: "invalid", message: "src/a.md already exists" };
+      return listing(cmd, args);
+    });
+    drag(row("a.md"), row("src"));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("Cannot move a.md: src/a.md already exists"));
+    expect(onMoved).not.toHaveBeenCalled();
   });
 });

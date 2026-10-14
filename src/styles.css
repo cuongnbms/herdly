@@ -1435,6 +1435,7 @@ button.composer-model:disabled { cursor: default; }
 .files-tree-caret { flex: none; display: flex; width: 12px; color: var(--fg-3); }
 .files-tree-caret .icon { width: 12px; height: 12px; transition: transform 0.1s; }
 .files-tree-row.open .files-tree-caret .icon { transform: rotate(90deg); }
+.files-tree-row.drop-into, .files-tree.drop-into { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .files-tree-row .files-tree-icon { width: 14px; height: 14px; color: var(--fg-3); }
 .files-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .files-tree-error { display: flex; align-items: center; gap: 8px; padding-top: 3px; padding-bottom: 3px; color: var(--err); font-size: 12px; }

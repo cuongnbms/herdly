@@ -927,6 +927,19 @@ pub async fn files_rename(
 }
 
 #[tauri::command]
+pub async fn files_move(
+    mgr: Mgr<'_>,
+    machine_id: String,
+    root: String,
+    rel: String,
+    to_dir: String,
+) -> Result<String, AppError> {
+    let root = files_root(&mgr, &machine_id, &root)?;
+    let t = mgr.transport(&machine_id)?;
+    edit::move_to(&*t, &root, &rel, &to_dir).await
+}
+
+#[tauri::command]
 pub async fn files_delete(
     mgr: Mgr<'_>,
     machine_id: String,

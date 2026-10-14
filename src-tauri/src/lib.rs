@@ -95,6 +95,7 @@ pub fn run() {
             commands::files_download,
             commands::files_create,
             commands::files_rename,
+            commands::files_move,
             commands::files_delete,
             commands::files_write,
             commands::files_html_put,

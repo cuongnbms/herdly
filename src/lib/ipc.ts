@@ -153,6 +153,9 @@ export const filesCreate = (machineId: string, root: string, rel: string, isDir:
 /** Renames `rel` within its folder; resolves to its new path. */
 export const filesRename = (machineId: string, root: string, rel: string, name: string) =>
   invoke<string>("files_rename", { machineId, root, rel, name });
+/** Moves `rel` into the folder `toDir` ("" for the root), keeping its name; resolves to its new path. */
+export const filesMove = (machineId: string, root: string, rel: string, toDir: string) =>
+  invoke<string>("files_move", { machineId, root, rel, toDir });
 export const filesDelete = (machineId: string, root: string, rel: string) =>
   invoke<void>("files_delete", { machineId, root, rel });
 /** Rejects with code `conflict` when the file is no longer `expected`. */

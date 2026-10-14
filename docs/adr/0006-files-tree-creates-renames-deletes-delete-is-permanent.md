@@ -18,6 +18,9 @@ though, and ssh Machines have no Trash to send items to.
   taken (a dangling link included) fails with "already exists" instead of picking a free name,
   because the user typed that name on purpose. Rename stays inside the item's folder and uses
   0005's `mv -n` plus check-before and check-after, without `-T`.
+- **Dragging an item onto a folder moves it there** (onto a file: into that file's folder; onto
+  the tree's empty space: to the root), keeping its name and following Rename's rules. A folder
+  never moves into itself or below itself. There is no confirm, as for Rename. (Added 2026-10-14.)
 - **Delete removes the item permanently (`rm -rf`) after a confirm dialog** that names the item
   and says when a folder's contents go too. It works the same on the local Machine and on ssh
   Machines. The root itself, and paths with empty, `.` or `..` segments, are refused. That also
@@ -31,7 +34,7 @@ in the user's home that nobody empties.
 ## Consequences
 
 - A deleted item cannot be recovered from the app. The confirm dialog is the only safety net.
-- Open file tabs follow a rename and close on a delete, and the tree's folds and recent files
+- Open file tabs follow a rename or move and close on a delete, and the tree's folds and recent files
   follow too, so nothing points at a path that no longer exists.
 - Delete runs with Upload's long timeout, not the 30 s exec timeout, so a large tree can finish.
 

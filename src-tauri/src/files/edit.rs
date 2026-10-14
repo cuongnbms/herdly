@@ -1,4 +1,4 @@
-//! Create, Rename and Delete of items below a root (ADR-0006). Create and Rename never replace
+//! Create, Rename, Move and Delete of items below a root (ADR-0006). Create and Rename never replace
 //! anything; Delete is the one destructive write, and the UI confirms it first. Write replaces
 //! a file's content, but only while the file is still the version the editor loaded (ADR-0007).
 
@@ -26,6 +26,15 @@ const RENAME_SCRIPT: &str = r#"cd "$1" || exit 3
 [ -e "./$2" ] || [ -L "./$2" ] || exit 5
 if [ -e "./$3" ] || [ -L "./$3" ]; then exit 4; fi
 mv -n -- "./$2" "./$3" || exit 1
+if [ -e "./$2" ] || [ -L "./$2" ]; then exit 4; fi"#;
+
+/// `$1` root, `$2` item, `$3` the folder it moves into (`.` for the root), `$4` its new path.
+/// Exit 6 when that folder is missing; otherwise as RENAME_SCRIPT.
+const MOVE_SCRIPT: &str = r#"cd "$1" || exit 3
+[ -e "./$2" ] || [ -L "./$2" ] || exit 5
+[ -d "./$3" ] || exit 6
+if [ -e "./$4" ] || [ -L "./$4" ]; then exit 4; fi
+mv -n -- "./$2" "./$4" || exit 1
 if [ -e "./$2" ] || [ -L "./$2" ]; then exit 4; fi"#;
 
 /// `$1` root, `$2` item. Exit 5 when it is missing. A linked folder loses only its link: the
@@ -136,6 +145,41 @@ pub async fn rename(t: &dyn Transport, root: &str, rel: &str, name: &str) -> App
     match out.status {
         0 => Ok(to),
         4 => Err(script_error(4, &out.stderr, root, &to)),
+        s => Err(script_error(s, &out.stderr, root, rel)),
+    }
+}
+
+/// Moves `rel` into the folder `to_dir` (`""` for the root), keeping its name; returns the new
+/// path. Never replaces anything, and never moves a folder into itself.
+pub async fn move_to(t: &dyn Transport, root: &str, rel: &str, to_dir: &str) -> AppResult<String> {
+    check_item(rel)?;
+    if !to_dir.is_empty() {
+        check_item(to_dir)?;
+    }
+    if to_dir == rel || to_dir.starts_with(&format!("{rel}/")) {
+        return Err(AppError::new(
+            "invalid",
+            format!("cannot move {rel} into itself"),
+        ));
+    }
+    let name = rel.rsplit_once('/').map_or(rel, |(_, n)| n);
+    let to = if to_dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{to_dir}/{name}")
+    };
+    if to == rel {
+        return Ok(to);
+    }
+    let dir = if to_dir.is_empty() { "." } else { to_dir };
+    let out = exec_bytes(t, &script_argv(MOVE_SCRIPT, &[root, rel, dir, &to])).await?;
+    match out.status {
+        0 => Ok(to),
+        4 => Err(script_error(4, &out.stderr, root, &to)),
+        6 => Err(AppError::new(
+            "not_found",
+            format!("no such folder: {to_dir:?}"),
+        )),
         s => Err(script_error(s, &out.stderr, root, rel)),
     }
 }
@@ -328,6 +372,95 @@ mod tests {
             "src"
         );
         assert!(Path::new(&format!("{r}/src")).is_dir());
+    }
+
+    #[tokio::test]
+    async fn moves_a_file_into_a_folder() {
+        let (_t, r) = root();
+        std::fs::write(format!("{r}/a b.ts"), "x").unwrap();
+        let to = move_to(&LocalTransport, &r, "a b.ts", "src").await.unwrap();
+        assert_eq!(to, "src/a b.ts");
+        assert!(!Path::new(&format!("{r}/a b.ts")).exists());
+        assert_eq!(
+            std::fs::read_to_string(format!("{r}/src/a b.ts")).unwrap(),
+            "x"
+        );
+    }
+
+    #[tokio::test]
+    async fn moves_a_folder_to_the_root() {
+        let (_t, r) = root();
+        std::fs::create_dir_all(format!("{r}/src/lib/x")).unwrap();
+        let to = move_to(&LocalTransport, &r, "src/lib", "").await.unwrap();
+        assert_eq!(to, "lib");
+        assert!(Path::new(&format!("{r}/lib/x")).is_dir());
+        assert!(!Path::new(&format!("{r}/src/lib")).exists());
+    }
+
+    #[tokio::test]
+    async fn move_never_replaces() {
+        let (_t, r) = root();
+        std::fs::write(format!("{r}/a"), "new").unwrap();
+        std::fs::write(format!("{r}/src/a"), "old").unwrap();
+        let e = move_to(&LocalTransport, &r, "a", "src").await.unwrap_err();
+        assert!(e.message.contains("src/a already exists"), "{e:?}");
+        assert_eq!(std::fs::read_to_string(format!("{r}/a")).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(format!("{r}/src/a")).unwrap(),
+            "old"
+        );
+    }
+
+    #[tokio::test]
+    async fn move_refuses_a_folder_into_itself_or_below() {
+        let (_t, r) = root();
+        std::fs::create_dir_all(format!("{r}/src/lib")).unwrap();
+        for to_dir in ["src", "src/lib"] {
+            let e = move_to(&LocalTransport, &r, "src", to_dir)
+                .await
+                .unwrap_err();
+            assert_eq!(code(e), "invalid", "{to_dir:?}");
+        }
+        assert!(Path::new(&format!("{r}/src/lib")).is_dir());
+    }
+
+    #[tokio::test]
+    async fn move_into_its_own_folder_is_a_no_op() {
+        let (_t, r) = root();
+        std::fs::write(format!("{r}/src/a"), "x").unwrap();
+        assert_eq!(
+            move_to(&LocalTransport, &r, "src/a", "src").await.unwrap(),
+            "src/a"
+        );
+        assert!(Path::new(&format!("{r}/src/a")).is_file());
+    }
+
+    #[tokio::test]
+    async fn move_to_a_missing_folder_is_not_found() {
+        let (_t, r) = root();
+        std::fs::write(format!("{r}/a"), "x").unwrap();
+        let e = move_to(&LocalTransport, &r, "a", "nope").await.unwrap_err();
+        assert_eq!(code(e), "not_found");
+        let e = move_to(&LocalTransport, &r, "gone", "src")
+            .await
+            .unwrap_err();
+        assert_eq!(code(e), "not_found");
+        assert!(Path::new(&format!("{r}/a")).is_file());
+    }
+
+    #[tokio::test]
+    async fn move_rejects_bad_paths() {
+        let (_t, r) = root();
+        for (rel, to_dir) in [
+            ("", "src"),
+            ("../a", "src"),
+            ("a", "../x"),
+            ("a", "src/"),
+            ("a", "/tmp"),
+        ] {
+            let e = move_to(&LocalTransport, &r, rel, to_dir).await.unwrap_err();
+            assert_eq!(code(e), "invalid", "{rel:?} -> {to_dir:?}");
+        }
     }
 
     #[test]

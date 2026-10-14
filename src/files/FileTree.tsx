@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { filesListDir } from "../lib/ipc";
@@ -18,7 +18,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from "../ui/icons";
-import { createItem, deleteItem, renameItem } from "./edit";
+import { createItem, deleteItem, moveItem, renameItem } from "./edit";
 import { startDownload, startUpload } from "./transfer";
 import { useFiles } from "./store";
 import { dirtyUnder } from "./drafts";
@@ -51,6 +51,16 @@ const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
 const basename = (rel: string) => rel.slice(rel.lastIndexOf("/") + 1);
 const parentOf = (rel: string) => rel.slice(0, Math.max(rel.lastIndexOf("/"), 0));
 const isFolder = (kind: string | undefined) => kind === "dir" || kind === "dirlink";
+/** Whether `rel` may move into the folder `dir`: not into itself, below itself, or the folder it is already in. */
+const canMoveInto = (rel: string, dir: string) => dir !== parentOf(rel) && dir !== rel && !dir.startsWith(`${rel}/`);
+const ITEM_TYPE = "application/x-herdr-file";
+/** How long a collapsed folder sits under a drag before it opens. */
+const OPEN_DELAY_MS = 600;
+/** True when the pointer is outside `e.currentTarget`; does not rely on `relatedTarget`, which WebKit may leave null. */
+const leftTarget = (e: DragEvent) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+};
 /** A linked folder looks like a folder, named like a symlink. */
 const kindClass = (kind: FileEntry["kind"]) => (kind === "dirlink" ? "files-tree-dir files-tree-symlink" : `files-tree-${kind}`);
 
@@ -206,6 +216,70 @@ export function FileTree({ machineId, root, filesKey, onOpen, onMoved, reloadKey
     if (done) onMoved?.(rel, null);
   };
 
+  const move = async (rel: string, dir: string) => {
+    const startedIn = scopeRef.current;
+    const to = await moveItem(machineId, root, rel, dir);
+    if (!to) return;
+    // Another root is shown now: its listings and folds are not this move's to touch.
+    if (scopeRef.current === startedIn) {
+      load(parentOf(rel));
+      load(dir);
+      if (dir && !useFiles.getState().ws(filesKey).expanded.includes(dir)) toggleDir(filesKey, dir);
+    }
+    onMoved?.(rel, to);
+  };
+
+  /** The item being dragged, while the drag started in this tree. */
+  const dragRel = useRef<string | null>(null);
+  /** The folder a drop would move it into ("" for the root), highlighted. */
+  const [dropDir, setDropDir] = useState<string | null>(null);
+  const openTimer = useRef<{ dir: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const clearOpen = () => {
+    if (openTimer.current) clearTimeout(openTimer.current.timer);
+    openTimer.current = null;
+  };
+  useEffect(() => clearOpen, []);
+  const endDrag = () => {
+    dragRel.current = null;
+    setDropDir(null);
+    clearOpen();
+  };
+
+  /** A drag over `dir`; `closed` is the collapsed folder under the pointer, which opens after a moment. */
+  const dragOver = (e: DragEvent, dir: string, closed: string | null) => {
+    const from = dragRel.current;
+    if (from === null) return;
+    e.stopPropagation();
+    if (!canMoveInto(from, dir)) {
+      e.dataTransfer.dropEffect = "none";
+      setDropDir(null);
+      clearOpen();
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropDir(dir);
+    if (closed === null) clearOpen();
+    else if (openTimer.current?.dir !== closed) {
+      clearOpen();
+      const timer = setTimeout(() => {
+        openTimer.current = null;
+        if (!useFiles.getState().ws(filesKey).expanded.includes(closed)) toggleDir(filesKey, closed);
+      }, OPEN_DELAY_MS);
+      openTimer.current = { dir: closed, timer };
+    }
+  };
+
+  const drop = (e: DragEvent, dir: string) => {
+    const from = dragRel.current;
+    endDrag();
+    if (from === null) return;
+    e.stopPropagation();
+    if (!canMoveInto(from, dir)) return;
+    e.preventDefault();
+    void move(from, dir);
+  };
+
   const menuItems = (m: { rel: string | null; dir: string }): MenuItem[] => {
     const list: MenuItem[] = [
       { label: "New File…", icon: PlusIcon, onSelect: () => setDialog({ kind: "new", dir: m.dir, isDir: false }) },
@@ -353,8 +427,19 @@ export function FileTree({ machineId, root, filesKey, onOpen, onMoved, reloadKey
             aria-expanded={isDir ? open : undefined}
             data-rel={rel}
             data-kind={ent.kind}
-            className={`files-tree-row ${kindClass(ent.kind)}${open ? " open" : ""}`}
+            className={`files-tree-row ${kindClass(ent.kind)}${open ? " open" : ""}${isDir && dropDir === rel ? " drop-into" : ""}`}
             style={{ paddingLeft: 8 + depth * 14 }}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(ITEM_TYPE, rel);
+              e.dataTransfer.effectAllowed = "move";
+              dragRel.current = rel;
+            }}
+            onDragEnd={endDrag}
+            // A folder row takes the drop into itself; a file row into the folder it is in.
+            onDragEnter={(e) => dragOver(e, isDir ? rel : dir, isDir && !open ? rel : null)}
+            onDragOver={(e) => dragOver(e, isDir ? rel : dir, isDir && !open ? rel : null)}
+            onDrop={(e) => drop(e, isDir ? rel : dir)}
             onClick={() => {
               // Every click toggles a folder, however quick: a fast second click closes it again.
               if (isDir) toggleDir(filesKey, rel);
@@ -390,11 +475,20 @@ export function FileTree({ machineId, root, filesKey, onOpen, onMoved, reloadKey
 
   return (
     <div
-      className="files-tree"
+      className={`files-tree${dropDir === "" ? " drop-into" : ""}`}
       role="tree"
       tabIndex={-1}
       ref={treeRef}
       onKeyDown={onKeyDown}
+      // The tree's empty space moves an item to the root.
+      onDragEnter={(e) => dragOver(e, "", null)}
+      onDragOver={(e) => dragOver(e, "", null)}
+      onDragLeave={(e) => {
+        if (!leftTarget(e)) return;
+        setDropDir(null);
+        clearOpen();
+      }}
+      onDrop={(e) => drop(e, "")}
       onContextMenu={(e) => {
         // React bubbles events from the portalled menu here too; only the tree's own space counts.
         if (!treeRef.current?.contains(e.target as Node)) return;
