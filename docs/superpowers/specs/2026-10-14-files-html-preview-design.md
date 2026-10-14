@@ -38,7 +38,7 @@ Out (non-goals):
 
 A managed `HtmlPages` store: `Mutex` around an insertion-ordered map `token → Page { html: String, scripts: bool }`,
 at most 16 entries (inserting a 17th drops the oldest; a safety net for a missed `drop`). Tokens
-are 128 random bits, hex.
+are random UUID v4s in simple form (32 hex digits; the `uuid` crate is already a dependency).
 
 Commands (registered in `lib.rs`, wrapped in `src/lib/ipc.ts` as `filesHtmlPut` / `filesHtmlDrop`):
 
