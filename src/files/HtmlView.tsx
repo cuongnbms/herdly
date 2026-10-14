@@ -15,6 +15,7 @@ export function HtmlView({ text, scripts, reloads = 0 }: { text: string; scripts
   const [error, setError] = useState<string | null>(null);
   const shownToken = useRef<string | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let stale = false;
@@ -53,10 +54,13 @@ export function HtmlView({ text, scripts, reloads = 0 }: { text: string; scripts
   }
   return (
     <div
+      ref={wrap}
       className="files-html-wrap"
+      tabIndex={-1}
       // Keys typed in the frame go to its own document, past the app's shortcuts; leaving it gives them back.
+      // WebKit keeps focus in the frame on the iframe's blur(), so focus moves to the wrapper instead.
       onPointerLeave={() => {
-        if (frame.current && document.activeElement === frame.current) frame.current.blur();
+        if (frame.current && document.activeElement === frame.current) wrap.current?.focus();
       }}
     >
       {shown && (

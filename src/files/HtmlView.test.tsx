@@ -93,17 +93,15 @@ describe("HtmlView", () => {
   it("gives the keys back to the app when the pointer leaves a focused frame", async () => {
     render(<HtmlView text="a" scripts={false} />);
     await shows("t1");
-    const wrap = document.querySelector(".files-html-wrap")!;
-    // jsdom does not move focus on an iframe's blur(), so the call is what is checked.
-    const blur = vi.spyOn(frame()!, "blur");
+    const wrap = document.querySelector(".files-html-wrap") as HTMLElement;
     const other = document.body.appendChild(document.createElement("button"));
     other.focus();
     fireEvent.pointerLeave(wrap);
     expect(document.activeElement).toBe(other);
-    expect(blur).not.toHaveBeenCalled();
     frame()!.focus();
+    expect(document.activeElement).toBe(frame());
     fireEvent.pointerLeave(wrap);
-    expect(blur).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(wrap);
     other.remove();
   });
 });

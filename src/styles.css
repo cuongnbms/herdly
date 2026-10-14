@@ -1400,7 +1400,7 @@ button.composer-model:disabled { cursor: default; }
 .files-banner-conflict.flash { background: color-mix(in srgb, var(--amber) 35%, transparent); }
 .files-side-scroll { flex: 1; min-height: 0; overflow: auto; padding-bottom: 8px; display: flex; flex-direction: column; }
 .files-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--surface-code); }
-.files-html-wrap { flex: 1; min-height: 0; display: flex; }
+.files-html-wrap { flex: 1; min-height: 0; display: flex; outline: none; }
 .files-html { flex: 1; width: 100%; border: 0; background: #fff; }
 .files-empty { flex: 1; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--fg-3); font-size: 13px; }
 
