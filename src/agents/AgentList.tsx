@@ -140,12 +140,6 @@ function WorkspaceGroup({ machineId, session, workspace: ws, entries }: { machin
     if (!cwd) return a.newAgent(machineId, session, ws);
     start(agent);
   };
-  const add = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (!a) return;
-    if (!cwd) return a.newAgent(machineId, session, ws);
-    const r = e.currentTarget.getBoundingClientRect();
-    a.menuAt(r.left, r.bottom + 4, AGENTS.map((agent) => agentItem(agent, agent)));
-  };
   // The panel follows the active item, else the selected Pane: browsing a Workspace selects its selected
   // pane again (or its first), which also leaves a file item of another Workspace.
   const browse = () => {
@@ -180,9 +174,13 @@ function WorkspaceGroup({ machineId, session, workspace: ws, entries }: { machin
             </span>
           )}
         </button>
-        <button className="ws-add" aria-label={`New agent in ${ws.label}`} onClick={add}>
-          <PlusIcon />
-        </button>
+        <div role="group" aria-label={`Start in ${ws.label}`} className="ws-quick">
+          {AGENTS.map((agent) => (
+            <button key={agent} aria-label={`New ${agent} in ${ws.label}`} title={`New ${agent}`} onClick={() => quick(agent)}>
+              <AgentIcon agent={agent === "shell" ? null : agent} />
+            </button>
+          ))}
+        </div>
       </div>
       {open && entries.length > 0 && (
         <ul className="agent-cards">
@@ -206,15 +204,6 @@ function WorkspaceGroup({ machineId, session, workspace: ws, entries }: { machin
             ),
           )}
         </ul>
-      )}
-      {open && (
-        <div role="group" aria-label={`Start in ${ws.label}`} className="ws-quick">
-          {AGENTS.map((agent) => (
-            <button key={agent} aria-label={`New ${agent} in ${ws.label}`} title={`New ${agent}`} onClick={() => quick(agent)}>
-              <AgentIcon agent={agent === "shell" ? null : agent} />
-            </button>
-          ))}
-        </div>
       )}
     </section>
   );

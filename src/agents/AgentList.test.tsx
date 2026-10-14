@@ -93,7 +93,7 @@ describe("AgentList", () => {
     expect(within(w1).getByText("Idempotent payments")).toBeTruthy();
     expect(within(screen.getByRole("group", { name: "web" })).getAllByRole("listitem")).toHaveLength(3);
     expect(within(screen.getByRole("group", { name: "empty" })).getByText("no folder")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "New agent in empty" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New claude in empty" })).toBeTruthy();
   });
 
   it("collapses a workspace from its header and remembers it", () => {
@@ -103,9 +103,9 @@ describe("AgentList", () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(within(web).queryByText("Guard export")).toBeNull();
-    // The other workspaces stay open, and the add button stays on the collapsed header.
+    // The other workspaces stay open, and the icon row stays on the collapsed header.
     expect(screen.getByText("Idempotent payments")).toBeTruthy();
-    expect(within(web).getByRole("button", { name: "New agent in web" })).toBeTruthy();
+    expect(within(web).getByRole("button", { name: "New claude in web" })).toBeTruthy();
     unmount();
     render(<AgentList />);
     expect(within(screen.getByRole("group", { name: "web" })).queryByText("Guard export")).toBeNull();
@@ -150,50 +150,27 @@ describe("AgentList", () => {
     expect(screen.getByText("Guard export").closest(".tab-group")).toBeNull();
   });
 
-  it("picks the agent from a menu under the header button", () => {
-    setFolder({ machine_id: "local", session: "default", workspace_id: "w2" }, "/srv/web");
-    render(<AgentList />);
-    fireEvent.click(screen.getByRole("button", { name: "New agent in web" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getAllByRole("menuitem").map((b) => b.textContent)).toEqual(["claude", "pi", "shell"]);
-    fireEvent.click(screen.getByRole("menuitem", { name: "claude" }));
-    expect(herdrCall).toHaveBeenCalledWith("local", "default", "tab.create", { workspace_id: "w2", cwd: "/srv/web", label: "claude", focus: false });
-    expect(screen.queryByRole("menu")).toBeNull();
-  });
-
   it("starts in a pane's cwd and keeps it as the folder when none is stored", () => {
     render(<AgentList />);
-    fireEvent.click(screen.getByRole("button", { name: "New agent in web" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "shell" }));
+    fireEvent.click(screen.getByRole("button", { name: "New shell in web" }));
     expect(herdrCall).toHaveBeenCalledWith("local", "default", "tab.create", { workspace_id: "w2", cwd: "/x", label: "shell", focus: false });
     expect(getFolder({ machine_id: "local", session: "default", workspace_id: "w2" })).toBe("/x");
   });
 
-  it("starts an agent or a shell from the icon row under a workspace", () => {
+  it("starts an agent or a shell from the icon row in a workspace's header", () => {
     setFolder({ machine_id: "local", session: "default", workspace_id: "w2" }, "/srv/web");
     render(<AgentList />);
     const row = screen.getByRole("group", { name: "Start in web" });
+    expect(row.closest(".ws-head")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New agent in web" })).toBeNull();
     expect(within(row).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["New claude in web", "New pi in web", "New shell in web"]);
     fireEvent.click(within(row).getByRole("button", { name: "New shell in web" }));
     expect(herdrCall).toHaveBeenCalledWith("local", "default", "tab.create", { workspace_id: "w2", cwd: "/srv/web", label: "shell", focus: false });
   });
 
-  it("hides the icon row while the workspace is collapsed", () => {
-    render(<AgentList />);
-    fireEvent.click(screen.getByRole("button", { name: "web", expanded: true }));
-    expect(screen.queryByRole("group", { name: "Start in web" })).toBeNull();
-    expect(screen.getByRole("group", { name: "Start in checkout-api" })).toBeTruthy();
-  });
-
   it("asks for a folder when an icon is clicked in a workspace with none to offer", () => {
     render(<AgentList />);
     fireEvent.click(screen.getByRole("button", { name: "New claude in empty" }));
-    expect(screen.getByRole("dialog", { name: "New agent" })).toBeTruthy();
-  });
-
-  it("asks for a folder in the dialog when the workspace has none to offer", () => {
-    render(<AgentList />);
-    fireEvent.click(screen.getByRole("button", { name: "New agent in empty" }));
     expect(screen.queryByRole("menu")).toBeNull();
     expect(screen.getByRole("dialog", { name: "New agent" })).toBeTruthy();
     expect(screen.getByText("New agent in empty", { selector: "h3" })).toBeTruthy();

@@ -28,8 +28,6 @@ type Dialog =
 
 export interface Actions {
   menu: (e: MouseEvent, items: MenuItem[]) => void;
-  /** The menu at a point, e.g. under the button that opened it. */
-  menuAt: (x: number, y: number, items: MenuItem[]) => void;
   rename: (title: string, initial: string, run: (label: string) => Promise<unknown>, submitLabel?: string) => void;
   confirm: (title: string, message: string, confirmLabel: string, run: () => Promise<unknown>) => void;
   /** No `machineId`: the dialog offers a machine picker. `groupId`: place the new session there. */
@@ -79,7 +77,6 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY, items });
       },
-      menuAt: (x, y, items) => setMenu({ x, y, items }),
       rename: (title, initial, run, submitLabel = "Rename") => setDialog({ kind: "rename", title, initial, submitLabel, run }),
       confirm: (title, message, confirmLabel, run) => setDialog({ kind: "confirm", title, message, confirmLabel, run }),
       newAgent: (machineId, session, workspace) => setDialog({ kind: "agent", machineId, session, workspace }),
