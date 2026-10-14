@@ -1,7 +1,7 @@
 # HTML preview in the File viewer
 
 Date: 2026-10-14
-Status: approved
+Status: implemented
 
 ## Purpose
 
