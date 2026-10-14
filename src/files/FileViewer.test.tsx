@@ -11,6 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({
       const text = texts[args?.rel ?? ""] ?? "x";
       return { kind: "text", text, truncated: truncated.has(args?.rel ?? ""), size: text.length, mtime: 1 };
     }
+    if (cmd === "files_html_put") return "t";
     return [];
   }),
   Channel: class {
@@ -54,6 +55,55 @@ describe("FileViewer", () => {
     useApp.setState(useApp.getInitialState(), true);
     vi.mocked(writeText).mockClear();
     vi.mocked(showToast).mockClear();
+  });
+
+  const frame = () => document.querySelector("iframe.files-html");
+
+  it("opens an HTML file rendered, even past the highlight limit, with Scripts off until clicked", async () => {
+    texts["r.html"] = "<h1>R</h1>" + "x".repeat(HIGHLIGHT_LIMIT);
+    render(<FileViewer item={file("r.html")} online />);
+    await waitFor(() => expect(frame()).not.toBeNull());
+    expect(screen.getByRole("group", { name: "HTML view" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Render" }).getAttribute("aria-pressed")).toBe("true");
+    const scripts = screen.getByRole("button", { name: "Scripts" });
+    expect(scripts.getAttribute("aria-pressed")).toBe("false");
+    expect(frame()!.getAttribute("sandbox")).toBe("");
+    fireEvent.click(scripts);
+    expect(scripts.getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(frame()!.getAttribute("sandbox")).toBe("allow-scripts"));
+    fireEvent.click(screen.getByRole("button", { name: "Source" }));
+    expect(screen.queryByRole("button", { name: "Scripts" })).toBeNull();
+    expect(frame()).toBeNull();
+  });
+
+  it("starts with Scripts off again when the file is shown again", async () => {
+    texts["r.html"] = "<p>r</p>";
+    const { rerender } = render(<FileViewer key="r" item={file("r.html")} online />);
+    fireEvent.click(await screen.findByRole("button", { name: "Scripts" }));
+    rerender(<FileViewer key="other" item={file("a.txt")} online />);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Scripts" })).toBeNull());
+    rerender(<FileViewer key="r" item={file("r.html")} online />);
+    expect((await screen.findByRole("button", { name: "Scripts" })).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("shows a cut HTML file as source only", async () => {
+    texts["cut.html"] = "<p>cut";
+    truncated.add("cut.html");
+    render(<FileViewer item={file("cut.html")} online />);
+    await waitFor(() => expect(document.querySelector(".files-text")).not.toBeNull());
+    expect(screen.queryByRole("group", { name: "HTML view" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Scripts" })).toBeNull();
+    expect(frame()).toBeNull();
+  });
+
+  it("⌘F on a rendered HTML file switches to Source and finds there", async () => {
+    texts["f.html"] = "<p>needle</p>";
+    render(<FileViewer item={file("f.html")} online />);
+    await waitFor(() => expect(frame()).not.toBeNull());
+    press("f");
+    expect(screen.getByRole("button", { name: "Source" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(screen.getByPlaceholderText("Find in file"), { target: { value: "needle" } });
+    expect(document.querySelector(".files-find-count")!.textContent).toBe("1 / 1");
   });
 
   it("opens a small markdown file rendered and one over the highlight limit as source", async () => {

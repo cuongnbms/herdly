@@ -16,6 +16,7 @@ import { FileEditor } from "./FileEditor";
 import { FindBar } from "./FindBar";
 import { FileView, type FileMode } from "./FileView";
 import { latestOnly, STALE } from "./latest";
+import { isHtml, isMarkdown } from "./kinds";
 import { HIGHLIGHT_LIMIT } from "./limits";
 import { lineOfHash } from "./links";
 import { useOutline } from "./outlineStore";
@@ -23,7 +24,6 @@ import { absPath } from "./root";
 import { saveDraft } from "./save";
 import { filesKey, useFiles } from "./store";
 
-const isMarkdown = (rel: string) => /\.(md|markdown)$/i.test(rel);
 const errMessage = (e: unknown) => String((e as { message?: string } | null)?.message ?? e);
 
 interface Props {
@@ -147,13 +147,20 @@ export function FileViewer({ item, online }: Props) {
   const toLine = jump !== null && lineOfHash(jump) !== null;
   // Kept in the files store, so it survives switching to another item and back.
   const chosen = useFiles((s) => s.ws(key).modes[rel]);
-  const mode: FileMode = chosen ?? (large || toLine ? "source" : "render");
+  const html = isHtml(rel);
+  // A page cut at the read limit is broken markup; it is shown as source only.
+  const htmlCut = html && shown?.truncated === true;
+  // A rendered page is a frame, so size is no reason to open it as source.
+  const mode: FileMode = htmlCut ? "source" : (chosen ?? (((large && !html) || toLine) ? "source" : "render"));
+  const [scripts, setScripts] = useState(false);
   const setMode = (m: FileMode) => useFiles.getState().setMode(key, rel, m);
   // The other view searches afresh from what it shows on screen.
   useEffect(() => setIndex(0), [mode]);
   const md = isMarkdown(rel);
   // Rendered markdown is searched in its rendered text, everything else in its source.
-  const searchable = shown !== null && shown.kind === "text" && shown.text !== null;
+  const textShown = shown !== null && shown.kind === "text" && shown.text !== null;
+  // A rendered HTML page is a frame whose text cannot be searched from here.
+  const searchable = textShown && !(html && mode === "render");
   /** Reported by the view, which owns the matches and where the search starts. */
   const [status, setStatus] = useState<FindStatus>({ count: 0, index: 0 });
   const count = findOpen && searchable && query ? status.count : 0;
@@ -235,7 +242,9 @@ export function FileViewer({ item, online }: Props) {
       return;
     } else if (!e.shiftKey && k === "f") {
       e.preventDefault();
-      if (!searchable) return;
+      // Find in a rendered page happens in its source.
+      if (textShown && html && mode === "render") setMode("source");
+      else if (!searchable) return;
       setFindOpen(true);
       setFindFocus((n) => n + 1);
     } else if (k === "g") {
@@ -297,13 +306,20 @@ export function FileViewer({ item, online }: Props) {
             <OutlineIcon />
           </button>
         )}
-        {md && !draft && shown?.kind === "text" && (
-          <div className="files-mode" role="group" aria-label="Markdown view">
+        {(md || (html && !htmlCut)) && !draft && shown?.kind === "text" && (
+          <div className="files-mode" role="group" aria-label={md ? "Markdown view" : "HTML view"}>
             {(["render", "source"] as const).map((m) => (
               <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
                 {m === "render" ? "Render" : "Source"}
               </button>
             ))}
+          </div>
+        )}
+        {html && !htmlCut && mode === "render" && !draft && (
+          <div className="files-mode">
+            <button type="button" aria-pressed={scripts} onClick={() => setScripts((on) => !on)}>
+              Scripts
+            </button>
           </div>
         )}
         <div className="files-mode files-edit" role="group" aria-label="Edit">
@@ -373,6 +389,7 @@ export function FileViewer({ item, online }: Props) {
             rel={rel}
             content={shown}
             mode={mode}
+            scripts={scripts}
             onMode={(m) => setMode(m)}
             onOpen={onLink}
             find={findOpen && searchable && query ? { query, index, matchCase } : null}
