@@ -169,6 +169,28 @@ describe("AgentList", () => {
     expect(getFolder({ machine_id: "local", session: "default", workspace_id: "w2" })).toBe("/x");
   });
 
+  it("starts an agent or a shell from the icon row under a workspace", () => {
+    setFolder({ machine_id: "local", session: "default", workspace_id: "w2" }, "/srv/web");
+    render(<AgentList />);
+    const row = screen.getByRole("group", { name: "Start in web" });
+    expect(within(row).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["New claude in web", "New pi in web", "New shell in web"]);
+    fireEvent.click(within(row).getByRole("button", { name: "New shell in web" }));
+    expect(herdrCall).toHaveBeenCalledWith("local", "default", "tab.create", { workspace_id: "w2", cwd: "/srv/web", label: "shell", focus: false });
+  });
+
+  it("hides the icon row while the workspace is collapsed", () => {
+    render(<AgentList />);
+    fireEvent.click(screen.getByRole("button", { name: "web", expanded: true }));
+    expect(screen.queryByRole("group", { name: "Start in web" })).toBeNull();
+    expect(screen.getByRole("group", { name: "Start in checkout-api" })).toBeTruthy();
+  });
+
+  it("asks for a folder when an icon is clicked in a workspace with none to offer", () => {
+    render(<AgentList />);
+    fireEvent.click(screen.getByRole("button", { name: "New claude in empty" }));
+    expect(screen.getByRole("dialog", { name: "New agent" })).toBeTruthy();
+  });
+
   it("asks for a folder in the dialog when the workspace has none to offer", () => {
     render(<AgentList />);
     fireEvent.click(screen.getByRole("button", { name: "New agent in empty" }));

@@ -135,6 +135,11 @@ function WorkspaceGroup({ machineId, session, workspace: ws, entries }: { machin
   };
   const agentItem = (agent: Agent, label: string): MenuItem => ({ label, icon: agent === "shell" ? TerminalIcon : BotIcon, onSelect: () => start(agent) });
   // Without a folder to start in, the dialog asks for one.
+  const quick = (agent: Agent) => {
+    if (!a) return;
+    if (!cwd) return a.newAgent(machineId, session, ws);
+    start(agent);
+  };
   const add = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!a) return;
     if (!cwd) return a.newAgent(machineId, session, ws);
@@ -201,6 +206,15 @@ function WorkspaceGroup({ machineId, session, workspace: ws, entries }: { machin
             ),
           )}
         </ul>
+      )}
+      {open && (
+        <div role="group" aria-label={`Start in ${ws.label}`} className="ws-quick">
+          {AGENTS.map((agent) => (
+            <button key={agent} aria-label={`New ${agent} in ${ws.label}`} title={`New ${agent}`} onClick={() => quick(agent)}>
+              <AgentIcon agent={agent === "shell" ? null : agent} />
+            </button>
+          ))}
+        </div>
       )}
     </section>
   );
