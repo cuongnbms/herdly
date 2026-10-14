@@ -28,6 +28,8 @@ Source: [design spec](../superpowers/specs/2026-10-03-security-hardening-design.
 "dangerousDisableAssetCspModification": ["style-src"]
 ```
 
+Amended by [0009](./0009-html-preview-own-scheme.md): both policies also have `frame-src herdly-html:`.
+
 Why each source is there:
 
 | Directive | Sources | Why |

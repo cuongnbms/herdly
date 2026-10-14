@@ -6,7 +6,7 @@ vi.mock("../ui/Toast", () => ({ showToast: vi.fn() }));
 
 import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../ui/Toast";
-import { filesImage, filesListAll, filesListDir, filesRead, herdrCall } from "./ipc";
+import { filesHtmlDrop, filesHtmlPut, filesImage, filesListAll, filesListDir, filesRead, herdrCall } from "./ipc";
 
 describe("herdrCall", () => {
   it("toasts on timeout and rethrows", async () => {
@@ -23,6 +23,12 @@ describe("herdrCall", () => {
 });
 
 describe("files ipc", () => {
+  it("stores and drops an HTML page under its token", async () => {
+    await filesHtmlPut("<p>x</p>", true);
+    expect(invoke).toHaveBeenLastCalledWith("files_html_put", { html: "<p>x</p>", scripts: true });
+    await filesHtmlDrop("abc");
+    expect(invoke).toHaveBeenLastCalledWith("files_html_drop", { token: "abc" });
+  });
   it("passes camelCase args", async () => {
     (invoke as any).mockResolvedValueOnce({ kind: "text", text: "x", truncated: false, size: 1, mtime: 2 });
     await filesRead("devtuf", "~/app", "src/a.ts");

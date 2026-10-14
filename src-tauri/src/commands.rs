@@ -6,6 +6,7 @@ use crate::{
     files::{
         all::{self, FileList},
         edit,
+        html::HtmlPages,
         list::{self, Entry},
         paths::{check_rel, resolve_root},
         read::{self, FileContent, FileVersion},
@@ -864,6 +865,16 @@ pub async fn files_watch(
 #[tauri::command]
 pub fn files_unwatch(watch: State<'_, Arc<FilesWatch>>, id: u64) {
     watch.stop(id);
+}
+
+#[tauri::command]
+pub fn files_html_put(pages: State<'_, Arc<HtmlPages>>, html: String, scripts: bool) -> String {
+    pages.put(html, scripts)
+}
+
+#[tauri::command]
+pub fn files_html_drop(pages: State<'_, Arc<HtmlPages>>, token: String) {
+    pages.drop_page(&token);
 }
 
 #[tauri::command]

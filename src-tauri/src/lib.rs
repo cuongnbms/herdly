@@ -32,6 +32,11 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .register_uri_scheme_protocol("herdly-html", |ctx, req| {
+            ctx.app_handle()
+                .state::<Arc<files::html::HtmlPages>>()
+                .respond(req.method(), req.uri().path())
+        })
         .menu(app_menu)
         .on_menu_event(|app, e| {
             if e.id() == "quit" {
@@ -92,6 +97,8 @@ pub fn run() {
             commands::files_rename,
             commands::files_delete,
             commands::files_write,
+            commands::files_html_put,
+            commands::files_html_drop,
             commands::system_fonts,
             commands::font_face,
             commands::quota_fetch,
@@ -130,6 +137,7 @@ pub fn run() {
             app.manage(chats);
             app.manage(transcript::btw::BtwRuns::default());
             app.manage(Arc::new(files::watch_manager::FilesWatch::default()));
+            app.manage(Arc::new(files::html::HtmlPages::default()));
             tauri::async_runtime::spawn(async move { mgr.connect_at_startup().await });
             Ok(())
         })

@@ -140,6 +140,8 @@ export const filesRead = (machineId: string, root: string, rel: string) =>
   invoke<FileContent>("files_read", { machineId, root, rel });
 export const filesImage = (machineId: string, root: string, rel: string) =>
   invoke<ArrayBuffer>("files_image", { machineId, root, rel });
+export const filesHtmlPut = (html: string, scripts: boolean) => invoke<string>("files_html_put", { html, scripts });
+export const filesHtmlDrop = (token: string) => invoke<void>("files_html_drop", { token });
 export const filesWatch = (machineId: string, root: string, events: Channel<WatchEvent>) => invoke<number>("files_watch", { machineId, root, events });
 export const filesUnwatch = (id: number) => invoke<void>("files_unwatch", { id });
 export const filesUpload = (machineId: string, root: string, destRel: string, sources: string[]) =>
