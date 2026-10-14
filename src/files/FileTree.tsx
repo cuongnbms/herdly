@@ -211,7 +211,7 @@ export function FileTree({ machineId, root, filesKey, onOpen, onMoved, reloadKey
       { label: "New File…", icon: PlusIcon, onSelect: () => setDialog({ kind: "new", dir: m.dir, isDir: false }) },
       { label: "New Folder…", icon: FolderPlusIcon, onSelect: () => setDialog({ kind: "new", dir: m.dir, isDir: true }) },
       ...(m.rel !== null ? copyItems(root, m.rel) : []),
-      { label: "Upload Files…", icon: ArrowUpIcon, onSelect: () => void upload(m.dir, false) },
+      { label: "Upload Files…", icon: ArrowUpIcon, group: true, onSelect: () => void upload(m.dir, false) },
       { label: "Upload Folder…", icon: FolderInputIcon, onSelect: () => void upload(m.dir, true) },
     ];
     const rel = m.rel;
@@ -220,7 +220,7 @@ export function FileTree({ machineId, root, filesKey, onOpen, onMoved, reloadKey
       const isDir = m.dir === rel;
       list.push(
         { label: "Download", icon: ArrowDownIcon, onSelect: () => void startDownload(machineId, root, rel) },
-        { label: "Rename…", icon: PencilIcon, onSelect: () => setDialog({ kind: "rename", rel }) },
+        { label: "Rename…", icon: PencilIcon, group: true, onSelect: () => setDialog({ kind: "rename", rel }) },
         { label: "Delete…", icon: TrashIcon, onSelect: () => setDialog({ kind: "delete", rel, isDir }) },
       );
     }
