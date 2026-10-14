@@ -30,6 +30,7 @@ export function FileView({
   outline,
   onOutline,
   scripts = false,
+  reloads = 0,
 }: {
   machineId: string;
   root: string;
@@ -51,6 +52,8 @@ export function FileView({
   onOutline?(has: boolean): void;
   /** Whether a rendered HTML page may run scripts. */
   scripts?: boolean;
+  /** Bumped by an explicit reload (⌘R), so a rendered HTML page loads again even with the same text. */
+  reloads?: number;
 }) {
   if (content.kind === "image") return <ImageView machineId={machineId} root={root} rel={rel} mtime={content.mtime} />;
   if (content.kind === "text" && content.text === null) {
@@ -83,7 +86,7 @@ export function FileView({
           onFindStatus={onFindStatus}
         />
       ) : isHtml(rel) && mode === "render" && !content.truncated ? (
-        <HtmlView text={content.text} scripts={scripts} />
+        <HtmlView text={content.text} scripts={scripts} reloads={reloads} />
       ) : (
         <TextView
           text={content.text}

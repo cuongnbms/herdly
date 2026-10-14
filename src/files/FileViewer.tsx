@@ -315,7 +315,7 @@ export function FileViewer({ item, online }: Props) {
             ))}
           </div>
         )}
-        {html && !htmlCut && mode === "render" && !draft && (
+        {html && mode === "render" && !draft && shown?.kind === "text" && (
           <div className="files-mode">
             <button type="button" aria-pressed={scripts} onClick={() => setScripts((on) => !on)}>
               Scripts
@@ -390,6 +390,7 @@ export function FileViewer({ item, online }: Props) {
             content={shown}
             mode={mode}
             scripts={scripts}
+            reloads={reloads}
             onMode={(m) => setMode(m)}
             onOpen={onLink}
             find={findOpen && searchable && query ? { query, index, matchCase } : null}

@@ -89,11 +89,32 @@ describe("FileViewer", () => {
   it("shows a cut HTML file as source only", async () => {
     texts["cut.html"] = "<p>cut";
     truncated.add("cut.html");
+    // A chosen Render must not win over the cut.
+    useFiles.getState().setMode(key, "cut.html", "render");
     render(<FileViewer item={file("cut.html")} online />);
     await waitFor(() => expect(document.querySelector(".files-text")).not.toBeNull());
     expect(screen.queryByRole("group", { name: "HTML view" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Scripts" })).toBeNull();
     expect(frame()).toBeNull();
+  });
+
+  it("shows no Scripts button while an HTML file is read", async () => {
+    let release!: () => void;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((r) => (release = () => r({ kind: "text", text: "<p>p</p>", truncated: false, size: 8, mtime: 1 }))));
+    render(<FileViewer item={file("p.html")} online />);
+    expect(screen.queryByRole("button", { name: "Scripts" })).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByRole("button", { name: "Scripts" })).toBeTruthy();
+  });
+
+  it("⌘R stores a rendered HTML page again even when its text is unchanged", async () => {
+    texts["same.html"] = "<p>same</p>";
+    const puts = () => vi.mocked(invoke).mock.calls.filter((c) => c[0] === "files_html_put").length;
+    render(<FileViewer item={file("same.html")} online />);
+    await waitFor(() => expect(frame()).not.toBeNull());
+    const before = puts();
+    press("r");
+    await waitFor(() => expect(puts()).toBe(before + 1));
   });
 
   it("⌘F on a rendered HTML file switches to Source and finds there", async () => {

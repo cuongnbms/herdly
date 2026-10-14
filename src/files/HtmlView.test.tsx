@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), Channel: class {} }));
 import { invoke } from "@tauri-apps/api/core";
@@ -76,5 +76,34 @@ describe("HtmlView", () => {
     await act(async () => release("t2"));
     await shows("t2");
     expect(frame()!.getAttribute("sandbox")).toBe("allow-scripts");
+  });
+
+  it("stores the page again on a reload even when the text is the same", async () => {
+    const { rerender } = render(<HtmlView text="a" scripts={false} reloads={0} />);
+    await shows("t1");
+    rerender(<HtmlView text="a" scripts={false} reloads={1} />);
+    await shows("t2");
+    expect(args("files_html_put")).toEqual([
+      { html: "a", scripts: false },
+      { html: "a", scripts: false },
+    ]);
+    expect(args("files_html_drop")).toEqual([{ token: "t1" }]);
+  });
+
+  it("gives the keys back to the app when the pointer leaves a focused frame", async () => {
+    render(<HtmlView text="a" scripts={false} />);
+    await shows("t1");
+    const wrap = document.querySelector(".files-html-wrap")!;
+    // jsdom does not move focus on an iframe's blur(), so the call is what is checked.
+    const blur = vi.spyOn(frame()!, "blur");
+    const other = document.body.appendChild(document.createElement("button"));
+    other.focus();
+    fireEvent.pointerLeave(wrap);
+    expect(document.activeElement).toBe(other);
+    expect(blur).not.toHaveBeenCalled();
+    frame()!.focus();
+    fireEvent.pointerLeave(wrap);
+    expect(blur).toHaveBeenCalledTimes(1);
+    other.remove();
   });
 });

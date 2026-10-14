@@ -5,12 +5,16 @@ const drop = (token: string) => {
   filesHtmlDrop(token).catch(() => {});
 };
 
-/** `text` stored as a page and shown in a sandboxed frame; `scripts` is whether the page may run scripts. */
-export function HtmlView({ text, scripts }: { text: string; scripts: boolean }) {
+/**
+ * `text` stored as a page and shown in a sandboxed frame; `scripts` is whether the page may run scripts.
+ * A change of `reloads` (⌘R) stores the page again even when the text is the same, so it loads afresh.
+ */
+export function HtmlView({ text, scripts, reloads = 0 }: { text: string; scripts: boolean; reloads?: number }) {
   // The frame's sandbox follows the Scripts value its page was stored with, not the current prop.
   const [shown, setShown] = useState<{ token: string; scripts: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const shownToken = useRef<string | null>(null);
+  const frame = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     let stale = false;
@@ -30,7 +34,7 @@ export function HtmlView({ text, scripts }: { text: string; scripts: boolean }) 
     return () => {
       stale = true;
     };
-  }, [text, scripts]);
+  }, [text, scripts, reloads]);
 
   useEffect(
     () => () => {
@@ -48,9 +52,16 @@ export function HtmlView({ text, scripts }: { text: string; scripts: boolean }) 
     );
   }
   return (
-    <div className="files-html-wrap">
+    <div
+      className="files-html-wrap"
+      // Keys typed in the frame go to its own document, past the app's shortcuts; leaving it gives them back.
+      onPointerLeave={() => {
+        if (frame.current && document.activeElement === frame.current) frame.current.blur();
+      }}
+    >
       {shown && (
         <iframe
+          ref={frame}
           className="files-html"
           src={`herdly-html://localhost/${shown.token}`}
           sandbox={shown.scripts ? "allow-scripts" : ""}
