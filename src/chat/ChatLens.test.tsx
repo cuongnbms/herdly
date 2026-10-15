@@ -348,6 +348,24 @@ describe("ChatLens", () => {
       expect(screen.queryByText("New messages")).toBeNull();
     });
 
+    it("stays put when the transcript's echo takes the place of a sent message", async () => {
+      const { g } = setup();
+      const box = screen.getByRole("textbox");
+      fireEvent.change(box, { target: { value: "hello there" } });
+      await act(async () => fireEvent.keyDown(box, { key: "Enter" }));
+      expect(g.top).toBe(700);
+      // WebKit, laying out the sent message's removal with the echo's row, scrolls up by the message's height.
+      const remove = Node.prototype.removeChild;
+      const spy = vi.spyOn(Node.prototype, "removeChild").mockImplementation(function <T extends Node>(this: Node, child: T) {
+        if ((child as unknown as Element).classList?.contains("chat-outgoing")) g.top -= 56;
+        return remove.call(this, child) as T;
+      });
+      send({ type: "append", items: [{ kind: "user", text: "hello there" }] });
+      spy.mockRestore();
+      expect(document.querySelector(".chat-outgoing")).toBeNull();
+      expect(g.top).toBe(700);
+    });
+
     describe("rows coming in", () => {
       // The virtualizer renders rows only into a scroll area with a height.
       beforeEach(() => {

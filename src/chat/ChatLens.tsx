@@ -93,6 +93,8 @@ export function ChatLens({ pane, view }: { pane: PaneRef; view: PaneView }) {
   const heard = useRef(0);
   // Rows easing in, by key, until when.
   const entering = useRef(new Map<string, number>());
+  // The scroll before the appends since the last render.
+  const topBefore = useRef<number | null>(null);
 
   // `known`: where `path` was located, when the caller already knows (kept over what opening returns).
   const open = useCallback(
@@ -116,6 +118,7 @@ export function ChatLens({ pane, view }: { pane: PaneRef; view: PaneView }) {
         if (ev.type === "reset" || ev.type === "error") setLoaded(true);
         // Counted here, not read off the last render: a reset and an append may land before it.
         if (ev.type === "append") {
+          topBefore.current ??= scrollRef.current?.scrollTop ?? null;
           const at = heard.current;
           heard.current += ev.items.length;
           enterFrom.current = { at: Math.min(at, enterFrom.current?.at ?? at), echo: !!enterFrom.current?.echo || outgoingRef.current > 0 };
@@ -343,6 +346,12 @@ export function ChatLens({ pane, view }: { pane: PaneRef; view: PaneView }) {
   useLayoutEffect(() => {
     // Items, not rows: a tool call joining the live work block grows that row, not the count.
     const grew = state.items.length > prevItems.current;
+    const before = topBefore.current;
+    topBefore.current = null;
+    // WebKit, laying out a sent message's removal together with its echo's row, scrolls up by the
+    // message's height: an append only adds below, so it puts the view back where it was.
+    const el = scrollRef.current;
+    if (grew && anchor.current === null && el && before !== null && el.scrollTop < before) el.scrollTop = before;
     if (anchor.current !== null) {
       // Older items were prepended: keep the previously-first row in view.
       const added = rows.length - prevRows.current;
