@@ -129,16 +129,24 @@ Default: the Machine of the selected Pane, else `local`. Disabled while either b
 changes. A `●` beside the picker shows while there are unsaved changes (the dialog header
 belongs to `SettingsDialog`).
 
+**Views**: when the alias package is installed, an `Enabled models | Model aliases` segment beside
+the picker shows one block at a time. Both blocks stay mounted (the other is `hidden`), so
+switching keeps unsaved edits; a dot on a segment button marks a view with unsaved edits.
+Without the package there is no segment and only Enabled models shows. Each block's Save /
+Revert sit in the dialog's pinned footer, with the `/reload` line or the write error beside them.
+
 **Empty states**: no connected Machine → "No connected machine". Machine without pi →
 "pi not found on <machine>". Nothing else is shown in those cases.
 
-**Enabled models block**, two columns (stacked when narrow):
+**Enabled models block**, two bordered panels of equal height that fill the pane and scroll on
+their own (stacked when narrow); the order panel is the wider one:
 
 - Catalog: `pi_models_list` grouped by provider, collapsible group headers with a
   `selected/total` count, a filter box matching `provider/id` case-insensitively. A row is
   checked when the ordered list contains exactly `provider/id` (case-insensitive). Checking
   appends to the end of the list; unchecking removes that entry.
-- "Ctrl+P order": the `enabledModels` array verbatim. Each row has a grip (drag to reorder,
+- "Ctrl+P order": the `enabledModels` array verbatim, numbered, ids truncated with the full id as
+  a tooltip and the `provider/` prefix dimmed. Each row has a grip (drag to reorder,
   reusing `dropZone`, `GripIcon` and the `moveReply` move logic from Quick replies) and ×.
   Entries that are not an exact catalog id render as a **pattern chip** (italic, "pattern"
   tag). A "Add pattern…" input appends on Enter (trimmed, ignored if empty or duplicate).
@@ -186,7 +194,7 @@ After a successful save: the block's loaded state becomes what was written, and 
 | `pi_models_list` fails | Error in the catalog column with Retry; the order list still works, every entry renders as a pattern chip |
 | A file fails to parse | Error in that block; Save disabled; the file is never written |
 | `files_read` fails (other than missing) | Error in that block with Retry |
-| Write fails (permission, connection) | Error under Save; edits kept |
+| Write fails (permission, connection) | Error beside Save in the footer; edits kept |
 | Machine disconnects while open | Picker drops it; section falls back to the default Machine, edits discarded |
 
 ## Testing
