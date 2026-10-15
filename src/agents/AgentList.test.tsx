@@ -293,6 +293,23 @@ describe("AgentList", () => {
     expect(herdrCall).toHaveBeenCalledWith("local", "default", "pane.close", { pane_id: "p3" });
   });
 
+  it("hides a closing pane at once, its tab-mate standing alone", () => {
+    vi.mocked(herdrCall).mockReturnValueOnce(new Promise(() => {}));
+    render(<AgentList />);
+    fireEvent.click(screen.getByRole("button", { name: "Close Tag v1.4.0" }));
+    expect(screen.queryByText("Tag v1.4.0")).toBeNull();
+    expect(screen.getByText("Ship flag").closest(".tab-group")).toBeNull();
+  });
+
+  it("shows the pane again when closing it fails", async () => {
+    vi.mocked(herdrCall).mockRejectedValueOnce({ message: "no such pane" });
+    render(<AgentList />);
+    fireEvent.contextMenu(screen.getByText("Tag v1.4.0"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close pane" }));
+    expect(await screen.findByText("Tag v1.4.0")).toBeTruthy();
+    expect(screen.getByText("no such pane")).toBeTruthy();
+  });
+
   it("asks for a session when none is viewed", () => {
     useApp.setState({ viewed: null });
     render(<AgentList />);

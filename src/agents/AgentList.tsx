@@ -1,4 +1,4 @@
-import { memo, type CSSProperties } from "react";
+import { memo, useEffect, useState, type CSSProperties } from "react";
 import { herdrCall } from "../lib/ipc";
 import { paneKey } from "../lib/types";
 import type { AgentStatus, PaneView, SessionView, TabView, WorkspaceView } from "../lib/types";
@@ -55,7 +55,7 @@ const BADGE:Record<AgentStatus, string> = {
 type Reorder = ReturnType<typeof useTabReorder>;
 
 /** `tabRow` when this card is its Tab's whole row (a single-pane Tab), so it is also the drop target. */
-function AgentCard({ machineId, session, entry, reorder, tabRow }: { machineId: string; session: string; entry: PaneEntry; reorder: Reorder; tabRow?: boolean }) {
+function AgentCard({ machineId, session, entry, reorder, close, tabRow }: { machineId: string; session: string; entry: PaneEntry; reorder: Reorder; close: () => void; tabRow?: boolean }) {
   const { pane, workspace: ws, tab } = entry;
   const ref = { machine_id: machineId, session, pane_id: pane.pane_id };
   const active = useApp((s) => s.selected !== null && paneKey(s.selected) === paneKey(ref));
@@ -63,13 +63,12 @@ function AgentCard({ machineId, session, entry, reorder, tabRow }: { machineId: 
   const pin = useApp((s) => s.pinItem);
   const a = useActions();
   const call = (method: string, params: unknown) => () => herdrCall(machineId, session, method, params);
-  const close = call("pane.close", { pane_id: pane.pane_id });
   const items: MenuItem[] = a
     ? [
         { label: "Rename…", icon: PencilIcon, onSelect: () => a.rename("Rename pane", pane.title, (label) => call("pane.rename", { pane_id: pane.pane_id, label })()) },
         { label: "Split right", icon: SplitRightIcon, onSelect: () => a.guard(call("pane.split", { target_pane_id: pane.pane_id, direction: "right" })) },
         { label: "Split down", icon: SplitDownIcon, onSelect: () => a.guard(call("pane.split", { target_pane_id: pane.pane_id, direction: "down" })) },
-        { label: "Close pane", icon: CloseIcon, onSelect: () => a.guard(close) },
+        { label: "Close pane", icon: CloseIcon, onSelect: close },
         { label: "New tab", icon: TabPlusIcon, onSelect: () => a.guard(call("tab.create", { workspace_id: ws.workspace_id })) },
         { label: "Rename tab…", icon: PencilIcon, onSelect: () => a.rename("Rename tab", tab.label, (label) => call("tab.rename", { tab_id: tab.tab_id, label })()) },
         { label: "Close tab", icon: CloseIcon, onSelect: () => a.confirm("Close tab", `Close tab "${tab.label}" and all its panes?`, "Close", call("tab.close", { tab_id: tab.tab_id })) },
@@ -97,7 +96,7 @@ function AgentCard({ machineId, session, entry, reorder, tabRow }: { machineId: 
           </span>
         </span>
       </button>
-      <button className="agent-card-close" aria-label={`Close ${pane.title}`} title="Close pane" onClick={() => a?.guard(close)}>
+      <button className="agent-card-close" aria-label={`Close ${pane.title}`} title="Close pane" onClick={close}>
         <CloseIcon />
       </button>
     </li>
@@ -110,8 +109,16 @@ function urgentStatus(entries: PaneEntry[]): AgentStatus | null {
   return null;
 }
 
-function WorkspaceGroup({ machineId, session, workspace: ws, entries }: { machineId: string; session: string; workspace: WorkspaceView; entries: PaneEntry[] }) {
+function WorkspaceGroup({ machineId, session, workspace: ws, entries: all }: { machineId: string; session: string; workspace: WorkspaceView; entries: PaneEntry[] }) {
   const a = useActions();
+  // A closing pane leaves the list at once: herdr can take a while to end its process.
+  const [closing, setClosing] = useState<ReadonlySet<string>>(new Set());
+  const entries = all.filter((e) => !closing.has(e.pane.pane_id));
+  const gone = [...closing].filter((id) => !all.some((e) => e.pane.pane_id === id));
+  useEffect(() => {
+    if (gone.length) setClosing((s) => new Set([...s].filter((id) => !gone.includes(id))));
+  });
+  const unhide = (pane_id: string) => setClosing((s) => new Set([...s].filter((id) => id !== pane_id)));
   const ref = { machine_id: machineId, session, workspace_id: ws.workspace_id };
   const openKey = `ws:${machineId}/${session}/${ws.workspace_id}`;
   const open = useApp((s) => s.expanded[openKey] ?? true);
@@ -123,6 +130,14 @@ function WorkspaceGroup({ machineId, session, workspace: ws, entries }: { machin
   // A folder named like the Workspace only repeats the label; its path stays in the tooltip.
   const folderText = folder ? folderName(folder) : "no folder";
   const call = (method: string, params: unknown) => () => herdrCall(machineId, session, method, params);
+  const closePane = (pane_id: string) => () => {
+    if (!a) return;
+    setClosing((s) => new Set(s).add(pane_id));
+    a.guard(() => call("pane.close", { pane_id })().catch((e: unknown) => {
+      unhide(pane_id);
+      throw e;
+    }));
+  };
   const reorder = useTabReorder(
     ws.tabs.map((t) => t.tab_id),
     (tab_id, insert_index) => a?.guard(call("tab.move", { tab_id, insert_index })),
@@ -195,12 +210,12 @@ function WorkspaceGroup({ machineId, session, workspace: ws, entries }: { machin
               >
                 <ul className="agent-cards">
                   {run.map((e) => (
-                    <AgentCard key={e.pane.pane_id} machineId={machineId} session={session} entry={e} reorder={reorder} />
+                    <AgentCard key={e.pane.pane_id} machineId={machineId} session={session} entry={e} reorder={reorder} close={closePane(e.pane.pane_id)} />
                   ))}
                 </ul>
               </li>
             ) : (
-              <AgentCard key={run[0].pane.pane_id} machineId={machineId} session={session} entry={run[0]} reorder={reorder} tabRow />
+              <AgentCard key={run[0].pane.pane_id} machineId={machineId} session={session} entry={run[0]} reorder={reorder} close={closePane(run[0].pane.pane_id)} tabRow />
             ),
           )}
         </ul>
