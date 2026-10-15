@@ -1640,11 +1640,12 @@ body.row-resizing { cursor: row-resize; user-select: none; }
 .agents-row-blocked:hover { background: color-mix(in srgb, var(--amber) 15%, transparent); }
 
 /* Settings › pi */
+.pi-root { container-type: inline-size; display: flex; flex-direction: column; gap: 14px; }
 .pi-head { display: flex; align-items: center; gap: 8px; }
 .pi-dirty { color: var(--amber); font-size: 12px; }
 .pi-error { color: var(--err); display: flex; align-items: center; gap: 8px; }
 .pi-models { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 640px) { .pi-models { grid-template-columns: 1fr; } }
+@container (max-width: 480px) { .pi-models { grid-template-columns: 1fr; } }
 .pi-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .pi-col h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--fg-2); }
 .pi-group { display: flex; flex-direction: column; gap: 2px; }

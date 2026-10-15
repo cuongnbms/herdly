@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileContent, MachineView } from "../lib/types";
 
@@ -157,5 +157,24 @@ describe("pi settings: Enabled models", () => {
     expect(await screen.findByText("enabledModels in settings.json is not a list")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Save enabled models" })).toBeNull();
     expect(ipc.filesWrite).not.toHaveBeenCalled();
+  });
+
+  it("stays on the Machine in use when others connect, or the picked one reconnects", async () => {
+    const box = machine("box", "devtuf");
+    useApp.setState({
+      machines: { local: machine("local", "This Mac"), box },
+      order: ["local", "box"],
+      selected: null,
+    });
+    render(<PiSettings />);
+    await waitFor(() => expect(entries()).toEqual(["xai/grok-4.6", "anthropic/*"]));
+    fireEvent.change(screen.getByRole("combobox", { name: "Machine" }), { target: { value: "box" } });
+    await waitFor(() => expect(entries()).toEqual(["box/model"]));
+    act(() => useApp.setState({ machines: { local: machine("local", "This Mac"), box: { ...box, state: "disconnected" } } }));
+    await waitFor(() => expect(entries()).toEqual(["xai/grok-4.6", "anthropic/*"]));
+    fireEvent.click(screen.getByRole("button", { name: "Remove anthropic/*" }));
+    act(() => useApp.setState({ machines: { local: machine("local", "This Mac"), box }, selected: { machine_id: "box", session: "default", pane_id: "p" } }));
+    expect(entries()).toEqual(["xai/grok-4.6"]);
+    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Machine" }).value).toBe("local");
   });
 });

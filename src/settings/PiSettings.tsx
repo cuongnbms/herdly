@@ -31,6 +31,10 @@ export function PiSettings() {
   const fallback = options.find((m) => m.id === selectedMachine) ?? options.find((m) => m.id === "local") ?? options[0];
   const machine = options.find((m) => m.id === picked) ?? fallback;
   const machineId = machine?.id;
+  // Once shown, a Machine stays put: only its leaving the options moves the section.
+  useEffect(() => {
+    if (machine && picked !== machine.id) setPicked(machine.id);
+  }, [machine, picked]);
   const dir = machine?.pi_agent_dir ?? null;
   const hasPi = !!machine?.has_pi;
 
@@ -65,10 +69,11 @@ export function PiSettings() {
     };
   }, [machineId, hasPi, modelsNonce]);
 
+  // A save finishing after the Machine changed must not land on the new one.
   const onSaved = useCallback(
     (s: PiSettingsFile) =>
-      setData((d) => (d && d.settings.kind === "ok" ? { ...d, settings: { ...d.settings, value: s } } : d)),
-    [],
+      setData((d) => (d && d.machineId === machineId && d.settings.kind === "ok" ? { ...d, settings: { ...d.settings, value: s } } : d)),
+    [machineId],
   );
   const retryModels = useCallback(() => setModelsNonce((n) => n + 1), []);
 
@@ -78,7 +83,7 @@ export function PiSettings() {
   const cat = models?.machineId === machineId ? models : null;
 
   return (
-    <>
+    <div className="pi-root">
       <div className="pi-head">
         <select
           aria-label="Machine"
@@ -125,6 +130,6 @@ export function PiSettings() {
           onSaved={onSaved}
         />
       )}
-    </>
+    </div>
   );
 }
