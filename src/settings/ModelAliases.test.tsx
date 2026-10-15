@@ -44,9 +44,14 @@ const card = (n: number) => screen.getByRole("region", { name: `Alias ${n}` });
 const targets = (n: number) =>
   within(screen.getByRole("list", { name: `Alias ${n} targets` })).getAllByRole("listitem").map((r) => r.querySelector(".reorder-text")!.textContent);
 const nameBox = (n: number) => screen.getByRole<HTMLInputElement>("textbox", { name: `Alias ${n} name` });
+const indexes = (n: number) =>
+  within(screen.getByRole("list", { name: `Alias ${n} targets` })).getAllByRole("listitem").map((r) => r.querySelector(".reorder-index")!.textContent);
 const aliasesOnDisk = () => JSON.parse(disk["model-alias.json"]);
+/** Switches Settings › pi to one of its two views. */
+const show = async (view: "Enabled models" | "Model aliases") => fireEvent.click(await screen.findByRole("button", { name: view }));
 async function ready() {
   render(<PiSettings />);
+  await show("Model aliases");
   await screen.findByRole("textbox", { name: "Alias 1 name" });
 }
 
@@ -61,22 +66,23 @@ describe("pi settings: Model aliases", () => {
   it("lists aliases and their numbered targets", async () => {
     await ready();
     expect([1, 2, 3].map((n) => nameBox(n).value)).toEqual(["mid", "high", "top"]);
-    expect(targets(1)).toEqual(["1. opencode-go/deepseek-v4.1-flash", "2. openai-codex/gpt-5.6-luna"]);
-    expect(targets(3)).toEqual(["1. alias/mid"]);
+    expect(targets(1)).toEqual(["opencode-go/deepseek-v4.1-flash", "openai-codex/gpt-5.6-luna"]);
+    expect(indexes(1)).toEqual(["1", "2"]);
+    expect(targets(3)).toEqual(["alias/mid"]);
   });
 
   it("renames on commit only, cascading into other aliases, and saves", async () => {
     await ready();
     fireEvent.change(nameBox(1), { target: { value: "hig" } });
-    expect(targets(3)).toEqual(["1. alias/mid"]);
+    expect(targets(3)).toEqual(["alias/mid"]);
     fireEvent.change(nameBox(1), { target: { value: "high" } });
     expect(within(card(1)).getByText("Name already used")).toBeTruthy();
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save model aliases" }).disabled).toBe(true);
     fireEvent.blur(nameBox(1));
-    expect(targets(3)).toEqual(["1. alias/mid"]);
+    expect(targets(3)).toEqual(["alias/mid"]);
     fireEvent.change(nameBox(1), { target: { value: "middle" } });
     fireEvent.keyDown(nameBox(1), { key: "Enter" });
-    expect(targets(3)).toEqual(["1. alias/middle"]);
+    expect(targets(3)).toEqual(["alias/middle"]);
     fireEvent.click(screen.getByRole("button", { name: "Save model aliases" }));
     await screen.findByText("New pi agents use this; running ones need /reload.");
     expect(aliasesOnDisk()).toEqual({
@@ -90,7 +96,9 @@ describe("pi settings: Model aliases", () => {
 
   it("lists models again after a save, keeping the Enabled edits", async () => {
     await ready();
+    await show("Enabled models");
     fireEvent.click(await screen.findByRole("checkbox", { name: "xai/grok-4.6" }));
+    await show("Model aliases");
     const calls = ipc.piModelsList.mock.calls.length;
     let listed!: (m: unknown) => void;
     ipc.piModelsList.mockReturnValueOnce(new Promise((r) => (listed = r)));
@@ -98,6 +106,7 @@ describe("pi settings: Model aliases", () => {
     fireEvent.blur(nameBox(1));
     fireEvent.click(screen.getByRole("button", { name: "Save model aliases" }));
     await screen.findByText("New pi agents use this; running ones need /reload.");
+    await show("Enabled models");
     // The old catalog stays while pi lists again.
     await act(async () => {});
     expect(ipc.piModelsList).toHaveBeenCalledTimes(calls + 1);
@@ -108,7 +117,18 @@ describe("pi settings: Model aliases", () => {
     expect(ipc.piModelsList).toHaveBeenCalledTimes(calls + 1);
     expect(screen.getByRole<HTMLInputElement>("checkbox", { name: "xai/grok-4.6" }).checked).toBe(true);
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save enabled models" }).disabled).toBe(false);
+    await show("Model aliases");
     expect(nameBox(1).value).toBe("middle");
+  });
+
+  it("keeps unsaved alias edits across views and marks their view", async () => {
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "Delete alias 3" }));
+    await show("Enabled models");
+    expect(screen.getByRole("button", { name: "Model aliases" }).querySelector(".pi-view-dirty")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Enabled models" }).querySelector(".pi-view-dirty")).toBeNull();
+    await show("Model aliases");
+    expect(screen.queryByRole("textbox", { name: "Alias 3 name" })).toBeNull();
   });
 
   it("warns about a deleted alias that another one targets", async () => {
@@ -128,7 +148,7 @@ describe("pi settings: Model aliases", () => {
     const add = screen.getByRole("combobox", { name: "Add target to alias 4" });
     fireEvent.change(add, { target: { value: "xai/grok-4.6" } });
     fireEvent.keyDown(add, { key: "Enter" });
-    expect(targets(4)).toEqual(["1. xai/grok-4.6"]);
+    expect(targets(4)).toEqual(["xai/grok-4.6"]);
     fireEvent.click(save);
     await screen.findByText("New pi agents use this; running ones need /reload.");
     expect(aliasesOnDisk().fast).toEqual(["xai/grok-4.6"]);
@@ -137,6 +157,7 @@ describe("pi settings: Model aliases", () => {
   it("creates model-alias.json when missing", async () => {
     delete disk["model-alias.json"];
     render(<PiSettings />);
+    await show("Model aliases");
     fireEvent.click(await screen.findByRole("button", { name: "New alias" }));
     fireEvent.change(nameBox(1), { target: { value: "fast" } });
     fireEvent.blur(nameBox(1));

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import type { FileVersion, PiModel } from "../lib/types";
 import { aliasNameError, missingTargets, modelRef, renameAlias, withAliases, type Alias, type AliasFile } from "./pi";
 import { errorText, saveAliases } from "./piFiles";
+import { ProviderDimmed } from "./EnabledModels";
 import { ReorderList } from "./ReorderList";
 
 /** Drops key `i` and shifts the later keys down, as deleting row `i` does. */
@@ -124,7 +125,7 @@ export function ModelAliases({
 
   return (
     <section className="pi-block">
-      <h4>Model aliases</h4>
+      <p className="setting-desc">An alias tries its targets in order and falls back to the next when one fails. Use it as alias/name.</p>
       <datalist id="pi-alias-models">
         {(models ?? []).map((m) => (
           <option key={modelRef(m)} value={modelRef(m)} />
@@ -164,7 +165,12 @@ export function ModelAliases({
               label={`Alias ${i + 1} targets`}
               items={a.targets}
               onChange={(next) => setTargets(i, next)}
-              render={(target, n) => <span className="reorder-text">{`${n + 1}. ${target}`}</span>}
+              numbered
+              render={(target) => (
+                <span className="reorder-text pi-id" title={target}>
+                  <ProviderDimmed entry={target} />
+                </span>
+              )}
             />
             <input
               className="input"
@@ -188,7 +194,7 @@ export function ModelAliases({
       })}
       <div>
         <button
-          className="btn btn-xs"
+          className="btn btn-xs pi-new-alias"
           aria-label="New alias"
           onClick={() => edit([...aliases, { name: "", orig: null, form: "array", targets: [] }])}
         >
@@ -214,6 +220,13 @@ export function ModelAliases({
         </div>
       )}
       <div className="settings-foot">
+        {saveError ? (
+          <p className="settings-foot-msg pi-error" role="alert">
+            {saveError}
+          </p>
+        ) : (
+          reminder && <p className="settings-foot-msg">New pi agents use this; running ones need /reload.</p>
+        )}
         <button className="btn btn-xs" aria-label="Revert model aliases" disabled={!dirty || busy} onClick={revert}>
           Revert
         </button>
@@ -221,12 +234,6 @@ export function ModelAliases({
           Save
         </button>
       </div>
-      {saveError && (
-        <p className="note pi-error" role="alert">
-          {saveError}
-        </p>
-      )}
-      {reminder && <p className="note">New pi agents use this; running ones need /reload.</p>}
     </section>
   );
 }

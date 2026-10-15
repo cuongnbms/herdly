@@ -15,11 +15,14 @@ export function ReorderList({
   items,
   onChange,
   render,
+  numbered,
 }: {
   label: string;
   items: string[];
   onChange: (next: string[]) => void;
   render?: (item: string, i: number) => ReactNode;
+  /** Shows each item's position before its grip. */
+  numbered?: boolean;
 }) {
   const list = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<number | null>(null);
@@ -79,6 +82,7 @@ export function ReorderList({
               if (move(i, to, up ? "before" : "after")) list.current?.querySelectorAll<HTMLElement>(".reorder-row .icon-btn")[to]?.focus();
             }}
           >
+            {numbered && <span className="reorder-index">{i + 1}</span>}
             <span
               className="reorder-grip"
               title="Drag to reorder"

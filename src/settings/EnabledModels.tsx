@@ -1,8 +1,21 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { PiModel } from "../lib/types";
+import { ChevronIcon } from "../ui/icons";
 import { isCatalogEntry, modelRef, type PiSettingsFile } from "./pi";
 import { errorText, loadSettings, saveEnabled } from "./piFiles";
 import { ReorderList } from "./ReorderList";
+
+/** `provider/id` with the provider dimmed, so the ids line up by eye. */
+export function ProviderDimmed({ entry }: { entry: string }) {
+  const slash = entry.indexOf("/");
+  if (slash <= 0) return entry;
+  return (
+    <>
+      <span className="pi-prov">{entry.slice(0, slash + 1)}</span>
+      {entry.slice(slash + 1)}
+    </>
+  );
+}
 
 const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
@@ -118,8 +131,11 @@ export function EnabledModels({
   return (
     <section className="pi-block">
       <div className="pi-models">
-        <div className="pi-col">
-          <h4>Models</h4>
+        <div className="pi-panel">
+          <header className="pi-panel-head">
+            <h4>Models</h4>
+            <p className="setting-desc">Check a model to add it to the order.</p>
+          </header>
           <input
             className="input"
             aria-label="Filter models"
@@ -127,20 +143,20 @@ export function EnabledModels({
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          {modelsError !== null ? (
-            <p className="note pi-error" role="alert">
-              {`Cannot list models: ${modelsError}`}
-              <button className="btn btn-xs" onClick={onRetryModels}>
-                Retry
-              </button>
-            </p>
-          ) : models === null ? (
-            <p className="note">Loading models…</p>
-          ) : models.length === 0 ? (
-            <p className="note">No models</p>
-          ) : (
-            <div className="pi-catalog">
-              {groups.map((g) => {
+          <div className="pi-panel-scroll">
+            {modelsError !== null ? (
+              <p className="note pi-error" role="alert">
+                {`Cannot list models: ${modelsError}`}
+                <button className="btn btn-xs" onClick={onRetryModels}>
+                  Retry
+                </button>
+              </p>
+            ) : models === null ? (
+              <p className="note">Loading models…</p>
+            ) : models.length === 0 ? (
+              <p className="note">No models</p>
+            ) : (
+              groups.map((g) => {
                 const open = !collapsed[g.provider];
                 const total = (models ?? []).filter((m) => m.provider === g.provider);
                 const checked = total.filter(isChecked).length;
@@ -151,39 +167,49 @@ export function EnabledModels({
                       aria-expanded={open}
                       onClick={() => setCollapsed((c) => ({ ...c, [g.provider]: open }))}
                     >
-                      {`${g.provider} ${checked}/${total.length}`}
+                      <ChevronIcon />
+                      <span className="pi-group-name">{g.provider}</span>
+                      <span className={checked > 0 ? "pi-count on" : "pi-count"}>{`${checked}/${total.length}`}</span>
                     </button>
                     {open &&
                       g.models.map((m) => (
-                        <label key={modelRef(m)} className="pi-model">
+                        <label key={modelRef(m)} className="pi-model" title={modelRef(m)}>
                           <input type="checkbox" aria-label={modelRef(m)} checked={isChecked(m)} onChange={() => toggle(m)} />
-                          {m.id}
+                          <span className="pi-id">{m.id}</span>
                         </label>
                       ))}
                   </div>
                 );
-              })}
-            </div>
-          )}
-        </div>
-        <div className="pi-col">
-          <h4>Ctrl+P order</h4>
-          {list.length === 0 && <p className="note">Empty: Ctrl+P cycles through every model</p>}
-          <ReorderList
-            label="Ctrl+P order"
-            items={list}
-            onChange={edit}
-            render={(entry) => (
-              <>
-                <span className="reorder-text">{entry}</span>
-                {!isCatalogEntry(entry, models ?? []) && <span className="pi-pattern">pattern</span>}
-              </>
+              })
             )}
-          />
+          </div>
+        </div>
+        <div className="pi-panel">
+          <header className="pi-panel-head">
+            <h4>Ctrl+P order</h4>
+            <p className="setting-desc">Ctrl+P cycles through these, top first.</p>
+          </header>
+          <div className="pi-panel-scroll">
+            {list.length === 0 && <p className="note">Empty: Ctrl+P cycles through every model</p>}
+            <ReorderList
+              label="Ctrl+P order"
+              items={list}
+              onChange={edit}
+              numbered
+              render={(entry) => (
+                <>
+                  <span className="reorder-text pi-id" title={entry}>
+                    <ProviderDimmed entry={entry} />
+                  </span>
+                  {!isCatalogEntry(entry, models ?? []) && <span className="pi-pattern">pattern</span>}
+                </>
+              )}
+            />
+          </div>
           <input
             className="input"
             aria-label="Add pattern"
-            placeholder="Add pattern…"
+            placeholder="Add pattern, e.g. anthropic/*"
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
             onKeyDown={(e) => {
@@ -206,6 +232,13 @@ export function EnabledModels({
         </div>
       )}
       <div className="settings-foot">
+        {saveError ? (
+          <p className="settings-foot-msg pi-error" role="alert">
+            {saveError}
+          </p>
+        ) : (
+          reminder && <p className="settings-foot-msg">New pi agents use this; running ones need /reload.</p>
+        )}
         <button className="btn btn-xs" aria-label="Revert enabled models" disabled={!dirty || busy} onClick={() => edit(settings.enabled)}>
           Revert
         </button>
@@ -213,12 +246,6 @@ export function EnabledModels({
           Save
         </button>
       </div>
-      {saveError && (
-        <p className="note pi-error" role="alert">
-          {saveError}
-        </p>
-      )}
-      {reminder && <p className="note">New pi agents use this; running ones need /reload.</p>}
     </section>
   );
 }

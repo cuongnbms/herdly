@@ -558,12 +558,12 @@ input.switch::after {
 input.switch:checked { background: var(--accent); border-color: transparent; }
 input.switch:checked::after { transform: translateX(12px); }
 .settings-dialog {
-  display: flex; width: 760px; max-width: 92vw; height: 580px; max-height: 82vh; overflow: hidden;
+  display: flex; width: 820px; max-width: 92vw; height: 580px; max-height: 82vh; overflow: hidden;
   background: var(--surface-1); border-radius: 14px; box-shadow: var(--shadow-dialog);
   animation: pop-in var(--t) var(--ease); outline: none;
 }
 .settings-nav {
-  flex: none; width: 180px; padding: 14px 8px; display: flex; flex-direction: column; gap: 2px;
+  flex: none; width: 172px; padding: 14px 8px; display: flex; flex-direction: column; gap: 2px;
   background: var(--sunken); border-right: 1px solid var(--line);
 }
 .settings-nav-title {
@@ -1655,22 +1655,75 @@ body.row-resizing { cursor: row-resize; user-select: none; }
 .agents-row-blocked:hover { background: color-mix(in srgb, var(--amber) 15%, transparent); }
 
 /* Settings › pi */
-.pi-root { container-type: inline-size; display: flex; flex-direction: column; gap: 14px; }
-.pi-head { display: flex; align-items: center; gap: 8px; }
+/* Text fields and selects inside Settings › pi. */
+.settings-dialog .input, .pi-machine select {
+  height: 28px; padding: 0 8px; box-sizing: border-box; min-width: 0;
+  border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-0); color: var(--fg); font-size: 12.5px;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.settings-dialog .input:focus, .pi-machine select:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.settings-dialog .input::placeholder { color: var(--fg-3); }
+.pi-machine select { min-width: 140px; padding-right: 4px; }
+.pi-machine select:disabled { opacity: 0.6; }
+.settings-foot-msg { flex: 1; min-width: 0; margin: 0; color: var(--fg-3); font-size: 11.5px; line-height: 1.4; }
+.settings-foot-msg.pi-error { color: var(--err); }
+.settings-scroll > .pi-root:has(.settings-foot) { margin-bottom: 0; }
+
+.pi-root { container-type: inline-size; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
+.pi-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pi-machine { display: flex; align-items: center; gap: 8px; color: var(--fg-2); font-size: 12px; font-weight: 500; }
 .pi-dirty { color: var(--amber); font-size: 12px; }
+.pi-views { margin-left: auto; }
+.pi-views button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; white-space: nowrap; }
+.pi-view-dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+.pi-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pi-view[hidden] { display: none; }
 .pi-error { color: var(--err); display: flex; align-items: center; gap: 8px; }
-.pi-models { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-/* .pi-root is 383px in the 600px dialog (600 - 177 nav - 40 padding): two columns there, stacked below ~619px windows. */
-@container (max-width: 340px) { .pi-models { grid-template-columns: 1fr; } }
-.pi-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.pi-col h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--fg-2); }
-.pi-catalog { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
-.pi-group { display: flex; flex-direction: column; gap: 2px; }
-.pi-group-head { text-align: left; font-size: 12px; font-weight: 500; color: var(--fg-2); background: none; border: 0; padding: 2px 0; cursor: pointer; }
-.pi-model { display: flex; align-items: center; gap: 6px; font-size: 12px; padding-left: 12px; overflow-wrap: anywhere; }
-.pi-pattern { font-style: italic; font-size: 11px; color: var(--fg-3); }
-.pi-block > h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--fg-2); }
-.pi-alias { display: flex; flex-direction: column; gap: 6px; padding: 10px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.pi-block { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+
+/* Enabled models: two panels of equal height that fill the pane and scroll on their own. */
+/* The order column is wider: its entries carry the provider, the catalog's do not. */
+.pi-models { flex: 1 1 0; min-height: 300px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); grid-template-rows: minmax(0, 1fr); gap: 12px; }
+/* .pi-root is 608px in the 820px dialog (820 - 172 nav - 40 padding): two columns there, stacked below ~750px windows. */
+@container (max-width: 480px) { .pi-models { grid-template-columns: 1fr; grid-template-rows: none; } .pi-models .pi-panel { height: 320px; } }
+.pi-panel {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; padding: 10px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md);
+}
+.pi-panel-head { display: flex; flex-direction: column; gap: 1px; padding: 0 2px; }
+.pi-panel-head h4 { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--fg); }
+.pi-panel-scroll { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -10px; padding: 2px 10px; }
+.pi-panel-scroll > .note { margin: 4px 2px; }
+.pi-id { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-prov { color: var(--fg-3); }
+.pi-group + .pi-group { margin-top: 4px; }
+.pi-group-head {
+  display: flex; align-items: center; gap: 4px; width: 100%; height: 24px; padding: 0 4px; border: 0; border-radius: 5px;
+  background: none; color: var(--fg-2); font-size: 12px; font-weight: 600; text-align: left; cursor: pointer;
+}
+.pi-group-head:hover { background: var(--hover); color: var(--fg); }
+.pi-group-head .icon { flex: none; width: 12px; height: 12px; transition: transform var(--t-fast); }
+.pi-group-head[aria-expanded="true"] .icon { transform: rotate(90deg); }
+.pi-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-count { flex: none; padding: 0 6px; border-radius: 999px; background: var(--active); color: var(--fg-3); font-size: 10.5px; font-weight: 500; line-height: 16px; font-variant-numeric: tabular-nums; }
+.pi-count.on { background: var(--accent-soft); color: var(--accent); }
+.pi-model { display: flex; align-items: center; gap: 8px; height: 24px; padding: 0 4px 0 20px; border-radius: 5px; cursor: pointer; }
+.pi-model:hover { background: var(--hover); }
+.pi-model input { flex: none; margin: 0; accent-color: var(--accent); }
+.pi-panel .reorder-list { gap: 2px; }
+.pi-panel .reorder-row, .pi-alias .reorder-row { height: 28px; padding: 0 2px 0 4px; border-radius: 5px; }
+.pi-panel .reorder-row:hover, .pi-alias .reorder-row:hover { background: var(--hover); }
+.pi-panel .reorder-row .icon-btn, .pi-alias .reorder-row .icon-btn { width: 22px; height: 22px; opacity: 0.5; }
+.pi-panel .reorder-row:hover .icon-btn, .pi-alias .reorder-row:hover .icon-btn, .reorder-row .icon-btn:focus-visible { opacity: 1; }
+.reorder-row .icon-btn .icon { width: 14px; height: 14px; }
+.reorder-index { flex: none; min-width: 16px; color: var(--fg-3); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.pi-pattern { flex: none; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--fg-3); font-size: 10.5px; line-height: 15px; }
+
+/* Model aliases: one card per alias. */
+.pi-block > .setting-desc { margin: 0 2px; }
+.pi-alias { display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); }
 .pi-alias-head { display: flex; align-items: center; gap: 8px; }
-.pi-alias-head .input { flex: 1; min-width: 0; }
-.pi-alias-ref { color: var(--fg-3); font-size: 11px; white-space: nowrap; }
+.pi-alias-head .input { flex: 1; min-width: 0; font-weight: 500; }
+.pi-alias-ref { color: var(--fg-3); font-size: 11.5px; white-space: nowrap; }
+.pi-alias > .note { margin: 0; }
+.pi-new-alias { align-self: flex-start; }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { piModelsList } from "../lib/ipc";
 import type { FileVersion, MachineView, PiModel } from "../lib/types";
 import { useApp } from "../store/app";
@@ -26,6 +26,7 @@ export function PiSettings() {
   const [aliasDirty, setAliasDirty] = useState(false);
   const dirty = enabledDirty || aliasDirty;
   const [aliasNonce, setAliasNonce] = useState(0);
+  const [view, setView] = useState<"enabled" | "aliases">("enabled");
 
   const options = useMemo(
     () => order.map((id) => machines[id]).filter((m): m is MachineView => !!m && m.state === "connected" && !!m.pi_agent_dir),
@@ -109,28 +110,49 @@ export function PiSettings() {
   const aliases = aliasData?.machineId === machineId ? aliasData.loaded : null;
   const cat = models?.machineId === machineId ? models : null;
 
+  const withAliases = !!mine && mine.settings.kind === "ok" && hasAliasPackage(mine.settings.value.json);
+  const shown = withAliases ? view : "enabled";
+  const views = [
+    { id: "enabled", label: "Enabled models", dirty: enabledDirty },
+    { id: "aliases", label: "Model aliases", dirty: aliasDirty },
+  ] as const;
+
   return (
     <div className="pi-root">
       <div className="pi-head">
-        <select
-          aria-label="Machine"
-          value={machineId}
-          disabled={dirty}
-          onChange={(e) => {
-            setPicked(e.target.value);
-            setData(null);
-          }}
-        >
-          {options.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-        </select>
+        <label className="pi-machine">
+          <span>Machine</span>
+          <select
+            aria-label="Machine"
+            value={machineId}
+            disabled={dirty}
+            onChange={(e) => {
+              setPicked(e.target.value);
+              setData(null);
+            }}
+          >
+            {options.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </label>
         {dirty && (
           <span className="pi-dirty" title="Unsaved changes">
             ●
           </span>
+        )}
+        {withAliases && (
+          <div className="seg seg-n pi-views" role="group" aria-label="pi files" style={{ "--n": 2, "--i": shown === "enabled" ? 0 : 1 } as CSSProperties}>
+            <span className="seg-thumb" />
+            {views.map((v) => (
+              <button key={v.id} aria-pressed={shown === v.id} onClick={() => setView(v.id)}>
+                {v.label}
+                {v.dirty && <span className="pi-view-dirty" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
         )}
       </div>
       {!hasPi ? (
@@ -146,40 +168,46 @@ export function PiSettings() {
         </p>
       ) : (
         <>
-          <EnabledModels
-            key={machineId}
-            machineId={machineId}
-            dir={dir}
-            settings={mine.settings.value}
-            models={cat?.models ?? null}
-            modelsError={cat?.error ?? null}
-            onRetryModels={retryModels}
-            onDirty={setEnabledDirty}
-            onSaved={onSaved}
-          />
-          {hasAliasPackage(mine.settings.value.json) &&
-            (!aliases ? (
-              <p className="note">Loading…</p>
-            ) : aliases.kind === "error" ? (
-              <p className="note pi-error" role="alert">
-                {aliases.error}
-                <button className="btn btn-xs" onClick={reloadAliases}>
-                  Retry
-                </button>
-              </p>
-            ) : (
-              <ModelAliases
-                key={machineId}
-                machineId={machineId}
-                dir={dir}
-                file={aliases.value}
-                version={aliases.version}
-                models={cat?.models ?? null}
-                onDirty={setAliasDirty}
-                onSaved={onAliasesSaved}
-                onReload={reloadAliases}
-              />
-            ))}
+          {/* Both stay mounted, so switching views keeps unsaved edits. */}
+          <div className="pi-view" hidden={shown !== "enabled"}>
+            <EnabledModels
+              key={machineId}
+              machineId={machineId}
+              dir={dir}
+              settings={mine.settings.value}
+              models={cat?.models ?? null}
+              modelsError={cat?.error ?? null}
+              onRetryModels={retryModels}
+              onDirty={setEnabledDirty}
+              onSaved={onSaved}
+            />
+          </div>
+          {withAliases && (
+            <div className="pi-view" hidden={shown !== "aliases"}>
+              {!aliases ? (
+                <p className="note">Loading…</p>
+              ) : aliases.kind === "error" ? (
+                <p className="note pi-error" role="alert">
+                  {aliases.error}
+                  <button className="btn btn-xs" onClick={reloadAliases}>
+                    Retry
+                  </button>
+                </p>
+              ) : (
+                <ModelAliases
+                  key={machineId}
+                  machineId={machineId}
+                  dir={dir}
+                  file={aliases.value}
+                  version={aliases.version}
+                  models={cat?.models ?? null}
+                  onDirty={setAliasDirty}
+                  onSaved={onAliasesSaved}
+                  onReload={reloadAliases}
+                />
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
