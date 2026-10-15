@@ -411,15 +411,16 @@ function FilesSettings() {
   );
 }
 
-/** Add a section here for each new group of settings. */
+/** Add a section here for each new group of settings; the nav lists them under their `group`, in this order. */
 const SECTIONS = [
-  { id: "general", label: "General", Body: GeneralSettings },
-  { id: "appearance", label: "Appearance", Body: AppearanceSettings },
-  { id: "fonts", label: "Fonts", Body: FontSettings },
-  { id: "chat", label: "Chat", Body: ChatSettings },
-  { id: "files", label: "Files", Body: FilesSettings },
-  { id: "pi", label: "pi", Body: PiSettings },
+  { id: "general", label: "General", group: "", Body: GeneralSettings },
+  { id: "appearance", label: "Appearance", group: "", Body: AppearanceSettings },
+  { id: "fonts", label: "Fonts", group: "", Body: FontSettings },
+  { id: "chat", label: "Chat", group: "Workspace", Body: ChatSettings },
+  { id: "files", label: "Files", group: "Workspace", Body: FilesSettings },
+  { id: "pi", label: "pi", group: "Agents", Body: PiSettings },
 ] as const;
+const GROUPS = [...new Set(SECTIONS.map((x) => x.group))];
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -443,16 +444,25 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       >
         <nav className="settings-nav" role="tablist" aria-orientation="vertical">
           <div className="settings-nav-title">Settings</div>
-          {SECTIONS.map((x) => (
-            <button
-              key={x.id}
-              role="tab"
-              aria-selected={x.id === active}
-              className={x.id === active ? "active" : undefined}
-              onClick={() => setActive(x.id)}
-            >
-              {x.label}
-            </button>
+          {GROUPS.map((g) => (
+            <div key={g} className="settings-nav-group" role="presentation">
+              {g && (
+                <div className="settings-nav-heading" role="presentation">
+                  {g}
+                </div>
+              )}
+              {SECTIONS.filter((x) => x.group === g).map((x) => (
+                <button
+                  key={x.id}
+                  role="tab"
+                  aria-selected={x.id === active}
+                  className={x.id === active ? "active" : undefined}
+                  onClick={() => setActive(x.id)}
+                >
+                  {x.label}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <section className="settings-body" role="tabpanel" aria-label={section.label}>

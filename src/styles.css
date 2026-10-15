@@ -558,17 +558,22 @@ input.switch::after {
 input.switch:checked { background: var(--accent); border-color: transparent; }
 input.switch:checked::after { transform: translateX(12px); }
 .settings-dialog {
-  display: flex; width: 820px; max-width: 92vw; height: 580px; max-height: 82vh; overflow: hidden;
+  display: flex; width: 960px; max-width: 92vw; height: 680px; max-height: 86vh; overflow: hidden;
   background: var(--surface-1); border-radius: 14px; box-shadow: var(--shadow-dialog);
   animation: pop-in var(--t) var(--ease); outline: none;
 }
 .settings-nav {
-  flex: none; width: 172px; padding: 14px 8px; display: flex; flex-direction: column; gap: 2px;
+  flex: none; width: 188px; padding: 14px 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
   background: var(--sunken); border-right: 1px solid var(--line);
 }
 .settings-nav-title {
   padding: 2px 10px 10px; color: var(--fg-3); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
 }
+/* Settings is taller than the other dialogs, so it sits in the middle instead of 14vh from the top. */
+.overlay:has(> .settings-dialog) { align-items: center; padding-top: 0; }
+.settings-nav-group { display: flex; flex-direction: column; gap: 2px; }
+.settings-nav-group + .settings-nav-group { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.settings-nav-heading { padding: 0 10px 4px; color: var(--fg-3); font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 .settings-nav button {
   height: 28px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: none;
   color: var(--fg-2); text-align: left; cursor: pointer; transition: background var(--t-fast), color var(--t-fast);
@@ -1695,7 +1700,7 @@ body.row-resizing { cursor: row-resize; user-select: none; }
 /* Enabled models: two panels of equal height that fill the pane and scroll on their own. */
 /* The order column is wider: its entries carry the provider, the catalog's do not. */
 .pi-models { flex: 1 1 0; min-height: 300px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); grid-template-rows: minmax(0, 1fr); gap: 12px; }
-/* .pi-root is 608px in the 820px dialog (820 - 172 nav - 40 padding): two columns there, stacked below ~750px windows. */
+/* .pi-root is 732px in the 960px dialog (960 - 188 nav - 40 padding): two columns there, stacked below ~770px windows (92vw). */
 @container (max-width: 480px) { .pi-models { grid-template-columns: 1fr; grid-template-rows: none; } .pi-models .pi-panel { height: 320px; } }
 .pi-panel {
   display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; padding: 10px;
