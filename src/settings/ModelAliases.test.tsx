@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileContent, MachineView } from "../lib/types";
 
@@ -86,6 +86,29 @@ describe("pi settings: Model aliases", () => {
       top: ["alias/middle"],
     });
     expect(ipc.filesWrite).toHaveBeenCalledWith("local", DIR, "model-alias.json", expect.any(String), { size: expect.any(Number), mtime: 1, cksum: 42 });
+  });
+
+  it("lists models again after a save, keeping the Enabled edits", async () => {
+    await ready();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "xai/grok-4.6" }));
+    const calls = ipc.piModelsList.mock.calls.length;
+    let listed!: (m: unknown) => void;
+    ipc.piModelsList.mockReturnValueOnce(new Promise((r) => (listed = r)));
+    fireEvent.change(nameBox(1), { target: { value: "middle" } });
+    fireEvent.blur(nameBox(1));
+    fireEvent.click(screen.getByRole("button", { name: "Save model aliases" }));
+    await screen.findByText("New pi agents use this; running ones need /reload.");
+    // The old catalog stays while pi lists again.
+    await act(async () => {});
+    expect(ipc.piModelsList).toHaveBeenCalledTimes(calls + 1);
+    expect(screen.queryByText("Loading models…")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "xai/grok-4.6" })).toBeTruthy();
+    await act(async () => listed([{ provider: "xai", id: "grok-4.6" }, { provider: "alias", id: "middle" }]));
+    await screen.findByRole("checkbox", { name: "alias/middle" });
+    expect(ipc.piModelsList).toHaveBeenCalledTimes(calls + 1);
+    expect(screen.getByRole<HTMLInputElement>("checkbox", { name: "xai/grok-4.6" }).checked).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save enabled models" }).disabled).toBe(false);
+    expect(nameBox(1).value).toBe("middle");
   });
 
   it("warns about a deleted alias that another one targets", async () => {

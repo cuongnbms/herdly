@@ -136,30 +136,34 @@ export function EnabledModels({
             </p>
           ) : models === null ? (
             <p className="note">Loading models…</p>
+          ) : models.length === 0 ? (
+            <p className="note">No models</p>
           ) : (
-            groups.map((g) => {
-              const open = !collapsed[g.provider];
-              const total = (models ?? []).filter((m) => m.provider === g.provider);
-              const checked = total.filter(isChecked).length;
-              return (
-                <div key={g.provider} className="pi-group">
-                  <button
-                    className="pi-group-head"
-                    aria-expanded={open}
-                    onClick={() => setCollapsed((c) => ({ ...c, [g.provider]: open }))}
-                  >
-                    {`${g.provider} ${checked}/${total.length}`}
-                  </button>
-                  {open &&
-                    g.models.map((m) => (
-                      <label key={modelRef(m)} className="pi-model">
-                        <input type="checkbox" aria-label={modelRef(m)} checked={isChecked(m)} onChange={() => toggle(m)} />
-                        {m.id}
-                      </label>
-                    ))}
-                </div>
-              );
-            })
+            <div className="pi-catalog">
+              {groups.map((g) => {
+                const open = !collapsed[g.provider];
+                const total = (models ?? []).filter((m) => m.provider === g.provider);
+                const checked = total.filter(isChecked).length;
+                return (
+                  <div key={g.provider} className="pi-group">
+                    <button
+                      className="pi-group-head"
+                      aria-expanded={open}
+                      onClick={() => setCollapsed((c) => ({ ...c, [g.provider]: open }))}
+                    >
+                      {`${g.provider} ${checked}/${total.length}`}
+                    </button>
+                    {open &&
+                      g.models.map((m) => (
+                        <label key={modelRef(m)} className="pi-model">
+                          <input type="checkbox" aria-label={modelRef(m)} checked={isChecked(m)} onChange={() => toggle(m)} />
+                          {m.id}
+                        </label>
+                      ))}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
         <div className="pi-col">

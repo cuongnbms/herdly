@@ -151,6 +151,13 @@ describe("pi settings: Enabled models", () => {
     await screen.findByRole("checkbox", { name: "xai/grok-4.6" });
   });
 
+  it("says No models for an empty catalog and keeps the order list", async () => {
+    ipc.piModelsList.mockResolvedValue([]);
+    render(<PiSettings />);
+    expect(await screen.findByText("No models")).toBeTruthy();
+    expect(entries()).toEqual(["xai/grok-4.6", "anthropic/*"]);
+  });
+
   it("never saves a file it cannot parse", async () => {
     disk["/home/local/.pi/agent"]["settings.json"] = text({ enabledModels: "anthropic/*" });
     render(<PiSettings />);

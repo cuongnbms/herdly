@@ -1645,9 +1645,11 @@ body.row-resizing { cursor: row-resize; user-select: none; }
 .pi-dirty { color: var(--amber); font-size: 12px; }
 .pi-error { color: var(--err); display: flex; align-items: center; gap: 8px; }
 .pi-models { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@container (max-width: 480px) { .pi-models { grid-template-columns: 1fr; } }
+/* .pi-root is 383px in the 600px dialog (600 - 177 nav - 40 padding): two columns there, stacked below ~619px windows. */
+@container (max-width: 340px) { .pi-models { grid-template-columns: 1fr; } }
 .pi-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .pi-col h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.pi-catalog { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
 .pi-group { display: flex; flex-direction: column; gap: 2px; }
 .pi-group-head { text-align: left; font-size: 12px; font-weight: 500; color: var(--fg-2); background: none; border: 0; padding: 2px 0; cursor: pointer; }
 .pi-model { display: flex; align-items: center; gap: 6px; font-size: 12px; padding-left: 12px; overflow-wrap: anywhere; }

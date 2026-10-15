@@ -75,7 +75,8 @@ export function PiSettings() {
   useEffect(() => {
     if (!machineId || !hasPi) return;
     let stale = false;
-    setModels(null);
+    // A refresh keeps the catalog shown; a new Machine or a retry after an error starts over.
+    setModels((m) => (m && m.machineId === machineId && m.models !== null ? m : null));
     piModelsList(machineId).then(
       (m) => !stale && setModels({ machineId, models: m, error: null }),
       (e) => !stale && setModels({ machineId, models: null, error: errorText(e) }),
@@ -91,10 +92,12 @@ export function PiSettings() {
       setData((d) => (d && d.machineId === machineId && d.settings.kind === "ok" ? { ...d, settings: { ...d.settings, value: s } } : d)),
     [machineId],
   );
-  // The next save must use the version the last save returned.
+  // The next save must use the version the last save returned; new or renamed aliases join the catalog.
   const onAliasesSaved = useCallback(
-    (file: AliasFile, version: FileVersion) =>
-      setAliasData((d) => (d && d.machineId === machineId && d.loaded.kind === "ok" ? { ...d, loaded: { kind: "ok", value: file, version } } : d)),
+    (file: AliasFile, version: FileVersion) => {
+      setAliasData((d) => (d && d.machineId === machineId && d.loaded.kind === "ok" ? { ...d, loaded: { kind: "ok", value: file, version } } : d));
+      setModelsNonce((n) => n + 1);
+    },
     [machineId],
   );
   const reloadAliases = useCallback(() => setAliasNonce((n) => n + 1), []);
