@@ -125,7 +125,7 @@ export function ModelAliases({
 
   return (
     <section className="pi-block">
-      <p className="setting-desc">An alias tries its targets in order and falls back to the next when one fails. Use it as alias/name.</p>
+      <p className="setting-desc">Each alias lists its targets in order, top first. Pick it as alias/name anywhere a model goes.</p>
       <datalist id="pi-alias-models">
         {(models ?? []).map((m) => (
           <option key={modelRef(m)} value={modelRef(m)} />

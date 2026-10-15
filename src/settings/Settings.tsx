@@ -17,18 +17,13 @@ import { TAB_LAYOUTS, useTabLayout } from "./tabLayout";
 /** How far one press of − or + moves a font size, in px. */
 const SIZE_STEP = 0.5;
 
-/** A card of setting rows, with an optional heading above it. */
-export function Group({ title, children }: { title?: string; children: ReactNode }) {
-  return (
-    <section className="settings-group">
-      {title && <h4 className="settings-group-title">{title}</h4>}
-      <div className="settings-card">{children}</div>
-    </section>
-  );
+/** A card of setting rows. */
+function Group({ children }: { children: ReactNode }) {
+  return <div className="settings-card">{children}</div>;
 }
 
 /** One setting: its label and description on the left, its control on the right (or below, when `stack`). */
-export function Row({
+function Row({
   label,
   desc,
   htmlFor,

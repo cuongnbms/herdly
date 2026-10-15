@@ -589,8 +589,6 @@ input.switch:checked::after { transform: translateX(12px); }
   position: sticky; bottom: 0; z-index: 1; display: flex; justify-content: flex-end; gap: 8px;
   margin: auto -20px 0; padding: 10px 20px; background: var(--surface-1); border-top: 1px solid var(--line);
 }
-.settings-group { display: flex; flex-direction: column; gap: 6px; }
-.settings-group-title { margin: 0 2px; font-size: 12px; font-weight: 600; color: var(--fg-2); }
 .settings-card { display: flex; flex-direction: column; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); }
 .settings-card > * + * { border-top: 1px solid var(--line); }
 .settings-card-body { padding: 10px 12px; }
