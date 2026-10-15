@@ -120,6 +120,22 @@ _Avoid_: provider, engine
 How hard the Model is set to think, as the Transcript records it (`high`, `off`); never inferred.
 _Avoid_: thinking level, effort mode
 
+**Agent dir**:
+pi's configuration folder on a Machine (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`), holding `settings.json` and `model-alias.json`; its `sessions` folder holds pi's Transcripts unless `PI_CODING_AGENT_SESSION_DIR` moves them.
+_Avoid_: pi home, config dir
+
+**Enabled models**:
+The ordered list of Models and patterns (`enabledModels` in the Agent dir's `settings.json`) that pi's Ctrl+P cycles through; empty means every Model. An entry that is not an exact `provider/id` is a **pattern** (glob or fuzzy).
+_Avoid_: scoped models (pi's command name), favourites
+
+**Model alias**:
+A name `k` that the `pi-model-fallback-alias` package registers as Model `alias/k`, answering with the first of its Alias targets that works.
+_Avoid_: role model, fallback model
+
+**Alias target**:
+One entry in a Model alias's ordered fallback chain: a `provider/id` or another `alias/*`.
+_Avoid_: backend, fallback
+
 **Quota**:
 How much of a Provider account's usage allowance is used, read on this Mac only. It belongs to the Provider, never to a Machine or an Agent.
 _Avoid_: usage, limit, credits
