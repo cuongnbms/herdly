@@ -60,6 +60,8 @@ Out (non-goals):
 - `PI=` the absolute path of `pi`, found the way `herdr` is: login shell `command -v pi`, then
   interactive shell, then `$HOME/.local/bin/pi`, `/opt/homebrew/bin/pi`, `/usr/local/bin/pi`;
   empty when not found. The pi lookup must not change how `H` (herdr) is resolved.
+Cost: every connect runs one extra login shell when `pi` is not on the plain PATH, plus an
+interactive one when pi is absent altogether (mise and nvm usually activate there).
 
 `MachineInfo` gains `agent_dir: String` and `pi: String` (empty = not found). `parse_probe`
 fills them; a probe without the lines (older fixture) yields `agent_dir = "$HOME/.pi/agent"`
@@ -124,7 +126,8 @@ Added to `SECTIONS` in `Settings.tsx` as `{ id: "pi", label: "pi" }`.
 
 **Machine picker** at the top: connected Machines from `useApp` with a `pi_agent_dir`.
 Default: the Machine of the selected Pane, else `local`. Disabled while either block has unsaved
-changes. The section header shows `●` while there are unsaved changes.
+changes. A `●` beside the picker shows while there are unsaved changes (the dialog header
+belongs to `SettingsDialog`).
 
 **Empty states**: no connected Machine → "No connected machine". Machine without pi →
 "pi not found on <machine>". Nothing else is shown in those cases.

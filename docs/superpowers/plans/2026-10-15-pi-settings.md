@@ -24,7 +24,7 @@
 - UI copy is English and exact (tests assert it):
   - Machine picker `<select aria-label="Machine">`, options show `MachineView.label`; unsaved marker `<span className="pi-dirty" title="Unsaved changes">●</span>` beside the picker.
   - Empty states: `No connected machine`; `pi not found on ${label}`.
-  - Errors (each in `<p className="note pi-error" role="alert">`): `Cannot list models: ${msg}`, `Cannot read ${file}: ${msg}`, `${file} is not valid JSON`, `enabledModels in settings.json is not a list`, `model-alias.json must be an object`, `Cannot save: ${msg}`; read/list errors carry a `Retry` button.
+  - Errors (each in `<p className="note pi-error" role="alert">`, the message a direct text node of the `<p>`, a `Retry` button following it as a sibling element inside the `<p>`): `Cannot list models: ${msg}`, `Cannot read ${file}: ${msg}`, `${file} is not valid JSON`, `enabledModels in settings.json is not a list`, `model-alias.json must be an object`, `Cannot save: ${msg}`; read/list errors carry a `Retry` button.
   - Conflict bar: `<div className="files-banner files-banner-conflict" role="alert">` with `Changed on disk` and buttons `Reload`, `Overwrite`.
   - After a save: `<p className="note">New pi agents use this; running ones need /reload.</p>`.
   - Save/Revert buttons show `Save` / `Revert` with aria-labels `Save enabled models` / `Revert enabled models` and `Save model aliases` / `Revert model aliases`.
@@ -991,6 +991,7 @@ Behaviour:
   - `ReorderList label={\`Alias ${i + 1} targets\`}` rendering `${n}. ${target}` in `.reorder-text`.
   - `<input aria-label={\`Add target to alias ${i + 1}\`} list="pi-alias-models">` appends on Enter (trimmed, non-empty, not already in this alias) and clears. One shared `<datalist id="pi-alias-models">` holds `modelRef(m)` for every catalog model plus `alias/${name}` for every alias.
   - `Add at least one target` when the alias has none; `${t} does not exist` for each of `missingTargets(alias, aliases)`.
+- A `loadAliases` error renders its `<p role="alert">` + `Retry` in place of the alias block; the Enabled models block stays.
 - `<button aria-label="New alias">+ New alias</button>` appends `{ name: "", orig: null, form: "array", targets: [] }`.
 - Save (`Save model aliases`) is disabled when nothing changed, any name draft has an error, or any alias has no targets. Save → `saveAliases(…, version, false)`: `saved` → `onSaved`, reminder line; `conflict` → conflict bar (Reload → `onReload`; Overwrite → `saveAliases(…, version, true)`); `error` → its text.
 
