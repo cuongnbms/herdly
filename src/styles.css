@@ -960,7 +960,16 @@ input.switch:checked::after { transform: translateX(12px); }
 .chat-work-title { font-weight: 600; }
 .chat-work-rows { margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--line-2); }
 .chat-work-rows .chat-row { padding: 3px 0; max-width: none; }
-.chat-narration .chat-assistant { color: var(--fg-3); font-size: 12.5px; line-height: 1.5; }
+/* Narration is the turn's spine: full-colour text behind a ● as in the terminal, between folded runs of calls. */
+.chat-narration { position: relative; margin: 4px 0; padding-left: 16px; }
+.chat-narration::before { content: "●"; position: absolute; left: 0; top: 3px; font-size: 9px; line-height: calc(var(--chat-font) * 1.6); color: var(--fg-2); }
+.chat-narration .chat-assistant { color: var(--fg); }
+.chat-calls-head {
+  display: flex; align-items: center; gap: 6px; padding: 3px 0; background: none; border: 0;
+  color: var(--fg-3); font-size: 12px; cursor: pointer; text-align: left;
+}
+.chat-calls-head:hover { color: var(--fg-2); }
+.chat-calls-rows { margin: 2px 0 4px; padding-left: 12px; border-left: 2px solid var(--line); }
 .diff-del { color: var(--diff-del); background: color-mix(in srgb, var(--err) 10%, transparent); margin: 0 -10px; padding: 0 10px; }
 .diff-add { color: var(--diff-add); background: color-mix(in srgb, var(--green) 10%, transparent); margin: 0 -10px; padding: 0 10px; }
 .chat-notice select {
