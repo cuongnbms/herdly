@@ -93,6 +93,13 @@ describe("PromptPanel", () => {
 
   it("shows the terminal cursor's preview beside the options, and the one pointed at from the transcript", async () => {
     shown = withPreviews(1);
+    vi.mocked(herdrCall).mockImplementation(async (_m, _s, method, params) => {
+      // the TUI's cursor, and the preview with it, follows the arrow keys
+      const keys = (params as { keys?: string[] }).keys ?? [];
+      if (keys.includes("up")) shown = withPreviews(0);
+      if (keys.includes("down")) shown = withPreviews(1);
+      return method === "pane.read" ? { text: shown } : {};
+    });
     const { unmount } = render(<PromptPanel pane={pane} view={view} />);
     expect(await screen.findByText("preview 2")).toBeTruthy();
     expect(screen.getByText(/Preview · Card \/ pill/)).toBeTruthy();
@@ -100,13 +107,24 @@ describe("PromptPanel", () => {
     expect(screen.getByText(/once its cursor is there/).getAttribute("aria-hidden")).toBeNull();
     // the screen's preview stays laid out under the note, so pointing away does not shrink the card
     expect(screen.getByText("preview 2").getAttribute("aria-hidden")).toBe("true");
-    // a preview the terminal showed once is shown again when its option is pointed at
-    shown = withPreviews(0);
-    expect(await screen.findByText("preview 1", undefined, { timeout: PROMPT_POLL_MS * 2 })).toBeTruthy();
+    // a pointer resting where the card appeared moves nothing in the terminal
+    await new Promise((r) => setTimeout(r, 300));
+    expect(sent()).toEqual([]);
+    // once it moves over an option whose preview the card lacks, the terminal's cursor goes there to show it
+    const timeline = screen.getByRole("button", { name: /Timeline/ });
+    fireEvent.mouseMove(timeline, { clientX: 5, clientY: 5 });
+    fireEvent.mouseMove(timeline, { clientX: 6, clientY: 5 });
+    await waitFor(() => expect(sent()).toEqual([["agent.send_keys", { target: "w1:p1", keys: ["up"] }]]));
+    expect(await screen.findByText("preview 1")).toBeTruthy();
+    expect(screen.getByText("preview 1").getAttribute("aria-hidden")).toBeNull();
+    // a preview the terminal showed once is shown again when its option is pointed at, with no keys
     fireEvent.mouseEnter(screen.getByRole("button", { name: /Card \/ pill/ }));
     expect(screen.getByText("preview 2").getAttribute("aria-hidden")).toBeNull();
     expect(screen.getByText("preview 1").getAttribute("aria-hidden")).toBe("true");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(sent()).toHaveLength(1);
     unmount();
+    vi.mocked(herdrCall).mockClear();
 
     render(<PromptPanel pane={pane} view={view} asked={asked} />);
     expect(await screen.findByText("( Started 09:00 )")).toBeTruthy();

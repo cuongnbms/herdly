@@ -675,6 +675,16 @@ export function cursorLabel(prompt: ScreenPrompt | null): string | null {
   return parsed?.responder === "pi-model" ? (parsed.options[parsed.selectedIndex]?.label ?? null) : null;
 }
 
+/**
+ * The keys that move the terminal's cursor onto option `index` of Claude's question whose
+ * preview follows the cursor, so the screen shows that option's preview; null for any other prompt.
+ */
+export function cursorKeys(prompt: ScreenPrompt, index: number): string[] | null {
+  const parsed = parsedByPrompt.get(prompt);
+  if (!parsed?.notes || parsed.responder !== "claude-question" || !(index >= 0 && index < parsed.options.length)) return null;
+  return navigationKeys(index - parsed.selectedIndex);
+}
+
 function navigationKeys(delta: number): string[] {
   return Array.from({ length: Math.abs(delta) }, () => (delta > 0 ? KEY.down : KEY.up));
 }

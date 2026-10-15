@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import "../fonts/fonts.css";
 import { herdrCall } from "../lib/ipc";
 import { paneKey, type PaneRef, type PaneView } from "../lib/types";
@@ -10,8 +10,8 @@ import { watchTermFont } from "../settings/store";
 import { watchTermTheme } from "../settings/theme";
 import { applyUnicode11 } from "../terminal/unicode";
 import { previewsFor, type AskedQuestion } from "./prompt/askedPreviews";
-import { parseInteractivePrompt, readPrompt, type PromptAnswer, type ScreenPrompt } from "./prompt/screenPrompt";
-import { sendAnswer, type PromptIo } from "./prompt/sendAnswer";
+import { cursorKeys, parseInteractivePrompt, readPrompt, type PromptAnswer, type ScreenPrompt } from "./prompt/screenPrompt";
+import { sendAnswer, STEP_GAP_MS, type PromptIo } from "./prompt/sendAnswer";
 
 const QUICK: { label: string; key: string }[] = [
   { label: "1", key: "1" },
@@ -27,6 +27,10 @@ const QUICK: { label: string; key: string }[] = [
 export const PROMPT_POLL_MS = 1500;
 /** Time for the TUI to redraw after an answer before the screen is read again. */
 const SETTLE_MS = 250;
+/** How long an option is pointed at before the terminal's cursor goes there for its preview. */
+const POINT_MS = 150;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const RECOMMENDED_RE = /\s*\(Recommended\)$/i;
 
@@ -88,11 +92,14 @@ function PromptCard({
   asked,
   pending,
   onAnswer,
+  onPoint,
 }: {
   prompt: ScreenPrompt;
   asked: AskedQuestion[];
   pending: boolean;
   onAnswer: (answer: PromptAnswer) => void;
+  /** an option whose preview the card lacks is pointed at: the terminal's cursor can go show it */
+  onPoint: (index: number) => void;
 }) {
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
@@ -109,6 +116,19 @@ function PromptCard({
   const hasPreview = previews !== null || seen.current.size > 0;
   const previewing = pointed ?? prompt.preview?.index ?? 0;
   const layers = previews ?? prompt.options.map((_, i) => seen.current.get(i) ?? null);
+  // The card can appear under a resting pointer, which WebKit has enter an option with no hand
+  // moving: the terminal's cursor follows only once the pointer has moved over the options.
+  const rest = useRef<{ x: number; y: number } | null>(null);
+  const armed = useRef(false);
+  const arm = (e: MouseEvent) => {
+    if (!armed.current && rest.current && (rest.current.x !== e.clientX || rest.current.y !== e.clientY)) armed.current = true;
+    rest.current ??= { x: e.clientX, y: e.clientY };
+    return armed.current;
+  };
+  const point = (i: number, follow: boolean) => {
+    setPointed(i);
+    if (follow && previews === null && !seen.current.has(i)) onPoint(i);
+  };
   const toggle = (i: number) =>
     setChecked((cur) => {
       const next = new Set(cur);
@@ -159,8 +179,9 @@ function PromptCard({
               type="button"
               className={prompt.fallback ? "keycap" : "prompt-option" + (hasPreview && i === previewing ? " previewing" : "")}
               disabled={pending}
-              onMouseEnter={hasPreview ? () => setPointed(i) : undefined}
-              onFocus={hasPreview ? () => setPointed(i) : undefined}
+              onMouseEnter={hasPreview ? (e) => point(i, arm(e)) : undefined}
+              onMouseMove={hasPreview ? (e) => !armed.current && arm(e) && point(i, true) : undefined}
+              onFocus={hasPreview ? () => point(i, true) : undefined}
               onClick={() => onAnswer(notes.trim() ? { option_index: i, notes: notes.trim() } : { option_index: i })}
             >
               {!prompt.fallback && <span className="prompt-num">{i + 1}</span>}
@@ -349,11 +370,39 @@ export function PromptPanel({
     text: (text) => call("pane.send_text", { pane_id: pane.pane_id, text }),
   };
 
+  // Pointing at an option whose preview the card lacks moves the terminal's cursor there, once the
+  // pointer rests, so the screen shows it. One move at a time; an answer waits for it to finish.
+  const pointTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const moving = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => () => clearTimeout(pointTimer.current), []);
+  const point = (id: string, index: number) => {
+    clearTimeout(pointTimer.current);
+    pointTimer.current = setTimeout(() => {
+      if (busy.current) return;
+      moving.current = moving.current
+        .then(async () => {
+          // the keys move from where the cursor is now, on the prompt still shown
+          const fresh = show(await read());
+          const keys = fresh?.id === id ? cursorKeys(fresh, index) : null;
+          if (!keys?.length || busy.current) return;
+          for (const [i, key] of keys.entries()) {
+            if (i > 0) await sleep(STEP_GAP_MS);
+            await io.keys([key]);
+          }
+          await sleep(SETTLE_MS);
+          await refresh();
+        })
+        .catch((e) => console.error("moving the prompt's cursor failed", e));
+    }, POINT_MS);
+  };
+
   const answer = async (a: PromptAnswer) => {
     if (!prompt || busy.current) return;
     busy.current = true;
     setPending(true);
+    clearTimeout(pointTimer.current);
     try {
+      await moving.current;
       const outcome = await sendAnswer(io, agent, prompt, a, undefined, fallback);
       if (outcome.sent) {
         setError(null);
@@ -378,7 +427,9 @@ export function PromptPanel({
     if (busy.current) return;
     busy.current = true;
     setPending(true);
+    clearTimeout(pointTimer.current);
     try {
+      await moving.current;
       await io.keys(["esc"]);
       setError(null);
       await new Promise((r) => setTimeout(r, SETTLE_MS));
@@ -427,7 +478,14 @@ export function PromptPanel({
       }}
     >
       {prompt ? (
-        <PromptCard key={prompt.id} prompt={prompt} asked={asked} pending={pending} onAnswer={(a) => void answer(a)} />
+        <PromptCard
+          key={prompt.id}
+          prompt={prompt}
+          asked={asked}
+          pending={pending}
+          onAnswer={(a) => void answer(a)}
+          onPoint={(i) => point(prompt.id, i)}
+        />
       ) : (
         <div className="blocked-head">
           <span className="dot dot-blocked" aria-hidden="true" />

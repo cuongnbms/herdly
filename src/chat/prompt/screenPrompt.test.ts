@@ -1,6 +1,6 @@
 // Screens and cases adapted from herdr-web-ui's server/prompt.test.ts (MIT, © 2026 devswha).
 import { describe, expect, test } from "vitest";
-import { answerKeys, parseFallbackPrompt, parseInteractivePrompt, type ScreenPrompt } from "./screenPrompt";
+import { answerKeys, cursorKeys, parseFallbackPrompt, parseInteractivePrompt, type ScreenPrompt } from "./screenPrompt";
 
 const labels = (prompt: ScreenPrompt | null) => prompt?.options.map((option) => option.label);
 
@@ -852,6 +852,30 @@ Enter to select · ↑/↓ to navigate · n to add notes · ${editing ? "ctrl+g 
     const first = parseInteractivePrompt("claude", screenWith({ cursor: 0 }));
     expect(parseInteractivePrompt("claude", screenWith({ cursor: 2 }))?.id).toBe(first?.id);
     expect(parseInteractivePrompt("claude", screenWith({ chat: true }))?.id).toBe(first?.id);
+  });
+
+  test("moves the cursor onto an option to show its preview, from the cursor's row or Chat about this", () => {
+    const prompt = parseInteractivePrompt("claude", screenWith({ cursor: 1 }))!;
+    expect(cursorKeys(prompt, 0)).toEqual(["up"]);
+    expect(cursorKeys(prompt, 2)).toEqual(["down"]);
+    expect(cursorKeys(prompt, 1)).toEqual([]);
+    expect(cursorKeys(prompt, 3)).toBeNull();
+    expect(cursorKeys(parseInteractivePrompt("claude", screenWith({ chat: true }))!, 0)).toEqual(["up", "up", "up"]);
+    // a question without previews has no preview to show
+    const plain = `
+☐ Dataset
+
+Which dataset?
+
+❯ 1. LM-O
+  2. YCB-V
+  3. Type something.
+────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+`;
+    expect(cursorKeys(parseInteractivePrompt("claude", plain)!, 1)).toBeNull();
   });
 
   test("answers an option, with notes, and Chat about this, from the cursor", () => {
