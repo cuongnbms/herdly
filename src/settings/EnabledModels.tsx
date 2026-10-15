@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { PiModel } from "../lib/types";
 import { isCatalogEntry, modelRef, type PiSettingsFile } from "./pi";
 import { errorText, loadSettings, saveEnabled } from "./piFiles";
@@ -43,7 +43,7 @@ export function EnabledModels({
   }
 
   const dirty = !sameList(list, settings.enabled);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
   useEffect(() => () => onDirty(false), [onDirty]);

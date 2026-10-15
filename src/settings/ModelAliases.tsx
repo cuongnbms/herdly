@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import type { FileVersion, PiModel } from "../lib/types";
 import { aliasNameError, missingTargets, modelRef, renameAlias, withAliases, type Alias, type AliasFile } from "./pi";
 import { errorText, saveAliases } from "./piFiles";
@@ -53,7 +53,7 @@ export function ModelAliases({
   }
 
   const dirty = withAliases(file.raw, aliases) !== withAliases(file.raw, file.aliases);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
   useEffect(() => () => onDirty(false), [onDirty]);
