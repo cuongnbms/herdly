@@ -1,6 +1,6 @@
 import { type CSSProperties, type DragEvent, memo, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { notificationsEnabled, setNotificationsEnabled } from "../notify";
-import { CloseIcon, GearIcon, GripIcon } from "../ui/icons";
+import { BotIcon, ChatIcon, CloseIcon, EyeIcon, FolderIcon, GearIcon, GripIcon, PencilIcon } from "../ui/icons";
 import { FontPicker } from "./FontPicker";
 import { DEFAULT_HIDDEN_FOLDERS, useHiddenFolders } from "./hiddenFolders";
 import { NEW_AGENT_LENSES, useLensSettings } from "./lens";
@@ -413,12 +413,12 @@ function FilesSettings() {
 
 /** Add a section here for each new group of settings; the nav lists them under their `group`, in this order. */
 const SECTIONS = [
-  { id: "general", label: "General", group: "", Body: GeneralSettings },
-  { id: "appearance", label: "Appearance", group: "", Body: AppearanceSettings },
-  { id: "fonts", label: "Fonts", group: "", Body: FontSettings },
-  { id: "chat", label: "Chat", group: "Workspace", Body: ChatSettings },
-  { id: "files", label: "Files", group: "Workspace", Body: FilesSettings },
-  { id: "pi", label: "pi", group: "Agents", Body: PiSettings },
+  { id: "general", label: "General", group: "App", Icon: GearIcon, Body: GeneralSettings },
+  { id: "appearance", label: "Appearance", group: "App", Icon: EyeIcon, Body: AppearanceSettings },
+  { id: "fonts", label: "Fonts", group: "App", Icon: PencilIcon, Body: FontSettings },
+  { id: "chat", label: "Chat", group: "Workspace", Icon: ChatIcon, Body: ChatSettings },
+  { id: "files", label: "Files", group: "Workspace", Icon: FolderIcon, Body: FilesSettings },
+  { id: "pi", label: "pi", group: "Agents", Icon: BotIcon, Body: PiSettings },
 ] as const;
 const GROUPS = [...new Set(SECTIONS.map((x) => x.group))];
 
@@ -443,14 +443,11 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       >
         <nav className="settings-nav" role="tablist" aria-orientation="vertical">
-          <div className="settings-nav-title">Settings</div>
           {GROUPS.map((g) => (
             <div key={g} className="settings-nav-group" role="presentation">
-              {g && (
-                <div className="settings-nav-heading" role="presentation">
-                  {g}
-                </div>
-              )}
+              <div className="settings-nav-heading" role="presentation">
+                {g}
+              </div>
               {SECTIONS.filter((x) => x.group === g).map((x) => (
                 <button
                   key={x.id}
@@ -459,6 +456,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
                   className={x.id === active ? "active" : undefined}
                   onClick={() => setActive(x.id)}
                 >
+                  <x.Icon />
                   {x.label}
                 </button>
               ))}
