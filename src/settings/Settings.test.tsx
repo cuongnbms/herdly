@@ -25,6 +25,12 @@ function openSettings() {
 }
 
 describe("Settings dialog", () => {
+  it("has a pi section", () => {
+    render(<Settings />);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("tab", { name: "pi" })).toBeTruthy();
+  });
+
   it("switches the theme from the Appearance section", () => {
     useTheme.setState({ pref: "dark", theme: "dark" });
     render(<Settings />);

@@ -5,6 +5,7 @@ import { FontPicker } from "./FontPicker";
 import { DEFAULT_HIDDEN_FOLDERS, useHiddenFolders } from "./hiddenFolders";
 import { NEW_AGENT_LENSES, useLensSettings } from "./lens";
 import { useNewTab } from "./newTab";
+import { PiSettings } from "./PiSettings";
 import { AGENTS } from "../agents/openAgentTab";
 import { DEFAULT_QUICK_REPLIES, moveReply, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, useQuickReplies } from "./quickReplies";
 import { dropZone } from "../sidebar/dnd";
@@ -367,6 +368,7 @@ const SECTIONS = [
   { id: "fonts", label: "Fonts", Body: FontSettings },
   { id: "chat", label: "Chat", Body: ChatSettings },
   { id: "files", label: "Files", Body: FilesSettings },
+  { id: "pi", label: "pi", Body: PiSettings },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
