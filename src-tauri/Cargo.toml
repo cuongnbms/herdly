@@ -1,6 +1,6 @@
 [package]
 name = "herdly"
-version = "1.3.1"
+version = "1.3.2"
 description = "Herdly desktop app"
 authors = ["Cuong Nguyen"]
 edition = "2021"
