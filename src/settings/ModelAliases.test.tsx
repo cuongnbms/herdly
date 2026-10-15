@@ -125,6 +125,16 @@ describe("pi settings: Model aliases", () => {
     expect(ipc.filesWrite).toHaveBeenCalledWith("local", DIR, "model-alias.json", text({ fast: ["xai/grok-4.6"] }), null);
   });
 
+  it("explains why Save is disabled when a new alias has no name", async () => {
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "New alias" }));
+    const add = screen.getByRole("combobox", { name: "Add target to alias 4" });
+    fireEvent.change(add, { target: { value: "xai/grok-4.6" } });
+    fireEvent.keyDown(add, { key: "Enter" });
+    expect(within(card(4)).getByText("Name is required")).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save model aliases" }).disabled).toBe(true);
+  });
+
   it("shows the conflict bar when the file changed; Reload reads it again", async () => {
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "Delete alias 3" }));

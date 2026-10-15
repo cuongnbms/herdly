@@ -134,7 +134,7 @@ export function ModelAliases({
         ))}
       </datalist>
       {aliases.map((a, i) => {
-        const err = names[i] !== undefined ? nameError(i) : null;
+        const err = nameError(i);
         return (
           <section key={i} className="pi-alias" aria-label={`Alias ${i + 1}`}>
             <div className="pi-alias-head">

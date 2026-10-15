@@ -99,6 +99,8 @@ async fn attaches_echoes_and_reports_held() {
         home: "/tmp".into(),
         herdr: HERDR.into(),
         pi_dir: "/tmp".into(),
+        agent_dir: "/tmp/.pi/agent".into(),
+        pi: String::new(),
         version: "0.9.3".into(),
         protocol: 22,
     };
