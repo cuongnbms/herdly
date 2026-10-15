@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatItem } from "../lib/types";
-import { buildRows, formatWorkDuration, workSummary, type ChatRow } from "./workBlocks";
+import { buildRows, formatWorkDuration, groupCalls, workSummary, type ChatRow, type WorkSegment } from "./workBlocks";
 
 const user = (text: string, ts?: string): ChatItem => ({ kind: "user", text, ts });
 const say = (markdown: string, ts?: string): ChatItem => ({ kind: "assistant_text", markdown, ts });
@@ -122,6 +122,41 @@ describe("workSummary", () => {
   it("does not count a todo list as an edit", () => {
     const todo = call("t", "TodoWrite", { todos: [{ content: "x", status: "pending" }] });
     expect(workSummary([todo, call("e", "Edit")], new Map())).toBe("1 edit");
+  });
+});
+
+describe("groupCalls", () => {
+  const todo = call("t", "TodoWrite", { todos: [{ content: "x", status: "pending" }] });
+  /** `calls[a,b]` for a group, `call:a` / `say:x` / `think:x` / `result:a` for a lone item. */
+  const segs = (segments: WorkSegment[]): string[] =>
+    segments.map((s) => {
+      if (s.kind === "calls") return `calls[${s.calls.map((c) => c.id).join(",")}]`;
+      const it = s.item;
+      return it.kind === "tool_call" ? `call:${it.id}`
+        : it.kind === "assistant_text" ? `say:${it.markdown}`
+          : it.kind === "thinking" ? `think:${it.text}`
+            : it.kind === "tool_result" ? `result:${it.call_id}`
+              : it.kind;
+    });
+
+  it("folds two or more calls in a row under one group and leaves a lone call alone", () => {
+    expect(segs(groupCalls([say("Looking."), call("a"), call("b"), call("c"), say("Now the logs."), call("d")], false)))
+      .toEqual(["say:Looking.", "calls[a,b,c]", "say:Now the logs.", "call:d"]);
+  });
+
+  it("breaks a run at thinking and at a result whose call is not loaded", () => {
+    expect(segs(groupCalls([call("a"), call("b"), think("hm"), call("c"), result("x"), call("d"), call("e")], false)))
+      .toEqual(["calls[a,b]", "think:hm", "call:c", "result:x", "calls[d,e]"]);
+  });
+
+  it("keeps a todo list out of a group, since it is the plan", () => {
+    expect(segs(groupCalls([call("a"), todo, call("b"), call("c")], false))).toEqual(["call:a", "call:t", "calls[b,c]"]);
+  });
+
+  it("leaves the calls still arriving in a live block open, and folds earlier runs", () => {
+    expect(segs(groupCalls([call("a"), call("b"), say("Next."), call("c"), call("d")], true)))
+      .toEqual(["calls[a,b]", "say:Next.", "call:c", "call:d"]);
+    expect(segs(groupCalls([call("a"), call("b"), think("hm")], true))).toEqual(["calls[a,b]", "think:hm"]);
   });
 });
 

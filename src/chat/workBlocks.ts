@@ -7,7 +7,7 @@
 import type { ChatItem } from "../lib/types";
 import { checklist } from "./checklist";
 
-type ToolCall = Extract<ChatItem, { kind: "tool_call" }>;
+export type ToolCall = Extract<ChatItem, { kind: "tool_call" }>;
 export type ToolResult = Extract<ChatItem, { kind: "tool_result" }>;
 
 export interface WorkBlock {
@@ -85,6 +85,34 @@ export function buildRows(items: ChatItem[], offset = 0): { rows: ChatRow[]; res
   const tail = rows[lastBlock];
   if (tail?.kind === "work") rows[lastBlock] = { ...tail, last: true };
   return { rows, results };
+}
+
+/** An open block's rows: narration, thinking and lone calls as they are, runs of calls folded. */
+export type WorkSegment = { kind: "item"; item: ChatItem } | { kind: "calls"; calls: ToolCall[] };
+
+/**
+ * Folds each run of two or more calls into one "4 commands" line, so the narration between
+ * them reads as the turn's spine. A todo list is the plan and stays out; in a live block the
+ * run still arriving stays open until narration or thinking follows it.
+ */
+export function groupCalls(items: ChatItem[], live: boolean): WorkSegment[] {
+  const segments: WorkSegment[] = [];
+  let run: ToolCall[] = [];
+  const close = (trailing: boolean) => {
+    if (run.length >= 2 && !(trailing && live)) segments.push({ kind: "calls", calls: run });
+    else for (const call of run) segments.push({ kind: "item", item: call });
+    run = [];
+  };
+  for (const it of items) {
+    if (it.kind === "tool_call" && checklist(it.input) === null) {
+      run.push(it);
+      continue;
+    }
+    close(false);
+    segments.push({ kind: "item", item: it });
+  }
+  close(true);
+  return segments;
 }
 
 type Category = "edit" | "read" | "command" | "other";
