@@ -205,7 +205,7 @@ impl Watch<'_> {
 }
 
 /// Runs until the stream ends, a call fails, or the receiver is dropped (`None`).
-/// `refetch` asks for a fresh snapshot (e.g. right after a rename, ahead of its `pane.updated`).
+/// `refetch` asks for a fresh snapshot now (e.g. right after a rename or close, ahead of its event).
 async fn run(
     name: &str,
     socket: &Path,
@@ -238,6 +238,8 @@ async fn run(
     };
     let mut need_refetch = false;
     loop {
+        // The app's own refetch follows a call herdr already answered: nothing to wait for.
+        let mut asked = false;
         if !need_refetch {
             tokio::select! {
                 ev = sub.rx.recv() => {
@@ -254,12 +256,12 @@ async fn run(
                     }
                     continue;
                 }
-                _ = refetch.notified() => {}
+                _ = refetch.notified() => asked = true,
             }
         }
         need_refetch = false;
         // Absorb everything for a fixed window, then refetch once.
-        let deadline = Instant::now() + DEBOUNCE;
+        let deadline = Instant::now() + if asked { Duration::ZERO } else { DEBOUNCE };
         loop {
             match timeout_at(deadline, sub.rx.recv()).await {
                 Err(_) => break,
@@ -687,6 +689,29 @@ mod tests {
             matches!(next(&mut rx).await, WatchEvent::View(v) if v.workspaces[0].tabs[0].panes[0].title == "renamed")
         );
         assert_eq!(f.calls_of("session.snapshot"), 2);
+    }
+    #[tokio::test]
+    async fn refetch_signal_skips_the_debounce() {
+        let snap = fixture_value();
+        let f = fake_with(snap.clone());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let refetch: Arc<tokio::sync::Notify> = Arc::default();
+        let _h = spawn_watcher(
+            "default".into(),
+            f.path.clone(),
+            tx,
+            refetch.clone(),
+            Arc::default(),
+        );
+        next(&mut rx).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        snap.lock().unwrap()["panes"][0]["label"] = json!("renamed");
+        refetch.notify_one();
+        let ev = timeout(DEBOUNCE / 2, rx.recv()).await;
+        assert!(
+            matches!(ev, Ok(Some(WatchEvent::View(v))) if v.workspaces[0].tabs[0].panes[0].title == "renamed"),
+            "the app's own refetch is sent before the debounce window ends"
+        );
     }
     #[tokio::test]
     async fn refetch_of_an_unchanged_snapshot_sends_nothing() {

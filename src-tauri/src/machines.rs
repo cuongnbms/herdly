@@ -1336,8 +1336,8 @@ impl MachineManager {
             }
         }
         let result = rpc::call(&socket, method, params).await?;
-        if method == "pane.rename" {
-            // Refetch now rather than wait for the rename's `pane.updated` event.
+        if method == "pane.rename" || method == "pane.close" {
+            // Refetch now rather than wait for herdr's `pane.updated` / `pane.closed` event.
             let _ = self.with_machine(pane_machine, |m| {
                 if let Some(s) = m.sessions.iter().find(|s| s.entry.name == session) {
                     s.refetch.notify_one();
@@ -2766,7 +2766,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pane_rename_refetches_the_session() {
+    async fn pane_rename_and_close_refetch_the_session() {
         let snap: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/snapshot.json")).unwrap();
         let f = FakeHerdr::start(Arc::new(move |m, _| {
@@ -2785,7 +2785,7 @@ mod tests {
         mgr.connect("local").await.unwrap();
         assert!(wait_for(|| f.calls_of("events.subscribe") >= 1).await);
         let before = f.calls_of("session.snapshot");
-        mgr.call("local", "default", "pane.close", json!({"pane_id":"w1:p2"}))
+        mgr.call("local", "default", "pane.read", json!({"pane_id":"w1:p2"}))
             .await
             .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -2802,6 +2802,11 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(wait_for(|| f.calls_of("session.snapshot") > before).await);
+        let before = f.calls_of("session.snapshot");
+        mgr.call("local", "default", "pane.close", json!({"pane_id":"w1:p2"}))
+            .await
+            .unwrap();
         assert!(wait_for(|| f.calls_of("session.snapshot") > before).await);
     }
 
