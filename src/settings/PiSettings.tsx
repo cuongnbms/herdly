@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { piModelsList } from "../lib/ipc";
-import type { MachineView, PiModel } from "../lib/types";
+import type { FileVersion, MachineView, PiModel } from "../lib/types";
 import { useApp } from "../store/app";
 import { EnabledModels } from "./EnabledModels";
-import type { PiSettingsFile } from "./pi";
-import { errorText, loadSettings, type Loaded } from "./piFiles";
+import { ModelAliases } from "./ModelAliases";
+import { hasAliasPackage, type AliasFile, type PiSettingsFile } from "./pi";
+import { errorText, loadAliases, loadSettings, type Loaded } from "./piFiles";
 
 interface Data {
   machineId: string;
@@ -20,9 +21,11 @@ export function PiSettings() {
   const [data, setData] = useState<Data | null>(null);
   const [nonce, setNonce] = useState(0);
   const [modelsNonce, setModelsNonce] = useState(0);
-  // One flag per block; Task 8 adds the aliases block's.
+  // One flag per block.
   const [enabledDirty, setEnabledDirty] = useState(false);
-  const dirty = enabledDirty;
+  const [aliasDirty, setAliasDirty] = useState(false);
+  const dirty = enabledDirty || aliasDirty;
+  const [aliasNonce, setAliasNonce] = useState(0);
 
   const options = useMemo(
     () => order.map((id) => machines[id]).filter((m): m is MachineView => !!m && m.state === "connected" && !!m.pi_agent_dir),
@@ -41,6 +44,7 @@ export function PiSettings() {
   // Edits belong to the Machine they were made on.
   useEffect(() => {
     setEnabledDirty(false);
+    setAliasDirty(false);
   }, [machineId]);
 
   useEffect(() => {
@@ -54,6 +58,18 @@ export function PiSettings() {
       stale = true;
     };
   }, [machineId, dir, hasPi, nonce]);
+
+  const [aliasData, setAliasData] = useState<{ machineId: string; loaded: Loaded<AliasFile> } | null>(null);
+  useEffect(() => {
+    if (!machineId || !dir || !hasPi) return;
+    let stale = false;
+    loadAliases(machineId, dir).then((loaded) => {
+      if (!stale) setAliasData({ machineId, loaded });
+    });
+    return () => {
+      stale = true;
+    };
+  }, [machineId, dir, hasPi, aliasNonce]);
 
   const [models, setModels] = useState<{ machineId: string; models: PiModel[] | null; error: string | null } | null>(null);
   useEffect(() => {
@@ -75,11 +91,19 @@ export function PiSettings() {
       setData((d) => (d && d.machineId === machineId && d.settings.kind === "ok" ? { ...d, settings: { ...d.settings, value: s } } : d)),
     [machineId],
   );
+  // The next save must use the version the last save returned.
+  const onAliasesSaved = useCallback(
+    (file: AliasFile, version: FileVersion) =>
+      setAliasData((d) => (d && d.machineId === machineId && d.loaded.kind === "ok" ? { ...d, loaded: { kind: "ok", value: file, version } } : d)),
+    [machineId],
+  );
+  const reloadAliases = useCallback(() => setAliasNonce((n) => n + 1), []);
   const retryModels = useCallback(() => setModelsNonce((n) => n + 1), []);
 
   if (!machine || !machineId || !dir) return <p className="note">No connected machine</p>;
 
   const mine = data?.machineId === machineId ? data : null;
+  const aliases = aliasData?.machineId === machineId ? aliasData.loaded : null;
   const cat = models?.machineId === machineId ? models : null;
 
   return (
@@ -118,17 +142,42 @@ export function PiSettings() {
           </button>
         </p>
       ) : (
-        <EnabledModels
-          key={machineId}
-          machineId={machineId}
-          dir={dir}
-          settings={mine.settings.value}
-          models={cat?.models ?? null}
-          modelsError={cat?.error ?? null}
-          onRetryModels={retryModels}
-          onDirty={setEnabledDirty}
-          onSaved={onSaved}
-        />
+        <>
+          <EnabledModels
+            key={machineId}
+            machineId={machineId}
+            dir={dir}
+            settings={mine.settings.value}
+            models={cat?.models ?? null}
+            modelsError={cat?.error ?? null}
+            onRetryModels={retryModels}
+            onDirty={setEnabledDirty}
+            onSaved={onSaved}
+          />
+          {hasAliasPackage(mine.settings.value.json) &&
+            (!aliases ? (
+              <p className="note">Loading…</p>
+            ) : aliases.kind === "error" ? (
+              <p className="note pi-error" role="alert">
+                {aliases.error}
+                <button className="btn btn-xs" onClick={reloadAliases}>
+                  Retry
+                </button>
+              </p>
+            ) : (
+              <ModelAliases
+                key={machineId}
+                machineId={machineId}
+                dir={dir}
+                file={aliases.value}
+                version={aliases.version}
+                models={cat?.models ?? null}
+                onDirty={setAliasDirty}
+                onSaved={onAliasesSaved}
+                onReload={reloadAliases}
+              />
+            ))}
+        </>
       )}
     </div>
   );

@@ -1652,3 +1652,8 @@ body.row-resizing { cursor: row-resize; user-select: none; }
 .pi-group-head { text-align: left; font-size: 12px; font-weight: 500; color: var(--fg-2); background: none; border: 0; padding: 2px 0; cursor: pointer; }
 .pi-model { display: flex; align-items: center; gap: 6px; font-size: 12px; padding-left: 12px; overflow-wrap: anywhere; }
 .pi-pattern { font-style: italic; font-size: 11px; color: var(--fg-3); }
+.pi-block > h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.pi-alias { display: flex; flex-direction: column; gap: 6px; padding: 10px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.pi-alias-head { display: flex; align-items: center; gap: 8px; }
+.pi-alias-head .input { flex: 1; min-width: 0; }
+.pi-alias-ref { color: var(--fg-3); font-size: 11px; white-space: nowrap; }
