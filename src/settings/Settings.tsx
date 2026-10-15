@@ -1,4 +1,4 @@
-import { type CSSProperties, type DragEvent, memo, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type DragEvent, memo, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { notificationsEnabled, setNotificationsEnabled } from "../notify";
 import { CloseIcon, GearIcon, GripIcon } from "../ui/icons";
 import { FontPicker } from "./FontPicker";
@@ -17,8 +17,94 @@ import { TAB_LAYOUTS, useTabLayout } from "./tabLayout";
 /** How far one press of − or + moves a font size, in px. */
 const SIZE_STEP = 0.5;
 
+/** A card of setting rows, with an optional heading above it. */
+export function Group({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <section className="settings-group">
+      {title && <h4 className="settings-group-title">{title}</h4>}
+      <div className="settings-card">{children}</div>
+    </section>
+  );
+}
+
+/** One setting: its label and description on the left, its control on the right (or below, when `stack`). */
+export function Row({
+  label,
+  desc,
+  htmlFor,
+  labelId,
+  stack,
+  children,
+}: {
+  label: string;
+  desc?: ReactNode;
+  /** The control's id, so clicking the label focuses or toggles it. */
+  htmlFor?: string;
+  /** For a control named by `aria-labelledby`. */
+  labelId?: string;
+  stack?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className={stack ? "setting-row setting-stack" : "setting-row"}>
+      <div className="setting-label">
+        {htmlFor ? <label htmlFor={htmlFor}>{label}</label> : <span id={labelId}>{label}</span>}
+        {desc && <p className="setting-desc">{desc}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** A segmented choice between a few options, in a Row. */
+function Choice<T extends string>({
+  label,
+  desc,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  desc?: ReactNode;
+  options: readonly { id: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  const id = useId();
+  return (
+    <Row label={label} desc={desc} labelId={id}>
+      <div
+        className="seg seg-n"
+        role="group"
+        aria-labelledby={id}
+        style={{ "--n": options.length, "--i": options.findIndex((o) => o.id === value) } as CSSProperties}
+      >
+        <span className="seg-thumb" />
+        {options.map((o) => (
+          <button key={o.id} aria-pressed={o.id === value} onClick={() => onChange(o.id)}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </Row>
+  );
+}
+
+/** An on/off setting in a Row. */
+function Switch({ label, desc, checked, onChange }: { label: string; desc?: ReactNode; checked: boolean; onChange: (on: boolean) => void }) {
+  const id = useId();
+  return (
+    <Row label={label} desc={desc} htmlFor={id}>
+      <input id={id} className="switch" type="checkbox" role="switch" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    </Row>
+  );
+}
+
+const asOptions = <T extends string>(ids: readonly T[]) => ids.map((id) => ({ id, label: id }));
+
 function Stepper({
   label,
+  desc,
   value,
   range,
   onChange,
@@ -26,6 +112,7 @@ function Stepper({
   format = (v) => `${v}px`,
 }: {
   label: string;
+  desc?: ReactNode;
   value: number;
   range: { min: number; max: number };
   onChange: (v: number) => void;
@@ -33,8 +120,7 @@ function Stepper({
   format?: (v: number) => string;
 }) {
   return (
-    <div className="setting-row">
-      <span>{label}</span>
+    <Row label={label} desc={desc}>
       <div className="stepper">
         <button aria-label={`Decrease ${label.toLowerCase()}`} disabled={value <= range.min} onClick={() => onChange(value - step)}>
           −
@@ -44,7 +130,7 @@ function Stepper({
           +
         </button>
       </div>
-    </div>
+    </Row>
   );
 }
 
@@ -54,44 +140,32 @@ function GeneralSettings() {
   const recent = useRecentAgents();
   return (
     <>
-      <div className="setting-row">
-        <span id="new-tab-label">New tab (⌘T) opens</span>
-        <div
-          className="seg seg-n"
-          role="group"
-          aria-labelledby="new-tab-label"
-          style={{ "--n": AGENTS.length, "--i": AGENTS.indexOf(newTab.agent) } as CSSProperties}
-        >
-          <span className="seg-thumb" />
-          {AGENTS.map((a) => (
-            <button key={a} aria-pressed={a === newTab.agent} onClick={() => newTab.setAgent(a)}>
-              {a}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="note">⌘T opens a tab next to the selected pane, in its workspace's folder.</p>
-      <Stepper
-        label="Keep idle agents"
-        value={recent.idleMinutes}
-        range={IDLE_MINUTES}
-        step={1}
-        format={(v) => (v === 0 ? "Off" : `${v} min`)}
-        onChange={recent.setIdleMinutes}
-      />
-      <p className="note">How long an agent stays in Recent agents after it goes idle. Off lists only blocked, done and working agents.</p>
-      <label className="switch">
-        <span>Notifications</span>
-        <input
-          type="checkbox"
-          role="switch"
+      <Group>
+        <Choice
+          label="New tab (⌘T) opens"
+          desc="Next to the selected pane, in its workspace's folder."
+          options={asOptions(AGENTS)}
+          value={newTab.agent}
+          onChange={newTab.setAgent}
+        />
+        <Stepper
+          label="Keep idle agents"
+          desc="How long an agent stays in Recent agents after it goes idle. Off lists only blocked, done and working agents."
+          value={recent.idleMinutes}
+          range={IDLE_MINUTES}
+          step={1}
+          format={(v) => (v === 0 ? "Off" : `${v} min`)}
+          onChange={recent.setIdleMinutes}
+        />
+        <Switch
+          label="Notifications"
           checked={notify}
-          onChange={(e) => {
-            setNotify(e.target.checked);
-            setNotificationsEnabled(e.target.checked);
+          onChange={(on) => {
+            setNotify(on);
+            setNotificationsEnabled(on);
           }}
         />
-      </label>
+      </Group>
       <p className="note">
         For exact chat binding, run <code>herdr integration install claude</code> / <code>pi</code> on each machine.
       </p>
@@ -102,46 +176,19 @@ function GeneralSettings() {
 function AppearanceSettings() {
   const pref = useTheme((s) => s.pref);
   const setPref = useTheme((s) => s.setPref);
-  const i = THEME_PREFS.findIndex((t) => t.id === pref);
   const layout = useTabLayout((s) => s.layout);
   const setLayout = useTabLayout((s) => s.setLayout);
   return (
-    <>
-      <div className="setting-row">
-        <span id="theme-label">Theme</span>
-        <div
-          className="seg seg-n"
-          role="group"
-          aria-labelledby="theme-label"
-          style={{ "--n": THEME_PREFS.length, "--i": i } as CSSProperties}
-        >
-          <span className="seg-thumb" />
-          {THEME_PREFS.map((t) => (
-            <button key={t.id} aria-pressed={t.id === pref} onClick={() => setPref(t.id)}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="note">System follows the macOS appearance.</p>
-      <div className="setting-row">
-        <span id="tab-layout-label">Tabs</span>
-        <div
-          className="seg seg-n"
-          role="group"
-          aria-labelledby="tab-layout-label"
-          style={{ "--n": TAB_LAYOUTS.length, "--i": TAB_LAYOUTS.findIndex((l) => l.id === layout) } as CSSProperties}
-        >
-          <span className="seg-thumb" />
-          {TAB_LAYOUTS.map((l) => (
-            <button key={l.id} aria-pressed={l.id === layout} onClick={() => setLayout(l.id)}>
-              {l.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="note">Each open tab shows its agent and workspace; two lines put the workspace under the title.</p>
-    </>
+    <Group>
+      <Choice label="Theme" desc="System follows the macOS appearance." options={THEME_PREFS} value={pref} onChange={setPref} />
+      <Choice
+        label="Tabs"
+        desc="Each open tab shows its agent and workspace; two lines put the workspace under the title."
+        options={TAB_LAYOUTS}
+        value={layout}
+        onChange={setLayout}
+      />
+    </Group>
   );
 }
 
@@ -153,10 +200,16 @@ function FontSettings() {
     s.chatFontSize === DEFAULTS.chatFontSize;
   return (
     <>
-      <FontPicker label="Terminal font" value={s.terminalFontFamily} onChange={(f) => s.set({ terminalFontFamily: f })} />
-      <Stepper label="Terminal size" value={s.terminalFontSize} range={TERM_SIZE} onChange={(v) => s.set({ terminalFontSize: v })} />
-      <Stepper label="Chat size" value={s.chatFontSize} range={CHAT_SIZE} onChange={(v) => s.set({ chatFontSize: v })} />
-      <p className="note">Lists the monospace fonts installed on this Mac. JetBrains Mono is bundled and covers Vietnamese.</p>
+      <Group>
+        <FontPicker
+          label="Terminal font"
+          desc="The monospace fonts installed on this Mac. JetBrains Mono is bundled and covers Vietnamese."
+          value={s.terminalFontFamily}
+          onChange={(f) => s.set({ terminalFontFamily: f })}
+        />
+        <Stepper label="Terminal size" value={s.terminalFontSize} range={TERM_SIZE} onChange={(v) => s.set({ terminalFontSize: v })} />
+        <Stepper label="Chat size" value={s.chatFontSize} range={CHAT_SIZE} onChange={(v) => s.set({ chatFontSize: v })} />
+      </Group>
       <div className="settings-foot">
         <button className="btn btn-xs" aria-label="Reset fonts" disabled={isDefault} onClick={s.reset}>
           Reset to defaults
@@ -198,107 +251,102 @@ function ChatSettings() {
   const isDefault = q.replies.length === DEFAULT_QUICK_REPLIES.length && q.replies.every((r, i) => r === DEFAULT_QUICK_REPLIES[i]);
   return (
     <>
-      <div className="setting-row">
-        <span id="new-agent-lens-label">New agent opens in</span>
-        <div
-          className="seg seg-n"
-          role="group"
-          aria-labelledby="new-agent-lens-label"
-          style={{ "--n": NEW_AGENT_LENSES.length, "--i": NEW_AGENT_LENSES.indexOf(lens.newAgentLens) } as CSSProperties}
-        >
-          <span className="seg-thumb" />
-          {NEW_AGENT_LENSES.map((l) => (
-            <button key={l} aria-pressed={l === lens.newAgentLens} onClick={() => lens.setNewAgentLens(l)}>
-              {l}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="note">Terminal keeps a new agent on the Terminal until you switch. Chat opens it on Chat once it has started, where you can type its first prompt.</p>
-      <label className="switch">
-        <span>Quick replies</span>
-        <input type="checkbox" role="switch" checked={q.show} onChange={(e) => q.setShow(e.target.checked)} />
-      </label>
-      <p className="note">Buttons above the message box that send a short reply in one click. Drag a handle to reorder, or press ⌥↑ / ⌥↓ in a reply.</p>
-      <div className="quick-reply-list" ref={list}>
-        {q.replies.map((r, i) => {
-          const onDragOver = (e: DragEvent) => {
-            if (dragging === null) return;
-            const side = sideOf(e);
-            if (!moveReply(q.replies, dragging, i, side)) {
-              e.dataTransfer.dropEffect = "none";
-              setOver((p) => (p?.i === i ? null : p));
-              return;
-            }
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-            setOver((p) => (p?.i === i && p.side === side ? p : { i, side }));
-          };
-          const drop = over?.i === i ? ` drop-${over.side}` : "";
-          return (
-            <div
-              key={i}
-              className={`quick-reply-row${dragging === i ? " dragging" : ""}${drop}`}
-              onDragEnter={onDragOver}
-              onDragOver={onDragOver}
-              onDragLeave={(e) => {
-                // By the pointer, not `relatedTarget`, which WebKit may leave null.
-                const b = e.currentTarget.getBoundingClientRect();
-                if (e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom) return;
+      <Group>
+        <Choice
+          label="New agent opens in"
+          desc="Terminal keeps a new agent on the Terminal until you switch. Chat opens it on Chat once it has started, where you can type its first prompt."
+          options={asOptions(NEW_AGENT_LENSES)}
+          value={lens.newAgentLens}
+          onChange={lens.setNewAgentLens}
+        />
+      </Group>
+      <Group>
+        <Switch
+          label="Quick replies"
+          desc="Buttons above the message box that send a short reply in one click. Drag a handle to reorder, or press ⌥↑ / ⌥↓ in a reply."
+          checked={q.show}
+          onChange={q.setShow}
+        />
+        <div className="quick-reply-list settings-card-body" ref={list}>
+          {q.replies.map((r, i) => {
+            const onDragOver = (e: DragEvent) => {
+              if (dragging === null) return;
+              const side = sideOf(e);
+              if (!moveReply(q.replies, dragging, i, side)) {
+                e.dataTransfer.dropEffect = "none";
                 setOver((p) => (p?.i === i ? null : p));
-              }}
-              onDrop={(e) => {
-                const from = dragging;
-                endDrag();
-                if (from === null) return;
-                e.preventDefault();
-                move(from, i, sideOf(e));
-              }}
-            >
-              {/* Only the grip drags, so selecting text in the field still works. */}
-              <span
-                className="quick-reply-grip"
-                title="Drag to reorder"
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(QUICK_REPLY_TYPE, String(i));
-                  e.dataTransfer.effectAllowed = "move";
-                  const rowEl = e.currentTarget.closest<HTMLElement>(".quick-reply-row");
-                  if (rowEl) {
-                    const b = rowEl.getBoundingClientRect();
-                    e.dataTransfer.setDragImage(rowEl, e.clientX - b.left, e.clientY - b.top);
-                  }
-                  setDragging(i);
+                return;
+              }
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              setOver((p) => (p?.i === i && p.side === side ? p : { i, side }));
+            };
+            const drop = over?.i === i ? ` drop-${over.side}` : "";
+            return (
+              <div
+                key={i}
+                className={`quick-reply-row${dragging === i ? " dragging" : ""}${drop}`}
+                onDragEnter={onDragOver}
+                onDragOver={onDragOver}
+                onDragLeave={(e) => {
+                  // By the pointer, not `relatedTarget`, which WebKit may leave null.
+                  const b = e.currentTarget.getBoundingClientRect();
+                  if (e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom) return;
+                  setOver((p) => (p?.i === i ? null : p));
                 }}
-                onDragEnd={endDrag}
-              >
-                <GripIcon />
-              </span>
-              <input
-                spellCheck={false}
-                autoCorrect="off"
-                autoCapitalize="off"
-                aria-label={`Quick reply ${i + 1}`}
-                value={r}
-                maxLength={QUICK_REPLY_MAX_CHARS}
-                placeholder="Reply text"
-                onChange={(e) => q.setReplies(q.replies.map((x, j) => (j === i ? e.target.value : x)))}
-                onKeyDown={(e) => {
-                  if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                onDrop={(e) => {
+                  const from = dragging;
+                  endDrag();
+                  if (from === null) return;
                   e.preventDefault();
-                  const up = e.key === "ArrowUp";
-                  const to = up ? i - 1 : i + 1;
-                  // Rows are keyed by index, so the moved reply now shows in the field at `to`.
-                  if (move(i, to, up ? "before" : "after")) list.current?.querySelectorAll<HTMLInputElement>(".quick-reply-row input")[to]?.focus();
+                  move(from, i, sideOf(e));
                 }}
-              />
-              <button className="icon-btn" aria-label={`Remove quick reply ${i + 1}`} onClick={() => q.setReplies(q.replies.filter((_, j) => j !== i))}>
-                <CloseIcon />
-              </button>
-            </div>
-          );
-        })}
-      </div>
+              >
+                {/* Only the grip drags, so selecting text in the field still works. */}
+                <span
+                  className="quick-reply-grip"
+                  title="Drag to reorder"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(QUICK_REPLY_TYPE, String(i));
+                    e.dataTransfer.effectAllowed = "move";
+                    const rowEl = e.currentTarget.closest<HTMLElement>(".quick-reply-row");
+                    if (rowEl) {
+                      const b = rowEl.getBoundingClientRect();
+                      e.dataTransfer.setDragImage(rowEl, e.clientX - b.left, e.clientY - b.top);
+                    }
+                    setDragging(i);
+                  }}
+                  onDragEnd={endDrag}
+                >
+                  <GripIcon />
+                </span>
+                <input
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  aria-label={`Quick reply ${i + 1}`}
+                  value={r}
+                  maxLength={QUICK_REPLY_MAX_CHARS}
+                  placeholder="Reply text"
+                  onChange={(e) => q.setReplies(q.replies.map((x, j) => (j === i ? e.target.value : x)))}
+                  onKeyDown={(e) => {
+                    if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                    e.preventDefault();
+                    const up = e.key === "ArrowUp";
+                    const to = up ? i - 1 : i + 1;
+                    // Rows are keyed by index, so the moved reply now shows in the field at `to`.
+                    if (move(i, to, up ? "before" : "after")) list.current?.querySelectorAll<HTMLInputElement>(".quick-reply-row input")[to]?.focus();
+                  }}
+                />
+                <button className="icon-btn" aria-label={`Remove quick reply ${i + 1}`} onClick={() => q.setReplies(q.replies.filter((_, j) => j !== i))}>
+                  <CloseIcon />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </Group>
       <div className="settings-foot">
         <button
           className="btn btn-xs"
@@ -321,6 +369,7 @@ function ChatSettings() {
 
 function FilesSettings() {
   const h = useHiddenFolders();
+  const id = useId();
   // Edited as text and saved on blur, so a new line can be typed before it holds a name.
   const [draft, setDraft] = useState(() => h.folders.join("\n"));
   const isDefault = h.folders.length === DEFAULT_HIDDEN_FOLDERS.length && h.folders.every((f, i) => f === DEFAULT_HIDDEN_FOLDERS[i]);
@@ -330,20 +379,26 @@ function FilesSettings() {
   };
   return (
     <>
-      <label className="setting-col">
-        <span>Hidden folders</span>
-        <textarea
-          className="hidden-folders"
-          spellCheck={false}
-          autoCorrect="off"
-          autoCapitalize="off"
-          rows={8}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-        />
-      </label>
-      <p className="note">One folder name per line. The Files tree leaves these folders out until its eye button is on; files with these names still show.</p>
+      <Group>
+        <Row
+          label="Hidden folders"
+          desc="One folder name per line. The Files tree leaves these folders out until its eye button is on; files with these names still show."
+          htmlFor={id}
+          stack
+        >
+          <textarea
+            id={id}
+            className="hidden-folders"
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+            rows={8}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+          />
+        </Row>
+      </Group>
       <div className="settings-foot">
         <button
           className="btn btn-xs"
@@ -409,10 +464,13 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
           <header className="settings-head">
             <h3>{section.label}</h3>
             <button className="icon-btn" aria-label="Close settings" onClick={onClose}>
-              ×
+              <CloseIcon />
             </button>
           </header>
-          <section.Body />
+          {/* Keyed so a new section starts at the top. */}
+          <div className="settings-scroll" key={section.id}>
+            <section.Body />
+          </div>
         </section>
       </div>
     </div>

@@ -2,7 +2,17 @@ import { useEffect, useId, useRef, useState } from "react";
 import { filterFonts, loadFontFamilies } from "./store";
 
 /** Searchable combobox over the installed monospace fonts; each option previews in its own face. */
-export function FontPicker({ label, value, onChange }: { label: string; value: string; onChange: (f: string) => void }) {
+export function FontPicker({
+  label,
+  desc,
+  value,
+  onChange,
+}: {
+  label: string;
+  desc?: string;
+  value: string;
+  onChange: (f: string) => void;
+}) {
   const [all, setAll] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -35,7 +45,10 @@ export function FontPicker({ label, value, onChange }: { label: string; value: s
 
   return (
     <div className="setting-row">
-      <span id={`${listId}-label`}>{label}</span>
+      <div className="setting-label">
+        <span id={`${listId}-label`}>{label}</span>
+        {desc && <p className="setting-desc">{desc}</p>}
+      </div>
       <div className="font-picker">
         <input
           role="combobox"
