@@ -73,6 +73,15 @@ describe("ChatLens", () => {
     expect(screen.getByRole("textbox")).toBeTruthy();
   });
 
+  it("offers side questions once a new Claude's transcript appears at the expected path", async () => {
+    opened = Promise.resolve({ agent: "claude", path: "/h/sid.jsonl", ambiguous: false, candidates: ["/h/sid.jsonl"], pending: true });
+    render(<ChatLens pane={pane} view={{ status: "working", agent: "claude", title: "claude" } as PaneView} />);
+    await screen.findByText(/first message/);
+    expect(screen.queryByRole("button", { name: "btw" })).toBeNull();
+    act(() => channels[channels.length - 1].onmessage({ type: "append", items: [{ kind: "user", text: "hello" }] }));
+    expect(await screen.findByRole("button", { name: "btw" })).toBeTruthy();
+  });
+
   it("shows pi's model picker as a card once /model is sent, though pi stays idle", async () => {
     render(<ChatLens pane={pane} view={idlePi} />);
     const box = screen.getByRole("textbox");

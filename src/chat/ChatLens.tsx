@@ -210,6 +210,11 @@ export function ChatLens({ pane, view }: { pane: PaneRef; view: PaneView }) {
   // A new Claude has no transcript until its first prompt: chat with it on the expected path.
   const pending = !!located?.pending && state.items.length === 0;
   usePendingTranscript(pane, located, state.items.length === 0, view.status, () => open(null));
+  // Items on the pending path mean Claude wrote the file there: it is located now (forks, side questions).
+  const written = !!located?.pending && state.items.length > 0;
+  useEffect(() => {
+    if (written) setLocated((l) => l && { ...l, pending: false });
+  }, [written]);
 
   const choose = (path: string) => {
     outgoing.clear();
