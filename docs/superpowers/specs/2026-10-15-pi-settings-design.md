@@ -69,7 +69,9 @@ and `pi = ""`. Fixtures in `transport/mod.rs` tests and `machines.rs` tests are 
 
 New module `src-tauri/src/pi.rs`, command registered in `lib.rs`.
 
-- `PiModel { provider: String, id: String }`, serialized camelCase like the other views.
+- `PiModel { provider: String, id: String }`.
+- Runs `sh -c 'PATH="${1%/*}:$PATH" exec "$1" --list-models' sh <pi>` so a `#!/usr/bin/env node`
+  pi finds the node installed beside it (mise, nvm, npm global) without a login shell.
 - Errors: `not_found` when `info.pi` is empty; `io` with stderr (or `exit N`) on a non-zero
   exit; runs with the transport's normal exec and a 30 s timeout.
 - `parse_list_models(stdout) -> Vec<PiModel>`: skip lines until the header line starting with
@@ -108,8 +110,10 @@ All JSON handling is here, unit-tested, no React:
   place; an object-form alias gets only its `targets` replaced; a string-form alias whose
   single target is unchanged stays a string, otherwise becomes an array; new aliases are
   arrays, appended in UI order; deleted aliases are removed.
-- `renameAlias(aliases, from, to)`: renames and rewrites every `alias/<from>` target to
-  `alias/<to>` in the other aliases.
+- `renameAlias(aliases, index, to)`: renames and rewrites every `alias/<old name>` target to
+  `alias/<to>` in all aliases. Applied when the name field is committed (blur or Enter) and
+  the new name is valid, not per keystroke, so a half-typed name never captures another
+  alias's references.
 - `aliasNameError(name, others)`: empty, contains `/`, starts with `$`, or duplicate.
 - `enabledConflict(loaded, current)`: true when `enabledModels` on disk differs from the list
   read when the block was opened (order-sensitive).
@@ -118,7 +122,7 @@ All JSON handling is here, unit-tested, no React:
 
 Added to `SECTIONS` in `Settings.tsx` as `{ id: "pi", label: "pi" }`.
 
-**Machine picker** at the top: connected Machines from `useApp` with a `piAgentDir`.
+**Machine picker** at the top: connected Machines from `useApp` with a `pi_agent_dir`.
 Default: the Machine of the selected Pane, else `local`. Disabled while either block has unsaved
 changes. The section header shows `●` while there are unsaved changes.
 
@@ -146,7 +150,7 @@ changes. The section header shows `●` while there are unsaved changes.
 - Name errors show under the field. Deleting an alias that another alias targets shows a
   warning on the referencing card (dangling target), not a block. Save is disabled while any
   name is invalid or any alias has no targets.
-- Rename cascades via `renameAlias`.
+- Rename cascades via `renameAlias` when the name field is committed.
 - Save / Revert, independent of the Enabled models block.
 
 ### Data flow and saving
