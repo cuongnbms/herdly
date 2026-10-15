@@ -138,6 +138,9 @@ export function EnabledModels({
           </header>
           <input
             className="input"
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
             aria-label="Filter models"
             placeholder="Filter"
             value={filter}
@@ -208,6 +211,9 @@ export function EnabledModels({
           </div>
           <input
             className="input"
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
             aria-label="Add pattern"
             placeholder="Add pattern, e.g. anthropic/*"
             value={pattern}

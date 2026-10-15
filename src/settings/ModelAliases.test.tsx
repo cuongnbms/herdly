@@ -121,6 +121,37 @@ describe("pi settings: Model aliases", () => {
     expect(nameBox(1).value).toBe("middle");
   });
 
+  it("suggests models and other aliases for a target, leaving out the ones it has", async () => {
+    ipc.piModelsList.mockResolvedValue([{ provider: "xai", id: "grok-4.6" }, { provider: "openai-codex", id: "gpt-5.6-luna" }]);
+    await ready();
+    const add = screen.getByRole("combobox", { name: "Add target to alias 2" });
+    expect(add.getAttribute("autocorrect")).toBe("off");
+    fireEvent.change(add, { target: { value: "" } });
+    fireEvent.keyDown(add, { key: "ArrowDown" });
+    const options = () => within(screen.getByRole("listbox", { name: "Add target to alias 2" })).getAllByRole("option").map((o) => o.textContent);
+    // high already targets gpt-5.6-sol (not listed), and an alias does not target itself.
+    expect(options()).toEqual(["xai/grok-4.6", "openai-codex/gpt-5.6-luna", "alias/mid", "alias/top"]);
+    fireEvent.change(add, { target: { value: "ALIAS" } });
+    expect(options()).toEqual(["alias/mid", "alias/top"]);
+    fireEvent.keyDown(add, { key: "ArrowDown" });
+    fireEvent.keyDown(add, { key: "ArrowDown" });
+    fireEvent.keyDown(add, { key: "Enter" });
+    expect(targets(2)).toEqual(["openai-codex/gpt-5.6-sol", "alias/top"]);
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect((add as HTMLInputElement).value).toBe("");
+  });
+
+  it("closes the suggestions on Escape and still takes free text", async () => {
+    await ready();
+    const add = screen.getByRole("combobox", { name: "Add target to alias 2" });
+    fireEvent.change(add, { target: { value: "grok" } });
+    expect(screen.getByRole("listbox", { name: "Add target to alias 2" })).toBeTruthy();
+    fireEvent.keyDown(add, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    fireEvent.keyDown(add, { key: "Enter" });
+    expect(targets(2)).toEqual(["openai-codex/gpt-5.6-sol", "grok"]);
+  });
+
   it("keeps unsaved alias edits across views and marks their view", async () => {
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "Delete alias 3" }));

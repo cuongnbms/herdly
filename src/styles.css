@@ -1654,15 +1654,28 @@ body.row-resizing { cursor: row-resize; user-select: none; }
 
 /* Settings › pi */
 /* Text fields and selects inside Settings › pi. */
-.settings-dialog .input, .pi-machine select {
+.settings-dialog .input, .select-menu {
   height: 28px; padding: 0 8px; box-sizing: border-box; min-width: 0;
   border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-0); color: var(--fg); font-size: 12.5px;
   transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
-.settings-dialog .input:focus, .pi-machine select:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.settings-dialog .input:focus, .select-menu:focus-visible, .select-menu[aria-expanded="true"] { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .settings-dialog .input::placeholder { color: var(--fg-3); }
-.pi-machine select { min-width: 140px; padding-right: 4px; }
-.pi-machine select:disabled { opacity: 0.6; }
+/* A select-only combobox: the field, then a .pick-list under it. */
+.select-menu { display: inline-flex; align-items: center; gap: 8px; min-width: 140px; padding-right: 6px; text-align: left; cursor: pointer; }
+.select-menu:disabled { opacity: 0.6; cursor: default; }
+.select-menu-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-menu .icon { flex: none; width: 12px; height: 12px; color: var(--fg-3); transform: rotate(90deg); }
+/* The app's own popup list for SelectMenu and SuggestInput; fixed, so a scrolling pane does not clip it. */
+.pick-list {
+  position: fixed; z-index: 20; box-sizing: border-box; min-width: 160px; max-height: 240px; overflow-y: auto; margin: 0; padding: 4px; list-style: none;
+  background: var(--surface-3); border-radius: var(--r-md); box-shadow: var(--shadow-pop);
+}
+.pick-list li { padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-list li.hi { background: var(--accent); color: var(--accent-fg); }
+.pick-list li.hi .pi-prov { color: inherit; opacity: 0.7; }
+.pick-list li[aria-selected="true"]:not(.hi) { color: var(--accent); }
+.pick-list .pick-empty { color: var(--fg-3); cursor: default; }
 .settings-foot-msg { flex: 1; min-width: 0; margin: 0; color: var(--fg-3); font-size: 11.5px; line-height: 1.4; }
 .settings-foot-msg.pi-error { color: var(--err); }
 .settings-scroll > .pi-root:has(.settings-foot) { margin-bottom: 0; }

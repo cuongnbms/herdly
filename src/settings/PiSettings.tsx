@@ -2,6 +2,7 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "r
 import { piModelsList } from "../lib/ipc";
 import type { FileVersion, MachineView, PiModel } from "../lib/types";
 import { useApp } from "../store/app";
+import { SelectMenu } from "./Dropdown";
 import { EnabledModels } from "./EnabledModels";
 import { ModelAliases } from "./ModelAliases";
 import { hasAliasPackage, type AliasFile, type PiSettingsFile } from "./pi";
@@ -120,24 +121,19 @@ export function PiSettings() {
   return (
     <div className="pi-root">
       <div className="pi-head">
-        <label className="pi-machine">
+        <div className="pi-machine">
           <span>Machine</span>
-          <select
-            aria-label="Machine"
+          <SelectMenu
+            label="Machine"
             value={machineId}
             disabled={dirty}
-            onChange={(e) => {
-              setPicked(e.target.value);
+            options={options.map((m) => ({ value: m.id, label: m.label }))}
+            onChange={(id) => {
+              setPicked(id);
               setData(null);
             }}
-          >
-            {options.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          />
+        </div>
         {dirty && (
           <span className="pi-dirty" title="Unsaved changes">
             ●

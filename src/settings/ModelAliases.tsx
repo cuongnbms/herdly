@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import type { FileVersion, PiModel } from "../lib/types";
 import { aliasNameError, missingTargets, modelRef, renameAlias, withAliases, type Alias, type AliasFile } from "./pi";
 import { errorText, saveAliases } from "./piFiles";
+import { SuggestInput } from "./Dropdown";
 import { ProviderDimmed } from "./EnabledModels";
 import { ReorderList } from "./ReorderList";
 
@@ -82,8 +83,8 @@ export function ModelAliases({
     if (draft !== aliases[i].name) edit(renameAlias(aliases, i, draft));
   };
 
-  const addTarget = (i: number) => {
-    const t = (adds[i] ?? "").trim();
+  const addTarget = (i: number, text: string) => {
+    const t = text.trim();
     setAdds((a) => ({ ...a, [i]: "" }));
     if (!t || aliases[i].targets.includes(t)) return;
     setTargets(i, [...aliases[i].targets, t]);
@@ -94,6 +95,9 @@ export function ModelAliases({
     setAdds((a) => dropAt(a, i));
     edit(aliases.filter((_, j) => j !== i));
   };
+
+  // What a target can be: any listed model, or another alias.
+  const choices = [...(models ?? []).map(modelRef), ...aliases.filter((a) => a.name).map((a) => `alias/${a.name}`)];
 
   const invalid = aliases.some((a, i) => nameError(i) !== null || a.targets.length === 0);
   const disabled = !dirty || invalid || busy;
@@ -126,14 +130,6 @@ export function ModelAliases({
   return (
     <section className="pi-block">
       <p className="setting-desc">Each alias lists its targets in order, top first. Pick it as alias/name anywhere a model goes.</p>
-      <datalist id="pi-alias-models">
-        {(models ?? []).map((m) => (
-          <option key={modelRef(m)} value={modelRef(m)} />
-        ))}
-        {aliases.map((a, i) => (
-          <option key={`alias-${i}`} value={`alias/${a.name}`} />
-        ))}
-      </datalist>
       {aliases.map((a, i) => {
         const err = nameError(i);
         return (
@@ -142,6 +138,9 @@ export function ModelAliases({
               <input
                 className="input"
                 aria-label={`Alias ${i + 1} name`}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 value={names[i] ?? a.name}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -172,18 +171,14 @@ export function ModelAliases({
                 </span>
               )}
             />
-            <input
-              className="input"
+            <SuggestInput
               aria-label={`Add target to alias ${i + 1}`}
               placeholder="Add target…"
-              list="pi-alias-models"
               value={adds[i] ?? ""}
-              onChange={(e) => setAdds((m) => ({ ...m, [i]: e.target.value }))}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                addTarget(i);
-              }}
+              onChange={(v) => setAdds((m) => ({ ...m, [i]: v }))}
+              onSubmit={(t) => addTarget(i, t)}
+              suggestions={choices.filter((c) => !a.targets.includes(c) && c !== `alias/${a.name}`)}
+              render={(c) => <ProviderDimmed entry={c} />}
             />
             {a.targets.length === 0 && <p className="note pi-error">Add at least one target</p>}
             {missingTargets(a, aliases).map((t) => (

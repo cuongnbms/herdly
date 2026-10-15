@@ -36,6 +36,11 @@ beforeEach(() => {
 
 const order = () => within(screen.getByRole("list", { name: "Ctrl+P order" })).getAllByRole("listitem");
 const entries = () => order().map((r) => r.querySelector(".reorder-text")!.textContent);
+/** Picks a Machine the way a user does: open the picker, click the option. */
+function pickMachine(label: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: "Machine" }));
+  fireEvent.mouseDown(within(screen.getByRole("listbox", { name: "Machine" })).getByRole("option", { name: label }));
+}
 const settingsOnDisk = () => JSON.parse(disk["/home/local/.pi/agent"]["settings.json"]);
 async function ready() {
   render(<PiSettings />);
@@ -82,7 +87,7 @@ describe("pi settings: Enabled models", () => {
     expect(save.disabled).toBe(true);
     fireEvent.click(screen.getByRole("checkbox", { name: "openai-codex/gpt-6.1-sol" }));
     expect(screen.getByTitle("Unsaved changes")).toBeTruthy();
-    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Machine" }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("combobox", { name: "Machine" }).disabled).toBe(true);
     fireEvent.click(save);
     await screen.findByText("New pi agents use this; running ones need /reload.");
     expect(settingsOnDisk()).toEqual({ theme: "slop", enabledModels: ["xai/grok-4.6", "anthropic/*", "openai-codex/gpt-6.1-sol"], packages: ["npm:pi-web-access"] });
@@ -127,8 +132,24 @@ describe("pi settings: Enabled models", () => {
     render(<PiSettings />);
     await waitFor(() => expect(entries()).toEqual(["box/model"]));
     expect(ipc.piModelsList).toHaveBeenCalledWith("box");
-    fireEvent.change(screen.getByRole("combobox", { name: "Machine" }), { target: { value: "local" } });
+    pickMachine("This Mac");
     await waitFor(() => expect(entries()).toEqual(["xai/grok-4.6", "anthropic/*"]));
+  });
+
+  it("picks a Machine from the keyboard and closes the list on Escape", async () => {
+    useApp.setState({ machines: { local: machine("local", "This Mac"), box: machine("box", "devtuf") }, order: ["local", "box"] });
+    render(<PiSettings />);
+    await waitFor(() => expect(entries()).toEqual(["xai/grok-4.6", "anthropic/*"]));
+    const picker = screen.getByRole("combobox", { name: "Machine" });
+    fireEvent.keyDown(picker, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "This Mac" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(picker, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    fireEvent.keyDown(picker, { key: "ArrowDown" });
+    fireEvent.keyDown(picker, { key: "ArrowDown" });
+    fireEvent.keyDown(picker, { key: "Enter" });
+    await waitFor(() => expect(entries()).toEqual(["box/model"]));
+    expect(picker.textContent).toBe("devtuf");
   });
 
   it("shows pi not found, and no connected machine", async () => {
@@ -175,13 +196,13 @@ describe("pi settings: Enabled models", () => {
     });
     render(<PiSettings />);
     await waitFor(() => expect(entries()).toEqual(["xai/grok-4.6", "anthropic/*"]));
-    fireEvent.change(screen.getByRole("combobox", { name: "Machine" }), { target: { value: "box" } });
+    pickMachine(box.label);
     await waitFor(() => expect(entries()).toEqual(["box/model"]));
     act(() => useApp.setState({ machines: { local: machine("local", "This Mac"), box: { ...box, state: "disconnected" } } }));
     await waitFor(() => expect(entries()).toEqual(["xai/grok-4.6", "anthropic/*"]));
     fireEvent.click(screen.getByRole("button", { name: "Remove anthropic/*" }));
     act(() => useApp.setState({ machines: { local: machine("local", "This Mac"), box }, selected: { machine_id: "box", session: "default", pane_id: "p" } }));
     expect(entries()).toEqual(["xai/grok-4.6"]);
-    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Machine" }).value).toBe("local");
+    expect(screen.getByRole("combobox", { name: "Machine" }).textContent).toBe("This Mac");
   });
 });
