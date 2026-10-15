@@ -23,6 +23,8 @@ pub struct MachineView {
     pub state: MachineState,
     pub error: Option<AppError>,
     pub version: Option<String>,
+    pub pi_agent_dir: Option<String>,
+    pub has_pi: bool,
     pub status: AgentStatus,
     pub sessions: Vec<SessionView>,
 }

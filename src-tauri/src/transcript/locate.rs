@@ -320,6 +320,8 @@ mod tests {
             home: home.path().to_string_lossy().into(),
             herdr: "herdr".into(),
             pi_dir: "/none".into(),
+            agent_dir: "/h/.pi/agent".into(),
+            pi: String::new(),
             version: "0.9.3".into(),
             protocol: 22,
         };
@@ -369,6 +371,8 @@ mod tests {
             home: home.path().to_string_lossy().into(),
             herdr: "herdr".into(),
             pi_dir: "/none".into(),
+            agent_dir: "/h/.pi/agent".into(),
+            pi: String::new(),
             version: "0.9.3".into(),
             protocol: 22,
         };

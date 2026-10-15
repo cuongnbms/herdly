@@ -918,6 +918,8 @@ mod tests {
             home: "/h".into(),
             herdr: "/h/herdr".into(),
             pi_dir: "/p".into(),
+            agent_dir: "/h/.pi/agent".into(),
+            pi: String::new(),
             version: "0.9.3".into(),
             protocol: 22,
         };

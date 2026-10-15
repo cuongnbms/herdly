@@ -16,6 +16,8 @@ pub struct MachineInfo {
     pub home: String,
     pub herdr: String,
     pub pi_dir: String,
+    pub agent_dir: String,
+    pub pi: String,
     pub version: String,
     pub protocol: u32,
 }
@@ -276,6 +278,15 @@ echo "HERDR=$H"
 if [ -n "$PI_CODING_AGENT_SESSION_DIR" ]; then echo "PI_DIR=$PI_CODING_AGENT_SESSION_DIR"
 elif [ -n "$PI_CODING_AGENT_DIR" ]; then echo "PI_DIR=$PI_CODING_AGENT_DIR/sessions"
 else echo "PI_DIR=$HOME/.pi/agent/sessions"; fi
+echo "AGENT_DIR=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+P=$(command -v pi 2>/dev/null)
+case "$P" in /*) ;; *) P=$("${SHELL:-sh}" -lc 'command -v pi' 2>/dev/null | tail -n 1) ;; esac
+case "$P" in /*) ;; *) P=$("${SHELL:-sh}" -ic 'command -v pi' 2>/dev/null </dev/null | tail -n 1) ;; esac
+case "$P" in /*) ;; *) P="" ;; esac
+for c in "$HOME/.local/bin/pi" /opt/homebrew/bin/pi /usr/local/bin/pi; do
+  [ -n "$P" ] && break; [ -x "$c" ] && P="$c"
+done
+echo "PI=$P"
 [ -n "$H" ] || exit 0
 echo "VERSION=$("$H" --version 2>/dev/null | sed 's/^herdr //')"
 echo "PROTOCOL=$("$H" api schema 2>/dev/null | sed -n 's/^protocol: //p')"
@@ -332,12 +343,19 @@ pub fn parse_probe(stdout: &str) -> AppResult<MachineInfo> {
         ));
     }
     let version = field("VERSION");
+    let home = field("HOME");
+    let agent_dir = match field("AGENT_DIR") {
+        d if d.is_empty() => format!("{home}/.pi/agent"),
+        d => d,
+    };
     let protocol = field("PROTOCOL").parse::<u32>().ok();
     match protocol {
         Some(p) if p == REQUIRED_PROTOCOL => Ok(MachineInfo {
-            home: field("HOME"),
+            home,
             herdr,
             pi_dir: field("PI_DIR"),
+            agent_dir,
+            pi: field("PI"),
             version,
             protocol: p,
         }),
@@ -524,6 +542,8 @@ mod tests {
             home: "/home/u".into(),
             herdr: "/home/u/.local/bin/herdr".into(),
             pi_dir: "/home/u/.pi/agent/sessions".into(),
+            agent_dir: "/home/u/.pi/agent".into(),
+            pi: "/home/u/.local/bin/pi".into(),
             version: "0.9.3".into(),
             protocol: 22,
         }
@@ -554,8 +574,47 @@ mod tests {
     }
     #[test]
     fn parses_probe_output() {
-        let out = "HOME=/home/u\nHERDR=/home/u/.local/bin/herdr\nPI_DIR=/home/u/.pi/agent/sessions\nVERSION=0.9.3\nPROTOCOL=22\n";
+        let out = "HOME=/home/u\nHERDR=/home/u/.local/bin/herdr\nPI_DIR=/home/u/.pi/agent/sessions\nAGENT_DIR=/home/u/.pi/agent\nPI=/home/u/.local/bin/pi\nVERSION=0.9.3\nPROTOCOL=22\n";
         assert_eq!(parse_probe(out).unwrap(), info());
+    }
+    #[test]
+    fn probe_without_pi_lines_defaults() {
+        let i =
+            parse_probe("HOME=/home/u\nHERDR=/h/herdr\nPI_DIR=/x\nVERSION=0.9.3\nPROTOCOL=22\n")
+                .unwrap();
+        assert_eq!(i.agent_dir, "/home/u/.pi/agent");
+        assert_eq!(i.pi, "");
+    }
+    #[test]
+    fn probe_keeps_custom_agent_dir() {
+        let i = parse_probe("HOME=/home/u\nHERDR=/h/herdr\nAGENT_DIR=/opt/pi agent\nPI=\nVERSION=0.9.3\nPROTOCOL=22\n").unwrap();
+        assert_eq!(i.agent_dir, "/opt/pi agent");
+        assert_eq!(i.pi, "");
+    }
+    #[test]
+    fn probe_script_finds_agent_dir_and_pi() {
+        let d = tempfile::tempdir().unwrap();
+        let bin = d.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let pi = bin.join("pi");
+        std::fs::write(&pi, "#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = std::process::Command::new("sh")
+            .args(["-c", PROBE_SCRIPT, "sh", "/usr/bin/true"])
+            .env_clear()
+            .env("HOME", d.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("SHELL", "/bin/sh")
+            .env("PI_CODING_AGENT_DIR", "/opt/pi-agent")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("AGENT_DIR=/opt/pi-agent\n"), "{stdout}");
+        assert!(
+            stdout.contains(&format!("PI={}\n", pi.display())),
+            "{stdout}"
+        );
     }
     #[test]
     fn probe_errors() {

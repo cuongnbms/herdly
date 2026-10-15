@@ -66,6 +66,10 @@ export interface MachineView {
   state: MachineState;
   error: AppError | null;
   version: string | null;
+  /** pi's Agent dir on this Machine; null until probed. */
+  pi_agent_dir?: string | null;
+  /** The probe found a `pi` binary. */
+  has_pi?: boolean;
   status: AgentStatus;
   sessions: SessionView[];
 }

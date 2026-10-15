@@ -286,6 +286,8 @@ impl Machine {
             state: self.state,
             error: self.error.clone(),
             version: self.info.as_ref().map(|i| i.version.clone()),
+            pi_agent_dir: self.info.as_ref().map(|i| i.agent_dir.clone()),
+            has_pi: self.info.as_ref().is_some_and(|i| !i.pi.is_empty()),
             status: AgentStatus::rollup(sessions.iter().map(|s| s.status)),
             sessions,
         }
