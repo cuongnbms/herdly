@@ -582,19 +582,21 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .settings-head .icon-btn { font-size: 18px; line-height: 1; }
 .settings-body .note { margin: 0; }
 .settings-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
-.quick-reply-list { display: flex; flex-direction: column; gap: 6px; }
-.quick-reply-row { position: relative; display: flex; align-items: center; gap: 6px; }
-.quick-reply-row.dragging { opacity: 0.5; }
+.quick-reply-list, .reorder-list { display: flex; flex-direction: column; gap: 6px; }
+.reorder-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.quick-reply-row, .reorder-row { position: relative; display: flex; align-items: center; gap: 6px; }
+.quick-reply-row.dragging, .reorder-row.dragging { opacity: 0.5; }
 /* Where a dragged reply will land: a line in the gap before or after the row. */
-.quick-reply-row.drop-before::after, .quick-reply-row.drop-after::after {
+.quick-reply-row.drop-before::after, .quick-reply-row.drop-after::after,
+.reorder-row.drop-before::after, .reorder-row.drop-after::after {
   content: ""; position: absolute; left: 0; right: 0; height: 2px;
   border-radius: 1px; background: var(--accent); pointer-events: none;
 }
-.quick-reply-row.drop-before::after { top: -4px; }
-.quick-reply-row.drop-after::after { bottom: -4px; }
-.quick-reply-grip { display: flex; margin-right: -2px; color: var(--fg-3); cursor: grab; transition: color var(--t-fast); }
-.quick-reply-grip:hover { color: var(--fg); }
-.quick-reply-grip:active { cursor: grabbing; }
+.quick-reply-row.drop-before::after, .reorder-row.drop-before::after { top: -4px; }
+.quick-reply-row.drop-after::after, .reorder-row.drop-after::after { bottom: -4px; }
+.quick-reply-grip, .reorder-grip { display: flex; margin-right: -2px; color: var(--fg-3); cursor: grab; transition: color var(--t-fast); }
+.quick-reply-grip:hover, .reorder-grip:hover { color: var(--fg); }
+.quick-reply-grip:active, .reorder-grip:active { cursor: grabbing; }
 .quick-reply-row input {
   flex: 1; min-width: 0; height: 28px; padding: 0 8px; box-sizing: border-box;
   border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-0); color: var(--fg);
