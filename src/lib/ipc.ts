@@ -2,7 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { showToast } from "../ui/Toast";
-import type { AttachEvent, BtwEvent, ChatEvent, ChatItem, FileContent, FileEntry, FileList, FileVersion, Forked, GitStatus, Located, MachineView, PaneRef, PaneStatusEvent, QuotaOutcome, QuotaProvider, SlashCommand, WatchEvent } from "./types";
+import type { AttachEvent, BtwEvent, ChatEvent, ChatItem, FileContent, FileEntry, FileList, FileVersion, Forked, GitStatus, Located, MachineView, PaneRef, PaneStatusEvent, PiModel, QuotaOutcome, QuotaProvider, SlashCommand, WatchEvent } from "./types";
 
 export const machinesList = () => invoke<MachineView[]>("machines_list");
 export const machineConnect = (id: string) => invoke<void>("machine_connect", { id });
@@ -129,6 +129,7 @@ export const chatImage = (p: PaneRef, ref: string) =>
 export const chatClose = (p: PaneRef) =>
   invoke<void>("chat_close", { machineId: p.machine_id, session: p.session, paneId: p.pane_id });
 export const quotaFetch = (provider: QuotaProvider) => invoke<QuotaOutcome>("quota_fetch", { provider });
+export const piModelsList = (machineId: string) => invoke<PiModel[]>("pi_models_list", { machineId });
 
 /** Folders named in `hidden` are left out; files and linked folders with those names are kept. */
 export const filesListDir = (machineId: string, root: string, rel: string, hidden: string[] = []) =>

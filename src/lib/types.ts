@@ -167,6 +167,11 @@ export type QuotaOutcome =
   | { kind: "rateLimited"; until: number }
   | { kind: "failed"; reason: string };
 
+export interface PiModel {
+  provider: string;
+  id: string;
+}
+
 export interface GitChange {
   code: string;
   path: string;

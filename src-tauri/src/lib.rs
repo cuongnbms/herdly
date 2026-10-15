@@ -10,6 +10,7 @@ pub mod layout;
 pub mod machines;
 pub mod mouse;
 pub mod notify;
+pub mod pi;
 pub mod quota;
 pub mod sshconfig;
 pub mod transcript;
@@ -103,6 +104,7 @@ pub fn run() {
             commands::system_fonts,
             commands::font_face,
             commands::quota_fetch,
+            commands::pi_models_list,
             commands::layout_load,
             commands::layout_save,
         ])

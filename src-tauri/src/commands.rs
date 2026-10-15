@@ -758,6 +758,19 @@ pub async fn quota_fetch(
     Ok(crate::quota::fetch(provider).await)
 }
 
+/// The models pi can use on the Machine (`pi --list-models`).
+#[tauri::command]
+pub async fn pi_models_list(
+    mgr: Mgr<'_>,
+    machine_id: String,
+) -> Result<Vec<crate::pi::PiModel>, AppError> {
+    let info = mgr.info(&machine_id)?;
+    if info.pi.is_empty() {
+        return Err(AppError::new("not_found", "pi was not found on this machine"));
+    }
+    crate::pi::list_models(&*mgr.transport(&machine_id)?, &info.pi).await
+}
+
 /// The saved sidebar layout, or `null` when none was saved yet.
 #[tauri::command]
 pub async fn layout_load(store: State<'_, Arc<LayoutStore>>) -> Result<Option<Value>, AppError> {
