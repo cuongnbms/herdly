@@ -97,7 +97,15 @@ describe("PromptPanel", () => {
     expect(await screen.findByText("preview 2")).toBeTruthy();
     expect(screen.getByText(/Preview · Card \/ pill/)).toBeTruthy();
     fireEvent.mouseEnter(screen.getByRole("button", { name: /Timeline/ }));
-    expect(screen.getByText(/once its cursor is there/)).toBeTruthy();
+    expect(screen.getByText(/once its cursor is there/).getAttribute("aria-hidden")).toBeNull();
+    // the screen's preview stays laid out under the note, so pointing away does not shrink the card
+    expect(screen.getByText("preview 2").getAttribute("aria-hidden")).toBe("true");
+    // a preview the terminal showed once is shown again when its option is pointed at
+    shown = withPreviews(0);
+    expect(await screen.findByText("preview 1", undefined, { timeout: PROMPT_POLL_MS * 2 })).toBeTruthy();
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /Card \/ pill/ }));
+    expect(screen.getByText("preview 2").getAttribute("aria-hidden")).toBeNull();
+    expect(screen.getByText("preview 1").getAttribute("aria-hidden")).toBe("true");
     unmount();
 
     render(<PromptPanel pane={pane} view={view} asked={asked} />);

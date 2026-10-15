@@ -100,10 +100,15 @@ function PromptCard({
   // The option whose preview shows: the one pointed at, else the terminal cursor's. The call's
   // input has every option's preview whole; the screen only the cursor's, wrapped to the pane.
   const [pointed, setPointed] = useState<number | null>(null);
+  // Claude writes the call to the transcript only once it is answered, so while it waits the
+  // previews come from the screen, the cursor's alone: each one shown on this prompt is kept, to
+  // show again when its option is pointed at and to hold the card at the tallest of them.
+  const seen = useRef(new Map<number, string>());
+  if (prompt.preview) seen.current.set(prompt.preview.index, prompt.preview.text);
   const previews = previewsFor(prompt, asked);
-  const hasPreview = previews !== null || prompt.preview !== undefined;
+  const hasPreview = previews !== null || seen.current.size > 0;
   const previewing = pointed ?? prompt.preview?.index ?? 0;
-  const previewText = previews?.[previewing] ?? (prompt.preview?.index === previewing ? prompt.preview.text : null);
+  const layers = previews ?? prompt.options.map((_, i) => seen.current.get(i) ?? null);
   const toggle = (i: number) =>
     setChecked((cur) => {
       const next = new Set(cur);
@@ -169,12 +174,13 @@ function PromptCard({
           <figcaption>
             Preview · {prompt.options[previewing]?.label.replace(RECOMMENDED_RE, "")}
           </figcaption>
-          {/* every preview the transcript has sits in one grid cell, only the pointed one visible, so
-              the card keeps the tallest one's height: a card that resized on hover moved the options
-              under the mouse, which pointed at another option, which resized it again */}
+          {/* every preview known (the transcript's, else the ones the screen has shown) sits in one
+              grid cell, only the pointed one visible, so the card keeps the tallest one's height: a
+              card that resized on hover moved the options under the mouse, which pointed at another
+              option, which resized it again */}
           <div className="prompt-preview-stack">
-            {(previews ?? [previewText]).map((text, i) => {
-              const showing = previews === null || i === previewing;
+            {layers.map((text, i) => {
+              const showing = i === previewing;
               const layer = showing ? undefined : "prompt-preview-hidden";
               return text !== null ? (
                 <pre key={i} className={layer} aria-hidden={!showing || undefined}>{text}</pre>
