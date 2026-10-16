@@ -120,29 +120,60 @@ pub(crate) fn porcelain_records(out: &str) -> Vec<Record<'_>> {
     v
 }
 
+/// The `# branch.*` headers of `git status --porcelain=v2 --branch`.
+#[derive(Default)]
+pub(crate) struct BranchInfo<'a> {
+    oid: Option<&'a str>,
+    head: Option<&'a str>,
+    pub(crate) upstream: Option<String>,
+    pub(crate) ahead: u32,
+    pub(crate) behind: u32,
+}
+
+impl<'a> BranchInfo<'a> {
+    /// Take one header; unknown keys are ignored.
+    pub(crate) fn set(&mut self, key: &str, value: &'a str) {
+        match key {
+            "oid" => self.oid = Some(value),
+            "head" => self.head = Some(value),
+            "upstream" => self.upstream = Some(value.to_string()),
+            "ab" => {
+                for n in value.split(' ') {
+                    if let Some(a) = n.strip_prefix('+') {
+                        self.ahead = a.parse().unwrap_or(0);
+                    } else if let Some(b) = n.strip_prefix('-') {
+                        self.behind = b.parse().unwrap_or(0);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The full commit id; None before the first commit.
+    pub(crate) fn head_oid(&self) -> Option<&'a str> {
+        self.oid.filter(|o| *o != "(initial)" && !o.is_empty())
+    }
+
+    /// The branch, or the short commit on a detached HEAD.
+    pub(crate) fn branch(&self) -> Option<String> {
+        match (self.head, self.oid) {
+            (Some("(detached)"), Some(oid)) => Some(oid.chars().take(7).collect()),
+            (Some(head), _) if !head.is_empty() => Some(head.to_string()),
+            _ => None,
+        }
+    }
+}
+
 /// Parse `git status --porcelain=v2 [--branch] -z`, listing the first `limit` changes; empty output
 /// (no repository) has no branch.
 pub(crate) fn parse_porcelain_v2(out: &str, limit: usize) -> GitStatus {
     let mut s = GitStatus::default();
-    let (mut head, mut oid) = (None, None);
+    let mut b = BranchInfo::default();
     for rec in porcelain_records(out) {
         let (xy, path, unmerged) = match rec {
             Record::Branch { key, value } => {
-                match key {
-                    "oid" => oid = Some(value),
-                    "head" => head = Some(value),
-                    "upstream" => s.upstream = Some(value.to_string()),
-                    "ab" => {
-                        for n in value.split(' ') {
-                            if let Some(a) = n.strip_prefix('+') {
-                                s.ahead = a.parse().unwrap_or(0);
-                            } else if let Some(b) = n.strip_prefix('-') {
-                                s.behind = b.parse().unwrap_or(0);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+                b.set(key, value);
                 continue;
             }
             Record::Entry {
@@ -181,11 +212,9 @@ pub(crate) fn parse_porcelain_v2(out: &str, limit: usize) -> GitStatus {
             });
         }
     }
-    s.branch = match (head, oid) {
-        (Some("(detached)"), Some(oid)) => Some(oid.chars().take(7).collect()),
-        (Some(head), _) if !head.is_empty() => Some(head.to_string()),
-        _ => None,
-    };
+    s.branch = b.branch();
+    s.upstream = b.upstream;
+    (s.ahead, s.behind) = (b.ahead, b.behind);
     s.dirty = s.changed > 0;
     s
 }

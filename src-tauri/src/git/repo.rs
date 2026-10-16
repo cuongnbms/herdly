@@ -1,5 +1,5 @@
 //! The repository of a folder with every changed entry, for the Git view.
-use super::status::{porcelain_records, Record};
+use super::status::{porcelain_records, BranchInfo, Record};
 use super::{failed, run, GIT};
 use crate::error::AppResult;
 use crate::transport::Transport;
@@ -38,11 +38,15 @@ pub struct GitRepo {
     pub total: u32,
 }
 
+/// Only "not a git repository" is no repository (no output); any other `rev-parse` failure,
+/// including a missing git, goes to stderr with a failing status.
 fn script() -> String {
     format!(
-        "top=$({GIT} rev-parse --show-toplevel 2>/dev/null) || exit 0; \
-         prefix=$({GIT} rev-parse --show-prefix) || exit 0; \
-         printf '%s\\0%s\\0' \"$top\" \"$prefix\"; \
+        "top=$(LC_ALL=C {GIT} rev-parse --show-toplevel 2>&1) || {{ \\
+         case \"$top\" in *'not a git repository'*) exit 0;; esac; \\
+         printf '%s\\n' \"$top\" >&2; exit 1; }}; \\
+         prefix=$({GIT} rev-parse --show-prefix) || exit 1; \\
+         printf '%s\\0%s\\0' \"$top\" \"$prefix\"; \\
          cd \"$top\" && exec {GIT} status --porcelain=v2 --branch -z --untracked-files=all"
     )
 }
@@ -76,25 +80,11 @@ pub(crate) fn parse_repo(out: &str, limit: usize) -> Option<GitRepo> {
         entries: Vec::new(),
         total: 0,
     };
-    let (mut head, mut oid) = (None, None);
+    let mut b = BranchInfo::default();
     for rec in porcelain_records(rest) {
         let entry = match rec {
             Record::Branch { key, value } => {
-                match key {
-                    "oid" => oid = Some(value),
-                    "head" => head = Some(value),
-                    "upstream" => r.upstream = Some(value.to_string()),
-                    "ab" => {
-                        for n in value.split(' ') {
-                            if let Some(a) = n.strip_prefix('+') {
-                                r.ahead = a.parse().unwrap_or(0);
-                            } else if let Some(b) = n.strip_prefix('-') {
-                                r.behind = b.parse().unwrap_or(0);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+                b.set(key, value);
                 continue;
             }
             Record::Untracked { path } => GitEntry {
@@ -122,14 +112,10 @@ pub(crate) fn parse_repo(out: &str, limit: usize) -> Option<GitRepo> {
             r.entries.push(entry);
         }
     }
-    r.head = oid
-        .filter(|o| *o != "(initial)" && !o.is_empty())
-        .map(str::to_string);
-    r.branch = match (head, oid) {
-        (Some("(detached)"), Some(oid)) => Some(oid.chars().take(7).collect()),
-        (Some(h), _) if !h.is_empty() => Some(h.to_string()),
-        _ => None,
-    };
+    r.head = b.head_oid().map(str::to_string);
+    r.branch = b.branch();
+    r.upstream = b.upstream;
+    (r.ahead, r.behind) = (b.ahead, b.behind);
     Some(r)
 }
 
@@ -275,5 +261,16 @@ mod tests {
         );
         assert_eq!((r.total, r.head), (5, None));
         assert_eq!(parse_repo("", 2), None);
+    }
+
+    #[tokio::test]
+    async fn a_broken_repository_is_a_git_error_not_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".git"), "garbage").unwrap();
+        let e = git_repo(&LocalTransport, &tmp.path().to_string_lossy())
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "git");
+        assert!(!e.message.is_empty());
     }
 }
