@@ -26,7 +26,7 @@ pub struct GitCommitFile {
 }
 
 /// `limit` commits of the current branch after `skip`, newest first; empty before the first
-/// commit.
+/// commit. `--no-show-signature`: with `log.showSignature`, gpg output would precede `%H`.
 pub async fn git_log(
     t: &dyn Transport,
     root: &str,
@@ -34,7 +34,7 @@ pub async fn git_log(
     limit: u32,
 ) -> AppResult<Vec<GitCommit>> {
     let script = format!(
-        "LC_ALL=C {GIT} log --skip=\"$1\" -n \"$2\" \
+        "LC_ALL=C {GIT} log --no-show-signature --skip=\"$1\" -n \"$2\" \
          --format=%H%x00%h%x00%an%x00%at%x00%P%x00%s%x00%b%x1e"
     );
     let o = run(t, root, &script, &[&skip.to_string(), &limit.to_string()]).await?;
@@ -182,6 +182,40 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("init", 0)]
         );
+    }
+
+    #[tokio::test]
+    async fn ignores_log_show_signature() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        let key = tmp.path().join("k");
+        let made = std::process::Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(&key)
+            .status();
+        if made.map(|s| s.success()).unwrap_or(false) {
+            let pubkey = format!("user.signingkey={}.pub", key.display());
+            git(
+                &dir,
+                &[
+                    "-c",
+                    "gpg.format=ssh",
+                    "-c",
+                    &pubkey,
+                    "commit",
+                    "-q",
+                    "-S",
+                    "--allow-empty",
+                    "-m",
+                    "signed",
+                ],
+            );
+        }
+        git(&dir, &["config", "log.showSignature", "true"]);
+        let log = git_log(&LocalTransport, &root(&dir), 0, 50).await.unwrap();
+        assert!(log.iter().all(|c| c.sha.len() == 40), "{log:?}");
+        assert_eq!(log.last().map(|c| c.subject.as_str()), Some("init"));
     }
 
     #[tokio::test]
