@@ -39,15 +39,20 @@ pub struct GitChange {
 pub const MAX_CHANGES: usize = 15;
 
 /// `git status` in its machine format, NUL-separated so paths come unquoted; nothing outside a
-/// repository. `--no-optional-locks` keeps it from taking the index lock an agent may need.
-const SCRIPT: &str = r#"cd "$1" 2>/dev/null || exit 0
-exec git --no-optional-locks status --porcelain=v2 --branch -z 2>/dev/null"#;
+/// repository. `GIT` carries `--no-optional-locks`, which keeps it from taking the index lock an
+/// agent may need.
+fn script() -> String {
+    format!(
+        "cd \"$1\" 2>/dev/null || exit 0\nexec {} status --porcelain=v2 --branch -z 2>/dev/null",
+        super::GIT
+    )
+}
 
 pub async fn git_status(t: &dyn Transport, cwd: &str) -> AppResult<GitStatus> {
     let argv = vec![
         "sh".to_string(),
         "-c".into(),
-        SCRIPT.into(),
+        script(),
         "sh".into(),
         cwd.to_string(),
     ];
