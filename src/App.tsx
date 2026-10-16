@@ -98,6 +98,7 @@ const ChatLens = lazy(() => import("./chat/ChatLens").then((m) => ({ default: m.
 const TerminalLens = lazy(() => import("./terminal/TerminalLens").then((m) => ({ default: m.TerminalLens })));
 // react-markdown and lowlight load with the first open file, not with the app.
 const FileViewer = lazy(() => import("./files/FileViewer").then((m) => ({ default: m.FileViewer })));
+const DiffViewer = lazy(() => import("./git/DiffViewer").then((m) => ({ default: m.DiffViewer })));
 
 export default function App() {
   const upsert = useApp((s) => s.upsertMachine);
@@ -272,6 +273,14 @@ export default function App() {
             <OpenStrip />
             <Suspense fallback={null}>
               <FileViewer key={itemKey(item)} item={item} online={online} />
+            </Suspense>
+          </>
+        ) : item?.kind === "diff" ? (
+          <>
+            {pane && ref ? <Header /> : <div className="titlebar" data-tauri-drag-region />}
+            <OpenStrip />
+            <Suspense fallback={null}>
+              <DiffViewer key={itemKey(item)} item={item} online={online} />
             </Suspense>
           </>
         ) : pane && ref ? (

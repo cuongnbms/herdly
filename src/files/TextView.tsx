@@ -3,9 +3,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { findMatches, wrapIndex, type FindQuery, type FindStatus, type Match } from "./find";
 import { highlightLines, splitLines, type Seg } from "./highlightLines";
 
-const DEFAULT_LINE_H = 20;
+export const DEFAULT_LINE_H = 20;
 
-function lineHeight(el: HTMLElement | null): number {
+export function lineHeight(el: HTMLElement | null): number {
   if (!el) return DEFAULT_LINE_H;
   const raw = getComputedStyle(el).getPropertyValue("--files-line-h");
   const px = parseFloat(raw);
