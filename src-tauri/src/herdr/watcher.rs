@@ -1,5 +1,6 @@
 //! Per-session watcher: keeps a `SessionView` fresh from herdr's event stream.
 use super::{
+    background::Probe,
     model::{apply_status, pane_ids, session_view, DoneMarks},
     rpc::{self, Subscription},
     types::{AgentStatus, AgentStatusChanged, EventFrame, Snapshot},
@@ -10,6 +11,7 @@ use crate::{
 };
 use serde_json::{json, Value};
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
@@ -21,6 +23,17 @@ use tokio::{
 };
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
+/// How long a run's end waits to learn whether background work goes on; without an answer
+/// the run counts as done, as it did before the check.
+#[cfg(not(test))]
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const PROBE_TIMEOUT: Duration = Duration::from_millis(300);
+/// How often panes busy with background work are checked again.
+#[cfg(not(test))]
+const BUSY_POLL: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const BUSY_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub enum WatchEvent {
@@ -101,9 +114,108 @@ struct Watch<'a> {
     last: SessionView,
     marks: &'a SharedMarks,
     tx: &'a UnboundedSender<WatchEvent>,
+    socket: &'a Path,
+    /// Tells whether a pi pane whose run ended keeps background work running.
+    probe: Option<&'a dyn Probe>,
+    /// Busy panes the last poll found without work. The work's notification starts pi's next run
+    /// just after it reaches the transcript, so one answer could beat herdr's working to us.
+    quiet: HashSet<String>,
+}
+
+/// pi's background work (bg tasks, background subagents) outlives its run: its panes are checked.
+fn ended(previous: AgentStatus, status: AgentStatus) -> bool {
+    use AgentStatus::*;
+    matches!(previous, Working | Blocked) && matches!(status, Idle | Done)
 }
 
 impl Watch<'_> {
+    fn is_pi(&self, pane_id: &str) -> bool {
+        self.snap
+            .agents
+            .iter()
+            .any(|a| a.pane_id == pane_id && a.agent.as_deref() == Some("pi"))
+    }
+
+    async fn probe_busy(&self, pane_id: &str) -> Option<bool> {
+        let probe = self.probe?;
+        timeout_at(
+            Instant::now() + PROBE_TIMEOUT,
+            probe.busy(self.socket, pane_id),
+        )
+        .await
+        .ok()
+        .flatten()
+    }
+
+    /// Mark the pi panes among `pane_ids` busy when background work of theirs still runs.
+    async fn check_busy(&self, pane_ids: Vec<String>) {
+        for id in pane_ids.into_iter().filter(|id| self.is_pi(id)) {
+            if self.probe_busy(&id).await == Some(true) {
+                self.marks.lock().set_busy(&id);
+            }
+        }
+    }
+
+    /// Check the busy panes again; the ones found without work twice in a row turn done.
+    /// `false` once the receiver is gone.
+    async fn poll_busy(&mut self) -> bool {
+        let busy = self.marks.lock().busy();
+        self.quiet.retain(|id| busy.contains(id));
+        for id in busy {
+            if self.probe_busy(&id).await != Some(false) {
+                self.quiet.remove(&id); // still running, or unknown: asked again next time
+                continue;
+            }
+            if self.quiet.insert(id.clone()) {
+                continue;
+            }
+            self.quiet.remove(&id);
+            let Some(raw) = self
+                .snap
+                .panes
+                .iter()
+                .find(|p| p.pane_id == id)
+                .map(|p| p.agent_status)
+            else {
+                continue;
+            };
+            let (previous, status) = {
+                let mut marks = self.marks.lock();
+                let previous = marks.status(&id, raw);
+                if !marks.end_busy(&id) {
+                    continue; // a new run started meanwhile
+                }
+                (previous, marks.status(&id, raw))
+            };
+            if !self.send_view() || (previous != status && !self.send_status(id, status, previous))
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Send a `Status` for `pane_id`; `false` once the receiver is gone.
+    fn send_status(&self, pane_id: String, status: AgentStatus, previous: AgentStatus) -> bool {
+        let title = self
+            .last
+            .workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .find(|p| p.pane_id == pane_id)
+            .map(|p| p.title.clone())
+            .unwrap_or_else(|| pane_id.clone());
+        self.tx
+            .send(WatchEvent::Status {
+                pane_id,
+                status,
+                previous,
+                title,
+            })
+            .is_ok()
+    }
+
     fn view(&self) -> SessionView {
         session_view(self.name, &self.snap, &self.marks.lock())
     }
@@ -120,7 +232,7 @@ impl Watch<'_> {
 
     /// Apply a status event; send `View` if anything shows differently, then `Status` if the
     /// status the app shows changed.
-    fn handle_status(&mut self, ev: &EventFrame) -> Handled {
+    async fn handle_status(&mut self, ev: &EventFrame) -> Handled {
         let Ok(change) = serde_json::from_value::<AgentStatusChanged>(ev.data.clone()) else {
             tracing::warn!(
                 "malformed pane.agent_status_changed, refetching: {}",
@@ -135,6 +247,13 @@ impl Watch<'_> {
         if !applied.changed {
             return Handled::Done;
         }
+        // Asked before the status is shown: a run whose work goes on must not notify done.
+        let busy = match applied.previous {
+            Some(p) if ended(p, change.agent_status) && self.is_pi(&change.pane_id) => {
+                self.probe_busy(&change.pane_id).await == Some(true)
+            }
+            _ => false,
+        };
         let (previous, status) = {
             let mut marks = self.marks.lock();
             let raw_previous = applied.previous.unwrap_or(change.agent_status);
@@ -142,34 +261,16 @@ impl Watch<'_> {
             if let Some(raw_previous) = applied.previous {
                 marks.on_status(&change.pane_id, raw_previous, change.agent_status);
             }
+            if busy {
+                marks.set_busy(&change.pane_id);
+            }
             (previous, marks.status(&change.pane_id, change.agent_status))
         };
         if !self.send_view() {
             return Handled::Gone;
         }
         // An agent-only change, or a seen of herdr's that we keep done: no transition (no notification).
-        if previous == status {
-            return Handled::Done;
-        }
-        let title = self
-            .last
-            .workspaces
-            .iter()
-            .flat_map(|w| &w.tabs)
-            .flat_map(|t| &t.panes)
-            .find(|p| p.pane_id == change.pane_id)
-            .map(|p| p.title.clone())
-            .unwrap_or_else(|| change.pane_id.clone());
-        let sent = self
-            .tx
-            .send(WatchEvent::Status {
-                pane_id: change.pane_id,
-                status,
-                previous,
-                title,
-            })
-            .is_ok();
-        if sent {
+        if previous == status || self.send_status(change.pane_id, status, previous) {
             Handled::Done
         } else {
             Handled::Gone
@@ -177,9 +278,9 @@ impl Watch<'_> {
     }
 
     /// Handle any event; `Refetch` for everything but a clean status patch.
-    fn handle_event(&mut self, ev: &EventFrame) -> Handled {
+    async fn handle_event(&mut self, ev: &EventFrame) -> Handled {
         if ev.event == "pane.agent_status_changed" {
-            self.handle_status(ev)
+            self.handle_status(ev).await
         } else {
             Handled::Refetch
         }
@@ -187,7 +288,8 @@ impl Watch<'_> {
 
     /// Take a fresh snapshot, feeding the marks the transitions it shows; `true` when the
     /// pane set changed (resubscribe).
-    fn replace(&mut self, fresh: Snapshot) -> bool {
+    async fn replace(&mut self, fresh: Snapshot) -> bool {
+        let mut ended_runs = Vec::new();
         {
             let mut marks = self.marks.lock();
             marks.retain(&pane_ids(&fresh));
@@ -195,11 +297,15 @@ impl Watch<'_> {
                 let old = self.snap.panes.iter().find(|o| o.pane_id == p.pane_id);
                 if let Some(old) = old.filter(|o| o.agent_status != p.agent_status) {
                     marks.on_status(&p.pane_id, old.agent_status, p.agent_status);
+                    if ended(old.agent_status, p.agent_status) {
+                        ended_runs.push(p.pane_id.clone());
+                    }
                 }
             }
         }
         let resubscribe = pane_ids(&fresh) != pane_ids(&self.snap);
         self.snap = fresh;
+        self.check_busy(ended_runs).await;
         resubscribe
     }
 }
@@ -212,6 +318,7 @@ async fn run(
     tx: &UnboundedSender<WatchEvent>,
     refetch: &Notify,
     marks: &SharedMarks,
+    probe: Option<&dyn Probe>,
 ) -> Option<AppError> {
     let snap = match rpc::snapshot(socket).await {
         Ok(s) => s,
@@ -231,20 +338,38 @@ async fn run(
         last,
         marks,
         tx,
+        socket,
+        probe,
+        quiet: HashSet::new(),
     };
     let mut sub = match subscribe_all(socket, &w.snap).await {
         Ok(s) => s,
         Err(e) => return Some(e),
     };
+    // Background work may have outlived a run that ended before the app connected.
+    let idle: Vec<String> = w
+        .snap
+        .panes
+        .iter()
+        .filter(|p| matches!(p.agent_status, AgentStatus::Idle | AgentStatus::Done))
+        .map(|p| p.pane_id.clone())
+        .collect();
+    w.check_busy(idle).await;
+    if !w.send_view() {
+        return None;
+    }
+    let mut poll = tokio::time::interval(BUSY_POLL);
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut need_refetch = false;
     loop {
         // The app's own refetch follows a call herdr already answered: nothing to wait for.
         let mut asked = false;
         if !need_refetch {
+            let busy = !marks.lock().busy().is_empty();
             tokio::select! {
                 ev = sub.rx.recv() => {
                     let Some(ev) = ev else { return Some(closed()) };
-                    match w.handle_event(&ev) {
+                    match w.handle_event(&ev).await {
                         Handled::Done => continue,
                         Handled::Gone => return None,
                         Handled::Refetch => {}
@@ -257,6 +382,12 @@ async fn run(
                     continue;
                 }
                 _ = refetch.notified() => asked = true,
+                _ = poll.tick(), if busy => {
+                    if !w.poll_busy().await {
+                        return None;
+                    }
+                    continue;
+                }
             }
         }
         need_refetch = false;
@@ -267,7 +398,7 @@ async fn run(
                 Err(_) => break,
                 Ok(None) => return Some(closed()),
                 Ok(Some(e)) => {
-                    if let Handled::Gone = w.handle_event(&e) {
+                    if let Handled::Gone = w.handle_event(&e).await {
                         return None;
                     }
                 }
@@ -277,7 +408,7 @@ async fn run(
             Ok(s) => s,
             Err(e) => return Some(e),
         };
-        let resubscribe = w.replace(fresh);
+        let resubscribe = w.replace(fresh).await;
         if !w.send_view() {
             return None;
         }
@@ -290,7 +421,7 @@ async fn run(
             };
             let mut old = std::mem::replace(&mut sub, new_sub);
             while let Ok(ev) = old.rx.try_recv() {
-                match w.handle_event(&ev) {
+                match w.handle_event(&ev).await {
                     Handled::Done => {}
                     Handled::Gone => return None,
                     Handled::Refetch => need_refetch = true,
@@ -307,9 +438,10 @@ pub fn spawn_watcher(
     tx: UnboundedSender<WatchEvent>,
     refetch: Arc<Notify>,
     marks: Arc<SharedMarks>,
+    probe: Option<Arc<dyn Probe>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        if let Some(err) = run(&name, &socket, &tx, &refetch, &marks).await {
+        if let Some(err) = run(&name, &socket, &tx, &refetch, &marks, probe.as_deref()).await {
             let _ = tx.send(WatchEvent::Closed(err));
         }
     })
@@ -367,7 +499,6 @@ mod tests {
     ) {
         started_with(snap, Arc::default()).await
     }
-    /// A watcher past its first view and subscription.
     async fn started_with(
         snap: Arc<Mutex<Value>>,
         marks: Arc<SharedMarks>,
@@ -376,9 +507,28 @@ mod tests {
         mpsc::UnboundedReceiver<WatchEvent>,
         tokio::task::JoinHandle<()>,
     ) {
+        started_probing(snap, marks, None).await
+    }
+    /// A watcher past its first view and subscription.
+    async fn started_probing(
+        snap: Arc<Mutex<Value>>,
+        marks: Arc<SharedMarks>,
+        probe: Option<Arc<dyn Probe>>,
+    ) -> (
+        FakeHerdr,
+        mpsc::UnboundedReceiver<WatchEvent>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let f = fake_with(snap);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let h = spawn_watcher("default".into(), f.path.clone(), tx, Arc::default(), marks);
+        let h = spawn_watcher(
+            "default".into(),
+            f.path.clone(),
+            tx,
+            Arc::default(),
+            marks,
+            probe,
+        );
         next(&mut rx).await;
         let end = tokio::time::Instant::now() + Duration::from_secs(3);
         while f.calls_of("events.subscribe") < 1 && tokio::time::Instant::now() < end {
@@ -481,6 +631,201 @@ mod tests {
             }
         ));
     }
+    /// Answers what `busy` holds, after `delay`; records the panes it was asked about.
+    #[derive(Default)]
+    struct FakeProbe {
+        busy: Mutex<Option<bool>>,
+        delay: Duration,
+        calls: Mutex<Vec<String>>,
+    }
+    impl FakeProbe {
+        fn answering(busy: Option<bool>) -> Arc<FakeProbe> {
+            Arc::new(FakeProbe {
+                busy: Mutex::new(busy),
+                ..Default::default()
+            })
+        }
+        fn set(&self, busy: Option<bool>) {
+            *self.busy.lock().unwrap() = busy;
+        }
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+    #[async_trait::async_trait]
+    impl Probe for FakeProbe {
+        async fn busy(&self, _socket: &Path, pane_id: &str) -> Option<bool> {
+            self.calls.lock().unwrap().push(pane_id.to_string());
+            tokio::time::sleep(self.delay).await;
+            *self.busy.lock().unwrap()
+        }
+    }
+    async fn probing(
+        snap: Arc<Mutex<Value>>,
+        probe: Arc<FakeProbe>,
+    ) -> (
+        FakeHerdr,
+        mpsc::UnboundedReceiver<WatchEvent>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        started_probing(snap, Arc::default(), Some(probe)).await
+    }
+    fn is_status(ev: &WatchEvent, want: AgentStatus, was: AgentStatus) -> bool {
+        matches!(ev, WatchEvent::Status { status, previous, .. } if *status == want && *previous == was)
+    }
+
+    #[tokio::test]
+    async fn a_pi_run_ending_with_background_work_stays_working_until_it_ends() {
+        let probe = FakeProbe::answering(Some(true));
+        let (f, mut rx, _h) = probing(fixture_value(), probe.clone()).await;
+        // w1:p2 is pi, blocked; its run ends with a bg task still running.
+        f.emit(
+            "pane.agent_status_changed",
+            json!({"pane_id":"w1:p2","agent_status":"idle"}),
+        );
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p2") == AgentStatus::Working)
+        );
+        assert!(is_status(
+            &next(&mut rx).await,
+            AgentStatus::Working,
+            AgentStatus::Blocked
+        ));
+        assert_quiet(&mut rx).await; // polled, still running: no done, no notification
+        assert!(probe.calls().len() > 1, "polled while busy");
+        probe.set(Some(false));
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p2") == AgentStatus::Done)
+        );
+        assert!(is_status(
+            &next(&mut rx).await,
+            AgentStatus::Done,
+            AgentStatus::Working
+        ));
+        let polls = probe.calls().len();
+        assert_quiet(&mut rx).await;
+        assert_eq!(probe.calls().len(), polls, "no polling once it ended");
+    }
+    #[tokio::test]
+    async fn an_unknown_answer_keeps_background_work_running() {
+        let probe = FakeProbe::answering(Some(true));
+        let (f, mut rx, _h) = probing(fixture_value(), probe.clone()).await;
+        f.emit(
+            "pane.agent_status_changed",
+            json!({"pane_id":"w1:p2","agent_status":"idle"}),
+        );
+        next(&mut rx).await;
+        next(&mut rx).await;
+        probe.set(None); // a failed check, e.g. ssh hiccup
+        assert_quiet(&mut rx).await;
+        probe.set(Some(false));
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p2") == AgentStatus::Done)
+        );
+    }
+    #[tokio::test]
+    async fn without_an_answer_a_pi_run_ends_done() {
+        let probe = Arc::new(FakeProbe {
+            busy: Mutex::new(Some(true)),
+            delay: Duration::from_secs(30),
+            ..Default::default()
+        });
+        let (f, mut rx, _h) = probing(fixture_value(), probe.clone()).await;
+        f.emit(
+            "pane.agent_status_changed",
+            json!({"pane_id":"w1:p2","agent_status":"idle"}),
+        );
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p2") == AgentStatus::Done)
+        );
+        assert!(is_status(
+            &next(&mut rx).await,
+            AgentStatus::Done,
+            AgentStatus::Blocked
+        ));
+    }
+    #[tokio::test]
+    async fn only_pi_runs_are_checked() {
+        let probe = FakeProbe::answering(Some(true));
+        let (f, mut rx, _h) = probing(fixture_value(), probe.clone()).await;
+        f.emit(
+            "pane.agent_status_changed",
+            json!({"pane_id":"w1:p1","agent_status":"idle"}),
+        );
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p1") == AgentStatus::Done)
+        );
+        assert!(is_status(
+            &next(&mut rx).await,
+            AgentStatus::Done,
+            AgentStatus::Working
+        ));
+        assert!(probe.calls().is_empty(), "w1:p1 is claude");
+    }
+    #[tokio::test]
+    async fn a_new_run_drops_background_work_until_it_ends_again() {
+        let probe = FakeProbe::answering(Some(true));
+        let (f, mut rx, _h) = probing(fixture_value(), probe.clone()).await;
+        f.emit(
+            "pane.agent_status_changed",
+            json!({"pane_id":"w1:p2","agent_status":"idle"}),
+        );
+        next(&mut rx).await;
+        next(&mut rx).await;
+        // The bg task's completion starts a turn: herdr reports working, as the app already shows.
+        // Its notification is already in the transcript when a poll runs just before herdr's
+        // working arrives: one answer is not enough to end the work.
+        probe.set(Some(false));
+        tokio::time::sleep(BUSY_POLL / 2).await;
+        f.emit(
+            "pane.agent_status_changed",
+            json!({"pane_id":"w1:p2","agent_status":"working"}),
+        );
+        assert_quiet(&mut rx).await;
+        f.emit(
+            "pane.agent_status_changed",
+            json!({"pane_id":"w1:p2","agent_status":"idle"}),
+        );
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p2") == AgentStatus::Done)
+        );
+        assert!(is_status(
+            &next(&mut rx).await,
+            AgentStatus::Done,
+            AgentStatus::Working
+        ));
+    }
+    #[tokio::test]
+    async fn a_pi_pane_already_idle_at_connect_is_checked() {
+        let snap = fixture_value();
+        snap.lock().unwrap()["panes"][1]["agent_status"] = json!("idle"); // w1:p2, pi
+        let probe = FakeProbe::answering(Some(true));
+        let (_f, mut rx, _h) = probing(snap, probe.clone()).await;
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p2") == AgentStatus::Working)
+        );
+        assert_eq!(probe.calls()[0], "w1:p2");
+        probe.set(Some(false));
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p2") == AgentStatus::Done)
+        );
+        assert!(is_status(
+            &next(&mut rx).await,
+            AgentStatus::Done,
+            AgentStatus::Working
+        ));
+    }
+    #[tokio::test]
+    async fn a_refetch_showing_a_pi_run_ended_is_checked() {
+        let snap = fixture_value();
+        let probe = FakeProbe::answering(Some(true));
+        let (f, mut rx, _h) = probing(snap.clone(), probe.clone()).await;
+        snap.lock().unwrap()["panes"][1]["agent_status"] = json!("idle");
+        f.emit("pane.updated", json!({"pane_id":"w1:p2"}));
+        assert!(
+            matches!(next(&mut rx).await, WatchEvent::View(v) if pane_status(&v, "w1:p2") == AgentStatus::Working)
+        );
+    }
     #[tokio::test]
     async fn a_refetch_showing_a_run_ended_marks_it_done() {
         let snap = fixture_value();
@@ -536,6 +881,7 @@ mod tests {
             tx,
             Arc::default(),
             Arc::default(),
+            None,
         );
         assert!(matches!(next(&mut rx).await, WatchEvent::View(v) if v.workspaces.len() == 2));
         tokio::time::sleep(Duration::from_millis(100)).await; // let subscribe land
@@ -614,6 +960,7 @@ mod tests {
             tx,
             Arc::default(),
             Arc::default(),
+            None,
         );
         next(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -680,6 +1027,7 @@ mod tests {
             tx,
             refetch.clone(),
             Arc::default(),
+            None,
         );
         next(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -702,6 +1050,7 @@ mod tests {
             tx,
             refetch.clone(),
             Arc::default(),
+            None,
         );
         next(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -728,6 +1077,7 @@ mod tests {
             tx,
             refetch.clone(),
             Arc::default(),
+            None,
         );
         next(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -755,6 +1105,7 @@ mod tests {
             tx,
             Arc::default(),
             Arc::default(),
+            None,
         );
         next(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;

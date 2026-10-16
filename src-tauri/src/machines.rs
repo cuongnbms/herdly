@@ -3,6 +3,7 @@ use crate::{
     attach::AttachManager,
     error::{AppError, AppResult},
     herdr::{
+        background::{PiProbe, Probe},
         rpc,
         types::AgentStatus,
         watcher::{spawn_watcher, SharedMarks, WatchEvent},
@@ -1374,6 +1375,7 @@ impl MachineManager {
         marks: Arc<SharedMarks>,
     ) {
         let mut attempt = 0u32;
+        let probe: Arc<dyn Probe> = Arc::new(PiProbe::new(transport.clone()));
         loop {
             let Ok(entry) = self.session(&id, &name) else {
                 return;
@@ -1389,6 +1391,7 @@ impl MachineManager {
                         tx,
                         refetch.clone(),
                         marks.clone(),
+                        Some(probe.clone()),
                     ));
                     let mut closed = None;
                     while let Some(ev) = rx.recv().await {

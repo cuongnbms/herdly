@@ -13,6 +13,9 @@ pub struct DoneMarks {
     done: HashSet<String>,
     /// Panes the app focused since their run ended: herdr's done → idle for them is our own seen.
     focused: HashSet<String>,
+    /// Panes shown working while herdr says idle or done: their agent's run ended, but work it
+    /// started in the background still runs (see `background`).
+    busy: HashSet<String>,
 }
 
 impl DoneMarks {
@@ -24,6 +27,7 @@ impl DoneMarks {
             Working | Blocked | Unknown => {
                 self.done.remove(pane_id);
                 self.focused.remove(pane_id);
+                self.busy.remove(pane_id);
             }
             Done => {
                 self.focused.remove(pane_id);
@@ -46,9 +50,34 @@ impl DoneMarks {
         self.focused.insert(pane_id.to_string());
     }
 
+    /// The agent in `pane_id` ended its run with background work still running.
+    pub fn set_busy(&mut self, pane_id: &str) {
+        self.busy.insert(pane_id.to_string());
+    }
+
+    /// The background work in `pane_id` ended: a completion, shown done until the app focuses
+    /// the pane. `false` when it was not busy.
+    pub fn end_busy(&mut self, pane_id: &str) -> bool {
+        if !self.busy.remove(pane_id) {
+            return false;
+        }
+        self.focused.remove(pane_id);
+        self.done.insert(pane_id.to_string());
+        true
+    }
+
+    /// Panes shown working for their background work, sorted.
+    pub fn busy(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.busy.iter().cloned().collect();
+        ids.sort();
+        ids
+    }
+
     /// `raw`, herdr's status, as the app shows it.
     pub fn status(&self, pane_id: &str, raw: AgentStatus) -> AgentStatus {
-        if raw == AgentStatus::Idle && self.done.contains(pane_id) {
+        if matches!(raw, AgentStatus::Idle | AgentStatus::Done) && self.busy.contains(pane_id) {
+            AgentStatus::Working
+        } else if raw == AgentStatus::Idle && self.done.contains(pane_id) {
             AgentStatus::Done
         } else {
             raw
@@ -59,6 +88,7 @@ impl DoneMarks {
     pub fn retain(&mut self, ids: &[String]) {
         self.done.retain(|p| ids.contains(p));
         self.focused.retain(|p| ids.contains(p));
+        self.busy.retain(|p| ids.contains(p));
     }
 }
 
@@ -338,6 +368,55 @@ mod tests {
         m.retain(&["q".to_string()]);
         assert_eq!(m.status("p", Idle), Idle);
         assert_eq!(m.status("q", Idle), Done);
+    }
+    #[test]
+    fn background_work_shows_working_until_it_ends_in_done() {
+        use AgentStatus::*;
+        let mut m = DoneMarks::default();
+        m.on_status("p", Working, Idle);
+        m.set_busy("p");
+        assert_eq!(m.status("p", Idle), Working);
+        assert_eq!(
+            m.status("p", Done),
+            Working,
+            "herdr's done, for an unwatched tab"
+        );
+        assert_eq!(m.busy(), ["p"]);
+        assert!(m.end_busy("p"));
+        assert_eq!(m.status("p", Idle), Done);
+        assert!(m.busy().is_empty());
+        assert!(!m.end_busy("p"), "only once");
+    }
+    #[test]
+    fn background_work_ending_after_a_focus_is_done_again() {
+        use AgentStatus::*;
+        let mut m = DoneMarks::default();
+        m.on_status("p", Working, Idle);
+        m.set_busy("p");
+        m.on_focus("p");
+        assert_eq!(m.status("p", Idle), Working);
+        m.end_busy("p");
+        assert_eq!(
+            m.status("p", Idle),
+            Done,
+            "its end is a completion of its own"
+        );
+        m.on_focus("p");
+        assert_eq!(m.status("p", Idle), Idle);
+    }
+    #[test]
+    fn a_new_run_drops_background_work() {
+        use AgentStatus::*;
+        let mut m = DoneMarks::default();
+        m.on_status("p", Working, Idle);
+        m.set_busy("p");
+        m.on_status("p", Idle, Working);
+        assert!(m.busy().is_empty(), "checked again when this run ends");
+        m.on_status("p", Working, Idle);
+        assert_eq!(m.status("p", Idle), Done);
+        m.set_busy("q");
+        m.retain(&["p".to_string()]);
+        assert!(m.busy().is_empty(), "gone panes are forgotten");
     }
     #[test]
     fn session_view_shows_marked_panes_done() {

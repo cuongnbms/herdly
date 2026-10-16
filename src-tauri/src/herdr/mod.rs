@@ -1,3 +1,4 @@
+pub mod background;
 pub mod codec;
 #[cfg(test)]
 pub mod fake;
