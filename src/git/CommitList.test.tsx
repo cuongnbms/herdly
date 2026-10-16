@@ -36,4 +36,25 @@ describe("CommitList", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(props.onLoadMore).toHaveBeenCalled();
   });
+
+  it("shows a failed file read in place and retries it", async () => {
+    vi.mocked(gitCommitFiles).mockRejectedValueOnce({ code: "git", message: "fatal: bad object" });
+    useGit.getState().setLog("local|/r", [commit(1)], true);
+    render(<CommitList {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: /1111111 subject 1/ }));
+    expect(await screen.findByText("fatal: bad object")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByTitle("src/a.ts")).toBeTruthy();
+    expect(gitCommitFiles).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("fatal: bad object")).toBeNull();
+  });
+
+  it("sends a right-click on a commit file to onFileMenu", async () => {
+    const onFileMenu = vi.fn();
+    useGit.getState().setLog("local|/r", [commit(1)], true);
+    render(<CommitList {...props} onFileMenu={onFileMenu} />);
+    fireEvent.click(screen.getByRole("button", { name: /1111111 subject 1/ }));
+    fireEvent.contextMenu(await screen.findByTitle("src/a.ts"), { clientX: 12, clientY: 34 });
+    expect(onFileMenu).toHaveBeenCalledWith(expect.objectContaining({ short: "1111111" }), expect.objectContaining({ path: "src/a.ts" }), 12, 34);
+  });
 });

@@ -1,5 +1,6 @@
 import { ChevronIcon } from "../ui/icons";
 import type { GitRepo } from "../lib/types";
+import { FileRow } from "./FileRow";
 import { useGit } from "./store";
 import { sections, type Row } from "./sections";
 
@@ -26,31 +27,17 @@ export function ChangeList({ repo, activeKey, keyOf, onOpen, onMenu }: Props) {
           {name} <span className="git-count">({rows.length})</span>
         </button>
         {open &&
-          rows.map((row) => {
-            const slash = row.path.lastIndexOf("/");
-            const name = row.path.slice(slash + 1);
-            const dir = row.origPath ? `${row.origPath} → ${row.path}` : slash >= 0 ? row.path.slice(0, slash) : "";
-            const k = keyOf(row);
-            return (
-              <button
-                type="button"
-                className="git-row"
-                key={`${row.scope}:${row.path}`}
-                title={row.path}
-                aria-current={k === activeKey ? "true" : undefined}
-                onClick={() => onOpen(row, false)}
-                onDoubleClick={() => onOpen(row, true)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  onMenu(row, e.clientX, e.clientY);
-                }}
-              >
-                <span className="git-row-name">{name}</span>
-                <span className="git-row-dir">{dir}</span>
-                <span className={`git-letter git-letter-${row.letter}`}>{row.letter}</span>
-              </button>
-            );
-          })}
+          rows.map((row) => (
+            <FileRow
+              key={`${row.scope}:${row.path}`}
+              path={row.path}
+              origPath={row.origPath}
+              letter={row.letter}
+              active={keyOf(row) === activeKey}
+              onOpen={(pin) => onOpen(row, pin)}
+              onMenu={(x, y) => onMenu(row, x, y)}
+            />
+          ))}
       </div>
     );
   };
