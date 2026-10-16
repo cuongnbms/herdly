@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { DEFAULT_LINE_H, lineHeight } from "../files/TextView";
 import { latestOnly, STALE } from "../files/latest";
 import { gitDiff } from "../lib/ipc";
@@ -57,6 +57,8 @@ export function DiffViewer({ item, online }: { item: DiffItem; online: boolean }
   const scrollRef = useRef<HTMLDivElement>(null);
   const [rowH, setRowH] = useState(DEFAULT_LINE_H);
   useLayoutEffect(() => setRowH(lineHeight(scrollRef.current)), []);
+  // The widest row in columns (a tab counts as 8): the stylesheet sizes every row to it, so backgrounds span the horizontal scroll.
+  const cols = useMemo(() => rows.reduce((m, r) => Math.max(m, rowText(r).replace(/\t/g, "        ").length), 0), [rows]);
   const virt = useVirtualizer({ count: rows.length, getScrollElement: () => scrollRef.current, estimateSize: () => rowH, overscan: 20 });
   // estimateSize is not part of the virtualizer's measurement cache key, so re-measure on change.
   useLayoutEffect(() => virt.measure(), [rowH]);
@@ -113,7 +115,7 @@ export function DiffViewer({ item, online }: { item: DiffItem; online: boolean }
       {empty && diff.rename !== null && <div className="diff-notice">Renamed, no content changes</div>}
       {empty && diff.rename === null && !modeChanged && <div className="diff-notice">No changes</div>}
       <div ref={scrollRef} className="diff-body">
-        <div style={{ height: virt.getTotalSize(), position: "relative" }}>
+        <div style={{ height: virt.getTotalSize(), position: "relative", "--diff-cols": cols } as CSSProperties}>
           {virt.getVirtualItems().map((v) => {
             const row = rows[v.index];
             if (!row) return null;
