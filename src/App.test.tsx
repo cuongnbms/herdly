@@ -1,7 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue([]), Channel: class {} }));
+// Every command answers [], except those whose real answer is not a list.
+const { answer } = vi.hoisted(() => ({
+  answer: (cmd: string): unknown => (cmd === "files_list_all" ? { paths: [], capped: false, refused: false } : []),
+}));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn((cmd: string) => Promise.resolve(answer(cmd))), Channel: class {} }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ onCloseRequested: vi.fn().mockResolvedValue(() => {}), destroy: vi.fn(), setTheme: vi.fn(), setBadgeCount: vi.fn().mockResolvedValue(undefined) }),
@@ -20,8 +24,13 @@ import { useHistory } from "./store/history";
 import { useFilesPanel } from "./files/panelStore";
 import { useLensSettings } from "./settings/lens";
 import { initialSlots, useQuota } from "./quota/store";
+import { useResolvedRoots } from "./files/useFilesRoot";
 
 describe("App shell", () => {
+  // A Workspace's resolved root outlives a render: one stored by an earlier test would open the
+  // Files panel on a Workspace that has no root of its own.
+  beforeEach(() => useResolvedRoots.setState(useResolvedRoots.getInitialState(), true));
+
   it("renders the sidebar and the empty main area", () => {
     render(<App />);
     expect(screen.getByRole("navigation", { name: "Machines" })).toBeTruthy();
@@ -42,10 +51,10 @@ describe("App shell", () => {
       sessions: [{ name: "default", running: false, status: "unknown", error: null, workspaces: [] }] }]);
     render(<App />);
     const start = await screen.findByRole("button", { name: "Start default session" });
-    (invoke as any).mockImplementation((cmd: string) => (cmd === "session_start" ? Promise.reject({ code: "timeout", message: "did not start" }) : Promise.resolve([])));
+    (invoke as any).mockImplementation((cmd: string) => (cmd === "session_start" ? Promise.reject({ code: "timeout", message: "did not start" }) : Promise.resolve(answer(cmd))));
     fireEvent.click(start);
     expect(await screen.findByText("Could not start the default session: did not start")).toBeTruthy();
-    (invoke as any).mockImplementation(() => Promise.resolve([]));
+    (invoke as any).mockImplementation((cmd: string) => Promise.resolve(answer(cmd)));
   });
 
   it("explains when herdr is missing", async () => {
@@ -109,7 +118,7 @@ describe("App shell", () => {
 
     afterEach(async () => {
       const { invoke } = await import("@tauri-apps/api/core");
-      (invoke as any).mockImplementation(() => Promise.resolve([]));
+      (invoke as any).mockImplementation((cmd: string) => Promise.resolve(answer(cmd)));
       useApp.setState({ machines: {}, order: [], selected: null, tabs: {}, viewed: null });
     });
 
