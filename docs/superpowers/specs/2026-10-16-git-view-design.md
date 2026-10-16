@@ -127,10 +127,15 @@ type DiffScope = { kind: "worktree" } | { kind: "staged" } | { kind: "commit"; s
 type OpenItem =
   | { kind: "agent"; ref: PaneRef }
   | { kind: "file"; ws: WorkspaceRef; root: string; rel: string }
-  | { kind: "diff"; ws: WorkspaceRef; repo: string; path: string; origPath?: string; scope: DiffScope; untracked?: boolean };
+  | { kind: "diff"; ws: WorkspaceRef; root: string; repo: string; prefix: string; path: string; origPath: string | null; scope: DiffScope; untracked: boolean };
 ```
 
-`itemKey` of a Diff item: `"diff:" + machine_id + "|" + repo + "|" + scopeKey + "|" + path`, where
+`root` is the Files panel root the item was opened from (its Files watch refreshes the item) and
+`prefix` is that root's path inside the repository (`git rev-parse --show-prefix`), so "Open
+file" maps `path` to the root without comparing absolute paths that git may have resolved
+through symlinks.
+
+`itemKey` of a Diff item: `"diff:" + wsKey(ws) + "|" + repo + "|" + scopeKey + "|" + path`, where
 `scopeKey` is `worktree`, `staged` or the full sha. So the staged and the working-tree diff of one
 file are two Open items.
 
@@ -208,7 +213,7 @@ must match `^[0-9a-f]{4,64}$` before anything runs.
 --untracked-files=all` in the top level. `None` outside a repository.
 
 ```rust
-struct GitRepo { root: String, head: Option<String> /* full sha; None before the first commit */,
+struct GitRepo { root: String, prefix: String, head: Option<String> /* full sha; None before the first commit */,
   branch: Option<String>, upstream: Option<String>, ahead: u32, behind: u32, entries: Vec<GitEntry>,
   total: u32 }
 struct GitEntry { path: String, orig_path: Option<String>, index: char, worktree: char,
