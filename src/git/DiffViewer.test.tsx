@@ -113,4 +113,19 @@ describe("DiffViewer", () => {
     await screen.findByText("@@ -1,2 +1,2 @@ fn");
     expect(screen.queryByRole("button", { name: "Open file" })).toBeNull();
   });
+  it("reads a commit diff only once the Machine is online, and not again after it succeeded", async () => {
+    const commit = item({ scope: { kind: "commit", sha: "c".repeat(40), short: "ccccccc" } });
+    const { rerender } = render(<DiffViewer item={commit} online={false} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(gitDiff).not.toHaveBeenCalled();
+    expect(screen.getByText("Machine offline")).toBeTruthy();
+    rerender(<DiffViewer item={commit} online />);
+    await screen.findByText("@@ -1,2 +1,2 @@ fn");
+    expect(gitDiff).toHaveBeenCalledTimes(1);
+    rerender(<DiffViewer item={commit} online={false} />);
+    rerender(<DiffViewer item={commit} online />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(gitDiff).toHaveBeenCalledTimes(1);
+  });
+
 });

@@ -43,13 +43,13 @@ export function DiffViewer({ item, online }: { item: DiffItem; online: boolean }
     );
   }, [read, machineId, repo, path, origPath, scope, untracked]);
 
-  // A working-tree or staged diff is read again on each tick while the Machine is up; a commit's never changes.
+  // A working-tree or staged diff is read again on each tick while the Machine is up; a commit's is read until one read succeeds.
   const liveTick = live ? tick : 0;
-  const liveOnline = live ? online : true;
+  const needsRead = live || diff === null;
   useEffect(() => {
-    if (!liveOnline) return;
+    if (!online || !needsRead) return;
     load();
-  }, [load, liveTick, liveOnline]);
+  }, [load, liveTick, online, needsRead]);
 
   const commit = useGit((s) => (scope.kind === "commit" ? s.logs[key]?.commits.find((c) => c.sha === scope.sha) : undefined));
   const rows = useMemo(() => (diff ? diffRows(diff, path) : []), [diff, path]);
