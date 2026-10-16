@@ -209,7 +209,8 @@ must match `^[0-9a-f]{4,64}$` before anything runs.
 
 ```rust
 struct GitRepo { root: String, head: Option<String> /* full sha; None before the first commit */,
-  branch: Option<String>, upstream: Option<String>, ahead: u32, behind: u32, entries: Vec<GitEntry> }
+  branch: Option<String>, upstream: Option<String>, ahead: u32, behind: u32, entries: Vec<GitEntry>,
+  total: u32 }
 struct GitEntry { path: String, orig_path: Option<String>, index: char, worktree: char,
   /* '?' both for untracked */ unmerged: bool }
 ```
