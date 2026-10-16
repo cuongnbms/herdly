@@ -34,7 +34,7 @@ pub struct GitRepo {
     pub behind: u32,
     /// The first `MAX_GIT_ENTRIES` entries, in `git status` order.
     pub entries: Vec<GitEntry>,
-    /// How many entries there are in all.
+    /// How many entries there are in all (a nested repository is not one).
     pub total: u32,
 }
 
@@ -87,6 +87,8 @@ pub(crate) fn parse_repo(out: &str, limit: usize) -> Option<GitRepo> {
                 b.set(key, value);
                 continue;
             }
+            // A nested repository is listed as `? dir/`; the Git view leaves it out.
+            Record::Untracked { path } if path.ends_with('/') => continue,
             Record::Untracked { path } => GitEntry {
                 path: path.to_string(),
                 orig_path: None,
@@ -261,6 +263,24 @@ mod tests {
         );
         assert_eq!((r.total, r.head), (5, None));
         assert_eq!(parse_repo("", 2), None);
+    }
+
+    #[test]
+    fn leaves_out_a_nested_repository() {
+        let out = "/r\0\0# branch.oid (initial)\0# branch.head main\0? nested/\0? f.txt\0";
+        let r = parse_repo(out, 10).unwrap();
+        assert_eq!(r.entries, vec![e("f.txt", '?', '?')]);
+        assert_eq!(r.total, 1);
+    }
+
+    #[tokio::test]
+    async fn a_nested_repository_is_not_listed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        repo(&dir.join("nested"));
+        let r = read(&dir).await.unwrap();
+        assert_eq!((r.entries.clone(), r.total), (vec![], 0));
     }
 
     #[tokio::test]

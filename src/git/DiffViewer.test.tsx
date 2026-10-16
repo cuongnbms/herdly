@@ -75,6 +75,13 @@ describe("DiffViewer", () => {
     expect(await screen.findByText("@@ -1,2 +1,2 @@ fn")).toBeTruthy();
   });
 
+  it("shows old → new only outside the working tree", async () => {
+    render(<DiffViewer item={item({ origPath: "src/old.ts" })} online />);
+    await screen.findByText("@@ -1,2 +1,2 @@ fn");
+    expect(screen.queryByText("src/old.ts → src/a.ts")).toBeNull();
+    expect(screen.getByText("src/a.ts")).toBeTruthy();
+  });
+
   it("reads a working-tree diff again on ⟳ but a commit diff only once", async () => {
     const { unmount } = render(<DiffViewer item={item()} online />);
     await screen.findByText("@@ -1,2 +1,2 @@ fn");

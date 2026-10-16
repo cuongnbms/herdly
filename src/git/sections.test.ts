@@ -11,4 +11,15 @@ describe("sections", () => {
     expect(s.changes.map((r) => [r.path, r.letter, r.untracked])).toEqual([["b.rs", "M", false], ["c.rs", "D", false], ["u.txt", "U", true]]);
     expect(s.staged.every((r) => r.scope === "staged") && s.changes.every((r) => r.scope === "worktree")).toBe(true);
   });
+
+  it("keeps a rename's old path on the staged row only", () => {
+    const s = sections([e("n.rs", "R", "M", { orig_path: "o.rs" })]);
+    expect(s.staged.map((r) => [r.letter, r.origPath])).toEqual([["R", "o.rs"]]);
+    expect(s.changes.map((r) => [r.letter, r.origPath])).toEqual([["M", null]]);
+  });
+
+  it("leaves out a nested repository", () => {
+    const s = sections([e("nested/", "?", "?"), e("u.txt", "?", "?")]);
+    expect(s.changes.map((r) => r.path)).toEqual(["u.txt"]);
+  });
 });

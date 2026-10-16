@@ -85,7 +85,7 @@ export function DiffViewer({ item, online }: { item: DiffItem; online: boolean }
     <div className="diff-view">
       <div className="diff-head">
         <div className="diff-title">
-          <span className="diff-path">{origPath ? `${origPath} → ${path}` : path}</span>
+          <span className="diff-path">{origPath && scope.kind !== "worktree" ? `${origPath} → ${path}` : path}</span>
           {diff && <span className="diff-added">+{diff.added}</span>}
           {diff && <span className="diff-removed">−{diff.removed}</span>}
           {rel !== null && diff && !deleted && (
