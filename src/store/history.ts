@@ -43,6 +43,7 @@ function show(item: OpenItem) {
   try {
     const s = useApp.getState();
     if (item.kind === "agent") s.select(item.ref);
+    else if (item.kind === "diff") s.openDiff(item, { pin: false });
     else s.openFile(item.ws, item.root, item.rel, { pin: false });
   } finally {
     navigating = false;

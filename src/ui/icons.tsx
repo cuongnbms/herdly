@@ -94,6 +94,11 @@ export const FileIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M14 3v5h5" />
   </Icon>
 );
+export const DiffIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M12 4v8M8 8h8M8 18h8" />
+  </Icon>
+);
 export const EyeIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0" />

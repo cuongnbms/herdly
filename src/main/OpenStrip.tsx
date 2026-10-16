@@ -9,9 +9,10 @@ import { closeItemsGuarded } from "../files/closeGuard";
 import { useShallow } from "zustand/react/shallow";
 import { useDrafts } from "../files/drafts";
 import { useApp, viewedItems } from "../store/app";
+import { diffLabel } from "../git/paths";
 import { itemKey, type OpenItem } from "../store/openItems";
 import type { MachineView, PaneView } from "../lib/types";
-import { CloseIcon, FileIcon } from "../ui/icons";
+import { DiffIcon, CloseIcon, FileIcon } from "../ui/icons";
 
 interface Entry {
   key: string;
@@ -20,13 +21,18 @@ interface Entry {
   project: string;
   /** Hover text: where the item lives, then what it is. */
   title: string;
-  /** Set for a pane item (an agent or a terminal); a file item shows an icon instead. */
+  /** Set for a pane item (an agent or a terminal); a file or diff item shows an icon instead. */
   pane?: PaneView;
+  icon?: "file" | "diff";
 }
 
 function entries(machines: Record<string, MachineView>, items: OpenItem[]): Entry[] {
   return items.flatMap((item): Entry[] => {
     const key = itemKey(item);
+    if (item.kind === "diff") {
+      const place = placeOf(machines, item.ws.machine_id, item.ws.session, item.ws.workspace_id);
+      return place ? [{ key, label: diffLabel(item), project: place.project, title: `${place.where} · ${item.path}`, icon: "diff" }] : [];
+    }
     if (item.kind === "file") {
       const place = placeOf(machines, item.ws.machine_id, item.ws.session, item.ws.workspace_id);
       return place ? [{ key, label: item.rel.split("/").pop() ?? item.rel, project: place.project, title: `${place.where} · ${item.rel}` }] : [];
@@ -87,7 +93,7 @@ export const OpenStrip = memo(function OpenStrip() {
 
   return (
     <div className={`files-tabs agent-tabs tabs-${layout}`} role="tablist" aria-label="Open items">
-      {tabs.map(({ key, label, project, title, pane }) => {
+      {tabs.map(({ key, label, project, title, pane, icon }) => {
         const isActive = key === active;
         const unsaved = dirty.includes(key);
         const state = `${isActive ? " active" : ""}${key === preview ? " preview" : ""}`;
@@ -152,6 +158,8 @@ export const OpenStrip = memo(function OpenStrip() {
                   <AgentIcon agent={pane.agent} />
                   <StatusDot status={pane.status} />
                 </>
+              ) : icon === "diff" ? (
+                <DiffIcon className="diff-icon" aria-hidden="true" />
               ) : (
                 <FileIcon aria-hidden="true" />
               )}

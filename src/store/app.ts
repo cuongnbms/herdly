@@ -24,6 +24,7 @@ import {
   setActive,
   type CloseScope,
   type OpenItem,
+  type DiffItem,
   type OpenItems,
 } from "./openItems";
 
@@ -102,6 +103,8 @@ export interface AppState {
   tabs: Record<string, OpenItems>;
   /** Opens a file item (pinned or as the preview) and makes it active, viewing its Session; `selected` is unchanged. Records it in useFiles recent. */
   openFile: (ws: WorkspaceRef, root: string, rel: string, opts: { pin: boolean }) => void;
+  /** Opens a diff item like `openFile` does (viewing its Session), but records nothing in recent files. */
+  openDiff: (item: DiffItem, opts: { pin: boolean }) => void;
   /** After `from` below `root` was renamed to `to`, or deleted (`to` null): its file items and Files state follow. */
   filesMoved: (ws: WorkspaceRef, root: string, from: string, to: string | null) => void;
   /** Activates an item: an agent item selects its Pane; a file item only becomes active. */
@@ -214,6 +217,11 @@ export const useApp = create<AppState>((set, get) => ({
     }));
     useFiles.getState().addRecent(filesKey(ws, root), rel);
   },
+  openDiff: (item, opts) =>
+    set((s) => ({
+      viewed: { machine_id: item.ws.machine_id, session: item.ws.session },
+      tabs: updateTabs(s.tabs, sessionKey(item.ws.machine_id, item.ws.session), (items) => openItem(items, item, opts)),
+    })),
   filesMoved: (ws, root, from, to) => {
     const k = sessionKey(ws.machine_id, ws.session);
     const old = get().tabs[k] ?? NO_ITEMS;
@@ -266,7 +274,7 @@ export const useApp = create<AppState>((set, get) => ({
     const pane = here ?? (last && findPane(s.machines, last) ? last : firstPane(s.machines, ref));
     const active = activeItem({ tabs: s.tabs, viewed: ref });
     // The file stays in front, with the session's pane selected behind it.
-    if (active?.kind === "file") return set({ viewed: ref, selected: pane ?? sel, dashboardOpen: false });
+    if (active && active.kind !== "agent") return set({ viewed: ref, selected: pane ?? sel, dashboardOpen: false });
     if (active?.kind === "agent" && findPane(s.machines, active.ref)) return s.select(active.ref);
     // Reselecting the current pane still closes the dashboard.
     if (pane) s.select(pane);

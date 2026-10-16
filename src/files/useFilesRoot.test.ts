@@ -40,6 +40,9 @@ describe("useFilesRoot", () => {
     expect(second.result.current).toEqual({ path: "/elsewhere", source: "folder" });
   });
 
-  // Needs openDiff and the diff Open item from Task 8, which switches this to `it`.
-  it.todo("follows the root of an active diff item of this Workspace");
+  it("follows the root of an active diff item of this Workspace", () => {
+    const { result } = renderHook(() => useFilesRoot(ref));
+    act(() => useApp.getState().openDiff({ kind: "diff", ws: ref, root: "/other", repo: "/other", prefix: "", path: "a.txt", origPath: null, scope: { kind: "worktree" }, untracked: false }, { pin: false }));
+    expect(result.current?.path).toBe("/other");
+  });
 });

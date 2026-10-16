@@ -31,7 +31,7 @@ export function useFilesRoot(ref: WorkspaceRef): Root | null {
 
   const itemRoot = useApp((s) => {
     const item = activeItem(s);
-    return item?.kind === "file" && wsKey(item.ws) === key ? item.root : null;
+    return item && item.kind !== "agent" && wsKey(item.ws) === key ? item.root : null;
   });
   return itemRoot !== null ? { path: itemRoot, source: resolved?.path === itemRoot ? resolved.source : "folder" } : resolved;
 }

@@ -27,7 +27,7 @@ const m: MachineView = {
 };
 
 const ref = (pane_id: string, session = "default") => ({ machine_id: "local", session, pane_id });
-const open = () => viewedItems(useApp.getState()).items.map((i) => (i.kind === "agent" ? i.ref.pane_id : i.rel));
+const open = () => viewedItems(useApp.getState()).items.map((i) => (i.kind === "agent" ? i.ref.pane_id : i.kind === "file" ? i.rel : i.path));
 // Selects each pane and pins its tab.
 const openPinned = (...ids: string[]) => {
   for (const id of ids) {
@@ -41,6 +41,19 @@ describe("OpenStrip", () => {
     useApp.setState({ machines: {}, order: [], selected: null, tabs: {}, viewed: null });
     useApp.getState().upsertMachine(m);
     useTabLayout.setState({ layout: "one-line" });
+  });
+
+  it("shows a diff item by its label with the path in the tooltip", () => {
+    openPinned("p1");
+    const ws = { machine_id: "local", session: "default", workspace_id: "w2" };
+    useApp.getState().openDiff({ kind: "diff", ws, root: "/r", repo: "/r", prefix: "", path: "src/a.txt", origPath: null, scope: { kind: "staged" }, untracked: false }, { pin: true });
+    render(<OpenStrip />);
+    const tab = screen.getByRole("tab", { name: "a.txt (Index), herdr-app" });
+    const item = tab.closest(".files-tab-item") as HTMLElement;
+    expect(item.getAttribute("title")).toBe("local/default · herdr-app · src/a.txt");
+    expect(item.querySelector("svg.diff-icon")).toBeTruthy();
+    fireEvent.click(tab);
+    expect(viewedItems(useApp.getState()).active).toBe("diff:local/default/w2|/r|staged|src/a.txt");
   });
 
   it("shows nothing until an agent is opened", () => {

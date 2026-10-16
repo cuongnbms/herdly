@@ -109,7 +109,7 @@ export default function App() {
   const setPaletteOpen = useApp((s) => s.setPaletteOpen);
   const dashboardOpen = useApp((s) => s.dashboardOpen);
   const item = useApp(activeItem);
-  const online = useApp((s) => (item?.kind === "file" ? s.machines[item.ws.machine_id]?.state === "connected" : false));
+  const online = useApp((s) => (item && item.kind !== "agent" ? s.machines[item.ws.machine_id]?.state === "connected" : false));
   const chatFontSize = useSettings((s) => s.chatFontSize);
 
   const theme = useTheme((s) => s.theme);
@@ -206,10 +206,11 @@ export default function App() {
       if (plain && k === "e") {
         e.preventDefault();
         if (e.repeat) return;
-        // Flips the shown pane between the Terminal and Chat lenses; a file item has no lens.
+        // Flips the shown pane between the Terminal and Chat lenses; a file or diff item has no lens.
         const s = useApp.getState();
         const sel = selectedPane(s);
-        if (!sel?.pane.agent || activeItem(s)?.kind === "file") return;
+        const shown = activeItem(s);
+        if (!sel?.pane.agent || (shown && shown.kind !== "agent")) return;
         const key = paneKey({ machine_id: sel.machine.id, session: sel.session.name, pane_id: sel.pane.pane_id });
         s.setLens(key, defaultLens(sel.pane, chosenLens(s, key)) === "chat" ? "terminal" : "chat");
       } else if (plain && k === "p") {

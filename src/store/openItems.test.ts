@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MachineView, PaneRef } from "../lib/types";
+import type { DiffScope, MachineView, PaneRef } from "../lib/types";
 import { closeItems, closingKeys, cycleItem, dropFileItems, dropItems, itemKey, renameFileItems, moveItem, NO_ITEMS, openItem, pinItem, pruneItems, setActive, type OpenItem, type OpenItems } from "./openItems";
 
 const ws = (workspace_id = "w1", session = "s", machine_id = "local") => ({ machine_id, session, workspace_id });
@@ -114,5 +114,23 @@ describe("open items", () => {
     expect(closingKeys(s, "right", key("a"))).toEqual([key("b"), key("c")]);
     expect(closingKeys(s, "all", key("a"))).toEqual([key("a"), key("b"), key("c")]);
     expect(closingKeys(s, "one", "nope")).toEqual([]);
+  });
+});
+
+describe("diff items", () => {
+  const ws = { machine_id: "local", session: "default", workspace_id: "w1" };
+  const d = (scope: DiffScope) => ({ kind: "diff" as const, ws, root: "/r", repo: "/r", prefix: "", path: "a.txt", origPath: null, scope, untracked: false });
+
+  it("keys a file's working-tree, staged and commit diffs apart", () => {
+    const keys = [d({ kind: "worktree" }), d({ kind: "staged" }), d({ kind: "commit", sha: "abc1234", short: "abc1234" })].map(itemKey);
+    expect(keys).toEqual(["diff:local/default/w1|/r|worktree|a.txt", "diff:local/default/w1|/r|staged|a.txt", "diff:local/default/w1|/r|abc1234|a.txt"]);
+    let s = openItem(NO_ITEMS, d({ kind: "worktree" }), { pin: false });
+    s = openItem(s, d({ kind: "staged" }), { pin: true });
+    expect(s.items.length).toBe(2);
+  });
+
+  it("a diff of a workspace that is gone is dropped like a file", () => {
+    const s = openItem(NO_ITEMS, d({ kind: "worktree" }), { pin: true });
+    expect(dropItems(s, (i) => i.kind !== "agent" && i.ws.workspace_id === "w1").items).toEqual([]);
   });
 });

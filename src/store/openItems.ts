@@ -1,11 +1,26 @@
-import { paneKey, type MachineView, type PaneRef } from "../lib/types";
-import { filesKey, relUnder } from "../files/store";
+import { paneKey, type DiffScope, type MachineView, type PaneRef } from "../lib/types";
+import { filesKey, relUnder, wsKey } from "../files/store";
 import type { WorkspaceRef } from "../workspaces/folder";
 
 export type CloseScope = "others" | "right" | "all";
 
-/** A pane (an agent or a plain terminal) or a file the user has opened. */
-export type OpenItem = { kind: "agent"; ref: PaneRef } | { kind: "file"; ws: WorkspaceRef; root: string; rel: string };
+/** One file's diff in a Workspace's repository: `repo` is the repository root, `prefix` the Files root's path below it, `path` repository-relative. */
+export type DiffItem = {
+  kind: "diff";
+  ws: WorkspaceRef;
+  root: string;
+  repo: string;
+  prefix: string;
+  path: string;
+  origPath: string | null;
+  scope: DiffScope;
+  untracked: boolean;
+};
+
+/** A pane (an agent or a plain terminal), a file, or a file's diff the user has opened. */
+export type OpenItem = { kind: "agent"; ref: PaneRef } | { kind: "file"; ws: WorkspaceRef; root: string; rel: string } | DiffItem;
+
+export const scopeKey = (s: DiffScope) => (s.kind === "commit" ? s.sha : s.kind);
 
 /** Everything the user has opened, across machines and workspaces, in the order opened. */
 export interface OpenItems {
@@ -22,7 +37,9 @@ export const NO_ITEMS: OpenItems = { items: [], preview: null, active: null };
 export const fileItemKey = (fk: string, rel: string) => "file:" + fk + "|" + rel;
 
 export function itemKey(item: OpenItem): string {
-  return item.kind === "agent" ? "agent:" + paneKey(item.ref) : fileItemKey(filesKey(item.ws, item.root), item.rel);
+  if (item.kind === "agent") return "agent:" + paneKey(item.ref);
+  if (item.kind === "diff") return "diff:" + wsKey(item.ws) + "|" + item.repo + "|" + scopeKey(item.scope) + "|" + item.path;
+  return fileItemKey(filesKey(item.ws, item.root), item.rel);
 }
 
 export function findItem(s: OpenItems, key: string): OpenItem | undefined {

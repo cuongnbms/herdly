@@ -220,3 +220,78 @@ export type BtwEvent =
   | { kind: "started"; fork_id: string }
   | { kind: "done"; fork_id: string; cache_read: number; input: number }
   | { kind: "error"; message: string };
+
+/** One changed path of `git status`, mirroring the Rust `GitEntry`. */
+export interface GitEntry {
+  /** Repository-relative, as git prints it. */
+  path: string;
+  orig_path: string | null;
+  /** `git status`'s two columns (`.` = unchanged); untracked is `?` in both. One character. */
+  index: string;
+  worktree: string;
+  unmerged: boolean;
+}
+
+export interface GitRepo {
+  root: string;
+  /** `""` at the top, else ends in `/`. */
+  prefix: string;
+  head: string | null;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  entries: GitEntry[];
+  total: number;
+}
+
+export interface GitCommit {
+  sha: string;
+  short: string;
+  author: string;
+  /** Author time, seconds since the epoch. */
+  time: number;
+  parents: number;
+  subject: string;
+  body: string;
+}
+
+export interface GitCommitFile {
+  /** The first character of diff-tree's status (`R100` is `R`). */
+  status: string;
+  path: string;
+  orig_path: string | null;
+}
+
+/** What a diff compares; `short` is for labels only, the Machine ignores it. */
+export type DiffScope = { kind: "worktree" } | { kind: "staged" } | { kind: "commit"; sha: string; short: string };
+
+export type LineKind = "context" | "add" | "del" | "combined";
+
+export interface DiffLine {
+  kind: LineKind;
+  old_no: number | null;
+  new_no: number | null;
+  /** Without the one-char marker; a `combined` line keeps its two marker chars. */
+  text: string;
+  no_newline: boolean;
+}
+
+export interface Hunk {
+  /** The whole `@@ … @@ heading` line. */
+  header: string;
+  old_start: number;
+  new_start: number;
+  lines: DiffLine[];
+}
+
+export interface FileDiff {
+  binary: boolean;
+  old_mode: string | null;
+  new_mode: string | null;
+  rename: string | null;
+  added: number;
+  removed: number;
+  hunks: Hunk[];
+  truncated: boolean;
+}
