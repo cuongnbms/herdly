@@ -188,22 +188,25 @@ pub async fn git_diff(
     untracked: bool,
 ) -> AppResult<FileDiff> {
     // (git subcommand and flags, revision arguments, whether exit 1 means "differs")
-    let (cmd, revs, no_index): (&str, Vec<String>, bool) = match scope {
+    // `use_orig`: the table's pathspec is `-- <orig> <path>` only for Staged and a commit with a
+    // parent.
+    let (cmd, revs, no_index, use_orig): (&str, Vec<String>, bool, bool) = match scope {
         _ if untracked && matches!(scope, DiffScope::Worktree) => {
-            ("diff --no-index", Vec::new(), true)
+            ("diff --no-index", Vec::new(), true, false)
         }
-        DiffScope::Worktree => ("diff -M", Vec::new(), false),
-        DiffScope::Staged => ("diff --cached -M", Vec::new(), false),
+        DiffScope::Worktree => ("diff -M", Vec::new(), false, false),
+        DiffScope::Staged => ("diff --cached -M", Vec::new(), false, true),
         DiffScope::Commit { sha } => {
             if !valid_sha(sha) {
                 return Err(AppError::new("invalid", "not a commit id"));
             }
             if has_parent(t, root, sha).await? {
-                ("diff -M", vec![format!("{sha}^"), sha.clone()], false)
+                ("diff -M", vec![format!("{sha}^"), sha.clone()], false, true)
             } else {
                 (
                     "diff-tree -M --root --no-commit-id",
                     vec![sha.clone()],
+                    false,
                     false,
                 )
             }
@@ -213,14 +216,16 @@ pub async fn git_diff(
     args.push("--");
     if no_index {
         args.push("/dev/null");
-    } else if let Some(orig) = orig_path {
+    } else if let (true, Some(orig)) = (use_orig, orig_path) {
         args.push(orig);
     }
     args.push(path);
 
     // The numstat run is the error gate; it is not piped, so its status is git's.
     let stat = run(t, root, &format!("{GIT} {cmd} --numstat \"$@\""), &args).await?;
-    if stat.status != 0 && !(no_index && stat.status == 1) {
+    // --no-index exits 1 for "differs", but then always prints a row; none means git failed.
+    let differs = no_index && stat.status == 1 && !stat.stdout.trim().is_empty();
+    if stat.status != 0 && !differs {
         return Err(failed(&stat));
     }
 
@@ -242,18 +247,25 @@ pub async fn git_diff(
     }
     let mut d = parse_patch(&String::from_utf8_lossy(bytes));
     d.truncated = truncated;
-    if let Some(line) = stat.stdout.lines().next() {
+    // A conflicted file has one row per parent; the counts are their sum.
+    let (mut added, mut removed, mut rows) = (0u32, 0u32, 0);
+    for line in stat.stdout.lines() {
         let mut f = line.splitn(3, '\t');
         match (f.next(), f.next()) {
             (Some("-"), Some("-")) => d.binary = true,
             (Some(a), Some(r)) => {
-                if let (Ok(a), Ok(r)) = (a.parse(), r.parse()) {
-                    d.added = a;
-                    d.removed = r;
+                if let (Ok(a), Ok(r)) = (a.parse::<u32>(), r.parse::<u32>()) {
+                    added += a;
+                    removed += r;
+                    rows += 1;
                 }
             }
             _ => {}
         }
+    }
+    if rows > 0 {
+        d.added = added;
+        d.removed = removed;
     }
     Ok(d)
 }
@@ -401,6 +413,49 @@ mod tests {
             .iter()
             .flat_map(|h| &h.lines)
             .all(|l| l.text == line));
+    }
+
+    #[tokio::test]
+    async fn a_vanished_untracked_file_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        let e = git_diff(
+            &LocalTransport,
+            &dir.to_string_lossy(),
+            "gone.txt",
+            None,
+            &DiffScope::Worktree,
+            true,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(e.code, "git");
+    }
+
+    #[tokio::test]
+    async fn a_conflicted_file_is_a_combined_diff_with_summed_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        git(&dir, &["checkout", "-q", "-b", "other"]);
+        std::fs::write(dir.join("a.txt"), "theirs").unwrap();
+        git(&dir, &["commit", "-q", "-am", "theirs"]);
+        git(&dir, &["checkout", "-q", "main"]);
+        std::fs::write(dir.join("a.txt"), "ours").unwrap();
+        git(&dir, &["commit", "-q", "-am", "ours"]);
+        let _ = std::process::Command::new("git")
+            .args(["merge", "-q", "other"])
+            .current_dir(&dir)
+            .output();
+        let d = diff(&dir, "a.txt", None, DiffScope::Worktree, false).await;
+        assert!(d
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .any(|l| l.kind == LineKind::Combined));
+        assert!(d.added > 0, "{}", d.added);
     }
 
     #[tokio::test]
