@@ -24,6 +24,7 @@ import { FilesPanel } from "./FilesPanel";
 import { useFilesPanel } from "./panelStore";
 import { useFilesBus } from "./bus";
 import { useFiles } from "./store";
+import { useResolvedRoots } from "./useFilesRoot";
 import { DEFAULT_HIDDEN_FOLDERS, useHiddenFolders } from "../settings/hiddenFolders";
 
 const ref = { machine_id: "local", session: "default", workspace_id: "w1" };
@@ -34,6 +35,7 @@ const select = (pane_id: string) => act(() => useApp.getState().select({ machine
 
 describe("FilesPanel", () => {
   beforeEach(() => {
+    useResolvedRoots.setState(useResolvedRoots.getInitialState(), true);
     localStorage.clear();
     channels.length = 0;
     useFiles.setState(useFiles.getInitialState(), true);

@@ -12,9 +12,10 @@ import { useFilesBus } from "./bus";
 import { FileTree } from "./FileTree";
 import { GoToFile } from "./GoToFile";
 import { useFilesPanel } from "./panelStore";
-import { panelRoot, shownWorkspace, type Root } from "./root";
+import { shownWorkspace } from "./root";
 import { filesKey, useFiles, wsKey } from "./store";
 import { sessionKey } from "../sidebar/groups";
+import { useFilesRoot } from "./useFilesRoot";
 import { useWatch } from "./useWatch";
 
 /** The file tree of the active item's Workspace (else the selected Pane's), under the agent list. */
@@ -59,23 +60,7 @@ function WorkspacePanel({ wsRef: ref, section }: { wsRef: WorkspaceRef; section:
   const actions = useActions();
   const folder = useFolder(ref);
   const ws = machine?.sessions.find((s) => s.name === ref.session)?.workspaces.find((w) => w.workspace_id === ref.workspace_id);
-  // The root of the active file item, when it belongs to this Workspace: its tree is what the file sits in.
-  const itemRoot = useApp((s) => {
-    const item = activeItem(s);
-    return item?.kind === "file" && wsKey(item.ws) === wsKey(ref) ? item.root : null;
-  });
-
-  // Resolved when the Workspace is first shown, and again only when its folder is set: a cd in
-  // the pane must not move the root under the open files.
-  const resolve = () => panelRoot(ref, useApp.getState());
-  const [resolved, setResolved] = useState<Root | null>(resolve);
-  const folderSeen = useRef(folder);
-  useEffect(() => {
-    if (folderSeen.current === folder) return;
-    folderSeen.current = folder;
-    setResolved(resolve());
-  }, [folder]);
-  const root: Root | null = itemRoot !== null ? { path: itemRoot, source: resolved?.path === itemRoot ? resolved.source : "folder" } : resolved;
+  const root = useFilesRoot(ref);
 
   const [showHeavy, setShowHeavy] = useState(false);
   const [missing, setMissing] = useState<string | null>(null);
