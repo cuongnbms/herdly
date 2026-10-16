@@ -16,6 +16,7 @@ import { guardFileDrops } from "./sidebar/dnd";
 import { AgentList } from "./agents/AgentList";
 import { AgentDashboard } from "./dashboard/AgentDashboard";
 import { FilesPanel } from "./files/FilesPanel";
+import { GitPanel } from "./git/GitPanel";
 import { useFilesPanel } from "./files/panelStore";
 import { openNewTabHere } from "./agents/newTabShortcut";
 import { paneKey } from "./lib/types";
@@ -261,6 +262,7 @@ export default function App() {
       <aside className="agents" aria-label="Agents">
         <AgentList />
         <FilesPanel />
+        <GitPanel />
         <ResizeHandle column="agents" label="Resize Agents" />
       </aside>
       <main className="main">
