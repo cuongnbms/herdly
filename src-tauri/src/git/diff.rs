@@ -3,7 +3,7 @@ use super::log::has_parent;
 use super::{failed, run, run_bytes, valid_sha, GIT};
 use crate::error::{AppError, AppResult};
 use crate::files::MAX_TEXT_BYTES;
-use crate::transport::Transport;
+use crate::transport::{ExecOutput, Transport};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -177,8 +177,37 @@ pub(crate) fn parse_patch(text: &str) -> FileDiff {
     d
 }
 
+/// Flags on every diff run so that user config cannot change the patch: `diff.external` and
+/// `.gitattributes` command drivers (`--no-ext-diff`), and `color.diff=always`, which beats
+/// `color.ui=never` (`--no-color`).
+const PLAIN: &str = "--no-ext-diff --no-color";
+
+/// The Worktree numstat run. `git status` decides the form at read time, so a tab opened on an
+/// untracked file follows it once it is staged or committed: a `? ` record (after `git rm
+/// --cached` it follows a `1 D.` one) takes `--no-index` against `/dev/null`, anything else
+/// `diff -M`. With `hinted` (the caller's untracked hint), no record and no file on disk is a
+/// vanished untracked file: an error, not "No changes". The first stdout line names the form
+/// (`untracked` or `tracked`).
+fn worktree_numstat_script(hinted: bool) -> String {
+    let vanished = if hinted {
+        "if [ -z \"$s\" ] && [ ! -e \"$1\" ] && [ ! -L \"$1\" ]; then \
+         printf 'no such file: %s\\n' \"$1\" >&2; exit 1; fi; "
+    } else {
+        ""
+    };
+    format!(
+        "s=$({GIT} status --porcelain=v2 -z --untracked-files=all -- \"$1\" | tr '\\0' '\\n'); \
+         {vanished}\
+         if printf '%s\\n' \"$s\" | grep -q '^? '; then echo untracked; \
+         exec {GIT} diff --no-index {PLAIN} --numstat -- /dev/null \"$1\"; fi; \
+         echo tracked; exec {GIT} diff -M {PLAIN} --numstat -- \"$1\""
+    )
+}
+
 /// One file's diff in one scope. The patch is cut on a line at `MAX_TEXT_BYTES`; the counts
-/// come from `--numstat`, so they stay true for a cut diff.
+/// come from `--numstat`, so they stay true for a cut diff. For Worktree, `untracked` is only a
+/// hint: whether the file is untracked is read again from `git status` (see
+/// `worktree_numstat_script`).
 pub async fn git_diff(
     t: &dyn Transport,
     root: &str,
@@ -190,11 +219,20 @@ pub async fn git_diff(
     // (git subcommand and flags, revision arguments, whether exit 1 means "differs")
     // `use_orig`: the table's pathspec is `-- <orig> <path>` only for Staged and a commit with a
     // parent.
+    let mut worktree_stat = None;
     let (cmd, revs, no_index, use_orig): (&str, Vec<String>, bool, bool) = match scope {
-        _ if untracked && matches!(scope, DiffScope::Worktree) => {
-            ("diff --no-index", Vec::new(), true, false)
+        DiffScope::Worktree => {
+            let o = run(t, root, &worktree_numstat_script(untracked), &[path]).await?;
+            let (form, rest) = o.stdout.split_once('\n').unwrap_or((&o.stdout, ""));
+            let no_index = form == "untracked";
+            let stdout = rest.to_string();
+            worktree_stat = Some(ExecOutput { stdout, ..o });
+            if no_index {
+                ("diff --no-index", Vec::new(), true, false)
+            } else {
+                ("diff -M", Vec::new(), false, false)
+            }
         }
-        DiffScope::Worktree => ("diff -M", Vec::new(), false, false),
         DiffScope::Staged => ("diff --cached -M", Vec::new(), false, true),
         DiffScope::Commit { sha } => {
             if !valid_sha(sha) {
@@ -222,7 +260,18 @@ pub async fn git_diff(
     args.push(path);
 
     // The numstat run is the error gate; it is not piped, so its status is git's.
-    let stat = run(t, root, &format!("{GIT} {cmd} --numstat \"$@\""), &args).await?;
+    let stat = match worktree_stat {
+        Some(o) => o,
+        None => {
+            run(
+                t,
+                root,
+                &format!("{GIT} {cmd} {PLAIN} --numstat \"$@\""),
+                &args,
+            )
+            .await?
+        }
+    };
     // --no-index exits 1 for "differs", but then always prints a row; none means git failed.
     let differs = no_index && stat.status == 1 && !stat.stdout.trim().is_empty();
     if stat.status != 0 && !differs {
@@ -234,7 +283,7 @@ pub async fn git_diff(
     let n = (MAX_TEXT_BYTES + 1).to_string();
     let mut patch_args = vec![n.as_str()];
     patch_args.extend(&args);
-    let script = format!("n=$1; shift; {GIT} {cmd} -p \"$@\" | head -c \"$n\"");
+    let script = format!("n=$1; shift; {GIT} {cmd} {PLAIN} -p \"$@\" | head -c \"$n\"");
     let o = run_bytes(t, root, &script, &patch_args).await?;
     let mut bytes = o.stdout.as_slice();
     let truncated = bytes.len() > MAX_TEXT_BYTES;
@@ -413,6 +462,77 @@ mod tests {
             .iter()
             .flat_map(|h| &h.lines)
             .all(|l| l.text == line));
+    }
+
+    #[tokio::test]
+    async fn user_diff_config_does_not_change_the_patch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        git(&dir, &["config", "diff.external", "false"]);
+        git(&dir, &["config", "color.diff", "always"]);
+        std::fs::write(dir.join("a.txt"), "staged\n").unwrap();
+        git(&dir, &["add", "a.txt"]);
+        std::fs::write(dir.join("a.txt"), "staged\nthen edited\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "n\n").unwrap();
+        let w = diff(&dir, "a.txt", None, DiffScope::Worktree, false).await;
+        assert_eq!(
+            texts(&w),
+            vec![
+                (LineKind::Context, "staged".into()),
+                (LineKind::Add, "then edited".into())
+            ]
+        );
+        let s = diff(&dir, "a.txt", None, DiffScope::Staged, false).await;
+        assert_eq!(s.hunks.len(), 1);
+        assert_eq!(s.hunks[0].header, "@@ -1 +1 @@");
+        let u = diff(&dir, "new.txt", None, DiffScope::Worktree, true).await;
+        assert_eq!(texts(&u), vec![(LineKind::Add, "n".into())]);
+        git(&dir, &["commit", "-q", "-m", "two"]);
+        let sha = git_out(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let c = diff(&dir, "a.txt", None, DiffScope::Commit { sha }, false).await;
+        assert_eq!(c.hunks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_untracked_file_that_gets_staged_diffs_against_the_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        std::fs::write(dir.join("n.txt"), "one\ntwo\n").unwrap();
+        let u = diff(&dir, "n.txt", None, DiffScope::Worktree, true).await;
+        assert_eq!((u.added, u.removed), (2, 0));
+        git(&dir, &["add", "n.txt"]);
+        let staged = diff(&dir, "n.txt", None, DiffScope::Worktree, true).await;
+        assert_eq!((staged.added, staged.removed), (0, 0));
+        assert!(staged.hunks.is_empty() && staged.new_mode.is_none());
+        std::fs::write(dir.join("n.txt"), "one\ntwo\nthree\n").unwrap();
+        let edited = diff(&dir, "n.txt", None, DiffScope::Worktree, true).await;
+        assert_eq!((edited.added, edited.removed), (1, 0));
+        assert_eq!(
+            texts(&edited),
+            vec![
+                (LineKind::Context, "one".into()),
+                (LineKind::Context, "two".into()),
+                (LineKind::Add, "three".into())
+            ]
+        );
+        git(&dir, &["commit", "-q", "-am", "add n"]);
+        let committed = diff(&dir, "n.txt", None, DiffScope::Worktree, true).await;
+        assert_eq!((committed.added, committed.hunks.len()), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn a_tracked_file_that_becomes_untracked_diffs_as_new() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        git(&dir, &["rm", "-q", "--cached", "a.txt"]);
+        let d = diff(&dir, "a.txt", None, DiffScope::Worktree, false).await;
+        assert_eq!(
+            (d.added, d.removed, d.new_mode.as_deref()),
+            (1, 0, Some("100644"))
+        );
     }
 
     #[tokio::test]
