@@ -74,6 +74,7 @@ fn parse_hunk_header(line: &str) -> Option<(usize, u32, u32)> {
     Some((ats - 1, old?, new?))
 }
 
+/// Expects the patch of a single file (Task 5 always diffs one path).
 pub(crate) fn parse_patch(text: &str) -> FileDiff {
     let mut d = FileDiff {
         binary: false,
@@ -137,7 +138,7 @@ pub(crate) fn parse_patch(text: &str) -> FileDiff {
         };
         if parents > 1 {
             let markers = line.get(..parents).unwrap_or(line);
-            let numbered = !markers.bytes().all(|b| b == b'-');
+            let numbered = !markers.contains('-');
             push(LineKind::Combined, None, numbered.then_some(new_no), line);
             if numbered {
                 new_no += 1;
@@ -283,6 +284,17 @@ mod tests {
                 (LineKind::Del, Some(2), None, "a\r"),
                 (LineKind::Add, None, Some(2), "b\r")
             ]
+        );
+    }
+
+    #[test]
+    fn skips_numbers_for_lines_removed_in_any_column() {
+        let p = "diff --cc f\n--- a/f\n+++ b/f\n@@@ -1,5 -1,5 +1,5 @@@\n  a\n--b\n -THEIRS\n +OURS\n  d\n++x\n  e\n";
+        let d = parse_patch(p);
+        let nos: Vec<Option<u32>> = d.hunks[0].lines.iter().map(|l| l.new_no).collect();
+        assert_eq!(
+            nos,
+            [Some(1), None, None, Some(2), Some(3), Some(4), Some(5)]
         );
     }
 
