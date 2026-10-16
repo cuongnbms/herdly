@@ -97,12 +97,15 @@ describe("GitPanel", () => {
   });
 
   it("keeps the last result and reads nothing while offline", async () => {
-    render(<GitPanel />);
+    const { container } = render(<GitPanel />);
     await screen.findByText("main");
     vi.mocked(gitRepo).mockClear();
     act(() => useApp.setState({ machines: machines("disconnected") }));
     act(() => void window.dispatchEvent(new Event("focus")));
     expect(screen.getByText("Offline")).toBeTruthy();
+    // The banner stays at full opacity: it is not inside the dimmed body.
+    expect(screen.getByText("Offline").closest(".git-body")).toBeNull();
+    expect(container.querySelector(".git-ws.offline > .git-body")).toBeTruthy();
     expect(screen.getByText("main")).toBeTruthy();
     expect(gitRepo).not.toHaveBeenCalled();
   });

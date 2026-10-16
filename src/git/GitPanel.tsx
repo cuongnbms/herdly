@@ -138,7 +138,7 @@ function WorkspaceGit({ wsRef: ref }: { wsRef: WorkspaceRef }) {
 
   const showError = error !== null;
   return (
-    <div className={online ? "git-body" : "git-body offline"}>
+    <div className={online ? "git-ws" : "git-ws offline"}>
       <header className="git-head">
         <span className="git-repo-name">{baseName(repo?.root ?? rootPath)}</span>
         {repo && (
@@ -154,43 +154,46 @@ function WorkspaceGit({ wsRef: ref }: { wsRef: WorkspaceRef }) {
           <RefreshIcon />
         </button>
       </header>
+      {/* Outside the dimmed head and body, so it stays at full opacity. */}
       {!online && <div className="git-banner">Offline</div>}
-      {showError && (
-        <div className="git-empty">
-          {error.message}
-          <button type="button" onClick={error.retry}>
-            Retry
-          </button>
-        </div>
-      )}
-      {!showError && repo === null && rootKey !== null && loaded && (
-        <div className="git-empty">
-          Not a git repository
-          <div className="git-row-dir">{rootPath}</div>
-        </div>
-      )}
-      {repo && key !== null && (
-        <>
-          <ChangeList
-            repo={repo}
-            activeKey={active}
-            keyOf={(r: Row) => keyOfDiff(r.path, { kind: r.scope })}
-            onOpen={(r, pin) => openDiff(r.path, r.origPath, { kind: r.scope }, r.untracked, pin)}
-            onMenu={(r, x, y) => setMenu({ x, y, kind: "file", path: r.path, letter: r.letter })}
-          />
-          <CommitList
-            machineId={machineId}
-            repo={repo}
-            repoKey={key}
-            activeKey={active}
-            keyOf={(c: GitCommit, f: GitCommitFile) => keyOfDiff(f.path, { kind: "commit", sha: c.sha, short: c.short })}
-            onOpen={(c, f, pin) => openDiff(f.path, f.orig_path, { kind: "commit", sha: c.sha, short: c.short }, false, pin)}
-            onLoadMore={() => loadLog(log?.commits.length ?? 0)}
-            onMenu={(c, x, y) => setMenu({ x, y, kind: "commit", commit: c })}
-            onFileMenu={(_c, f, x, y) => setMenu({ x, y, kind: "file", path: f.path, letter: letterOf(f.status) })}
-          />
-        </>
-      )}
+      <div className="git-body">
+        {showError && (
+          <div className="git-empty">
+            {error.message}
+            <button type="button" onClick={error.retry}>
+              Retry
+            </button>
+          </div>
+        )}
+        {!showError && repo === null && rootKey !== null && loaded && (
+          <div className="git-empty">
+            Not a git repository
+            <div className="git-row-dir">{rootPath}</div>
+          </div>
+        )}
+        {repo && key !== null && (
+          <>
+            <ChangeList
+              repo={repo}
+              activeKey={active}
+              keyOf={(r: Row) => keyOfDiff(r.path, { kind: r.scope })}
+              onOpen={(r, pin) => openDiff(r.path, r.origPath, { kind: r.scope }, r.untracked, pin)}
+              onMenu={(r, x, y) => setMenu({ x, y, kind: "file", path: r.path, letter: r.letter })}
+            />
+            <CommitList
+              machineId={machineId}
+              repo={repo}
+              repoKey={key}
+              activeKey={active}
+              keyOf={(c: GitCommit, f: GitCommitFile) => keyOfDiff(f.path, { kind: "commit", sha: c.sha, short: c.short })}
+              onOpen={(c, f, pin) => openDiff(f.path, f.orig_path, { kind: "commit", sha: c.sha, short: c.short }, false, pin)}
+              onLoadMore={() => loadLog(log?.commits.length ?? 0)}
+              onMenu={(c, x, y) => setMenu({ x, y, kind: "commit", commit: c })}
+              onFileMenu={(_c, f, x, y) => setMenu({ x, y, kind: "file", path: f.path, letter: letterOf(f.status) })}
+            />
+          </>
+        )}
+      </div>
       {menu && createPortal(<ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={() => setMenu(null)} />, document.body)}
     </div>
   );
