@@ -1,4 +1,9 @@
 //! Diff types and a hand-written parser for git's unified and combined diffs.
+use super::log::has_parent;
+use super::{failed, run, run_bytes, valid_sha, GIT};
+use crate::error::{AppError, AppResult};
+use crate::files::MAX_TEXT_BYTES;
+use crate::transport::Transport;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -172,9 +177,255 @@ pub(crate) fn parse_patch(text: &str) -> FileDiff {
     d
 }
 
+/// One file's diff in one scope. The patch is cut on a line at `MAX_TEXT_BYTES`; the counts
+/// come from `--numstat`, so they stay true for a cut diff.
+pub async fn git_diff(
+    t: &dyn Transport,
+    root: &str,
+    path: &str,
+    orig_path: Option<&str>,
+    scope: &DiffScope,
+    untracked: bool,
+) -> AppResult<FileDiff> {
+    // (git subcommand and flags, revision arguments, whether exit 1 means "differs")
+    let (cmd, revs, no_index): (&str, Vec<String>, bool) = match scope {
+        _ if untracked && matches!(scope, DiffScope::Worktree) => {
+            ("diff --no-index", Vec::new(), true)
+        }
+        DiffScope::Worktree => ("diff -M", Vec::new(), false),
+        DiffScope::Staged => ("diff --cached -M", Vec::new(), false),
+        DiffScope::Commit { sha } => {
+            if !valid_sha(sha) {
+                return Err(AppError::new("invalid", "not a commit id"));
+            }
+            if has_parent(t, root, sha).await? {
+                ("diff -M", vec![format!("{sha}^"), sha.clone()], false)
+            } else {
+                (
+                    "diff-tree -M --root --no-commit-id",
+                    vec![sha.clone()],
+                    false,
+                )
+            }
+        }
+    };
+    let mut args: Vec<&str> = revs.iter().map(String::as_str).collect();
+    args.push("--");
+    if no_index {
+        args.push("/dev/null");
+    } else if let Some(orig) = orig_path {
+        args.push(orig);
+    }
+    args.push(path);
+
+    // The numstat run is the error gate; it is not piped, so its status is git's.
+    let stat = run(t, root, &format!("{GIT} {cmd} --numstat \"$@\""), &args).await?;
+    if stat.status != 0 && !(no_index && stat.status == 1) {
+        return Err(failed(&stat));
+    }
+
+    // One byte over the limit tells "exactly the limit" from "more". The patch is read as raw
+    // bytes: a lossy decode would change the length at a cut multi-byte character.
+    let n = (MAX_TEXT_BYTES + 1).to_string();
+    let mut patch_args = vec![n.as_str()];
+    patch_args.extend(&args);
+    let script = format!("n=$1; shift; {GIT} {cmd} -p \"$@\" | head -c \"$n\"");
+    let o = run_bytes(t, root, &script, &patch_args).await?;
+    let mut bytes = o.stdout.as_slice();
+    let truncated = bytes.len() > MAX_TEXT_BYTES;
+    if truncated {
+        bytes = &bytes[..MAX_TEXT_BYTES];
+        bytes = match bytes.iter().rposition(|&b| b == b'\n') {
+            Some(i) => &bytes[..=i],
+            None => &[],
+        };
+    }
+    let mut d = parse_patch(&String::from_utf8_lossy(bytes));
+    d.truncated = truncated;
+    if let Some(line) = stat.stdout.lines().next() {
+        let mut f = line.splitn(3, '\t');
+        match (f.next(), f.next()) {
+            (Some("-"), Some("-")) => d.binary = true,
+            (Some(a), Some(r)) => {
+                if let (Ok(a), Ok(r)) = (a.parse(), r.parse()) {
+                    d.added = a;
+                    d.removed = r;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::git::testutil::{git, git_out, repo};
+    use crate::transport::local::LocalTransport;
+    use std::path::Path;
+
+    async fn diff(
+        dir: &Path,
+        path: &str,
+        orig: Option<&str>,
+        scope: DiffScope,
+        untracked: bool,
+    ) -> FileDiff {
+        git_diff(
+            &LocalTransport,
+            &dir.to_string_lossy(),
+            path,
+            orig,
+            &scope,
+            untracked,
+        )
+        .await
+        .unwrap()
+    }
+    fn texts(d: &FileDiff) -> Vec<(LineKind, String)> {
+        d.hunks
+            .iter()
+            .flat_map(|h| h.lines.iter().map(|l| (l.kind, l.text.clone())))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn worktree_staged_and_untracked_scopes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        std::fs::write(dir.join("a.txt"), "staged\n").unwrap();
+        git(&dir, &["add", "a.txt"]);
+        std::fs::write(dir.join("a.txt"), "staged\nthen edited\n").unwrap();
+        std::fs::write(dir.join("tệp mới.txt"), "x\ny\n").unwrap();
+        let w = diff(&dir, "a.txt", None, DiffScope::Worktree, false).await;
+        assert_eq!(
+            texts(&w),
+            vec![
+                (LineKind::Context, "staged".into()),
+                (LineKind::Add, "then edited".into())
+            ]
+        );
+        let s = diff(&dir, "a.txt", None, DiffScope::Staged, false).await;
+        assert_eq!((s.added, s.removed), (1, 1));
+        assert!(
+            s.hunks[0].lines[0].no_newline,
+            "init wrote `a` with no newline"
+        );
+        let u = diff(&dir, "tệp mới.txt", None, DiffScope::Worktree, true).await;
+        assert_eq!(
+            (u.added, u.removed, u.new_mode.as_deref()),
+            (2, 0, Some("100644"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_staged_rename_and_a_commit_diff_against_the_first_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        git(&dir, &["mv", "a.txt", "b.txt"]);
+        let r = diff(&dir, "b.txt", Some("a.txt"), DiffScope::Staged, false).await;
+        assert_eq!((r.rename.as_deref(), r.hunks.len()), (Some("a.txt"), 0));
+        git(&dir, &["commit", "-q", "-m", "rename"]);
+        git(&dir, &["checkout", "-q", "-b", "side"]);
+        std::fs::write(dir.join("side.txt"), "s\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "side"]);
+        git(&dir, &["checkout", "-q", "main"]);
+        git(&dir, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
+        let sha = git_out(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let m = diff(&dir, "side.txt", None, DiffScope::Commit { sha }, false).await;
+        assert_eq!(texts(&m), vec![(LineKind::Add, "s".into())]);
+    }
+
+    #[tokio::test]
+    async fn the_root_commit_binary_and_mode_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        let root = git_out(&dir, &["rev-list", "--max-parents=0", "HEAD"])
+            .trim()
+            .to_string();
+        let d = diff(&dir, "a.txt", None, DiffScope::Commit { sha: root }, false).await;
+        assert_eq!(d.added, 1);
+        std::fs::write(dir.join("b.bin"), [0u8, 1, 2, 0, 255]).unwrap();
+        git(&dir, &["add", "b.bin"]);
+        assert!(
+            diff(&dir, "b.bin", None, DiffScope::Staged, false)
+                .await
+                .binary
+        );
+        git(&dir, &["update-index", "--chmod=+x", "a.txt"]);
+        let m = diff(&dir, "a.txt", None, DiffScope::Staged, false).await;
+        assert_eq!(
+            (m.old_mode.as_deref(), m.new_mode.as_deref(), m.hunks.len()),
+            (Some("100644"), Some("100755"), 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn cuts_a_huge_diff_on_a_line_and_keeps_the_true_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        let line = "x".repeat(99);
+        let big: String = (0..30_000).map(|_| format!("{line}\n")).collect();
+        std::fs::write(dir.join("big.txt"), &big).unwrap();
+        let d = diff(&dir, "big.txt", None, DiffScope::Worktree, true).await;
+        assert!(d.truncated);
+        assert_eq!(d.added, 30_000);
+        let shown: usize = d.hunks.iter().map(|h| h.lines.len()).sum();
+        assert!(shown < 30_000 && shown > 15_000, "{shown}");
+        assert!(d
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .all(|l| l.text == line));
+    }
+
+    #[tokio::test]
+    async fn cuts_multibyte_text_on_a_line_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        let line = "ệ".repeat(33);
+        let big: String = (0..30_000).map(|_| format!("{line}\n")).collect();
+        std::fs::write(dir.join("big.txt"), &big).unwrap();
+        let d = diff(&dir, "big.txt", None, DiffScope::Worktree, true).await;
+        assert!(d.truncated);
+        assert!(d
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .all(|l| l.text == line));
+    }
+
+    #[tokio::test]
+    async fn refuses_a_bad_sha_and_reports_a_vanished_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("r");
+        repo(&dir);
+        let d = dir.to_string_lossy();
+        let bad = DiffScope::Commit {
+            sha: "HEAD~1".into(),
+        };
+        let e = git_diff(&LocalTransport, &d, "a.txt", None, &bad, false)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.code, "invalid");
+        let gone = DiffScope::Commit {
+            sha: "deadbeef".into(),
+        };
+        let e = git_diff(&LocalTransport, &d, "a.txt", None, &gone, false)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.code, "git");
+    }
 
     fn kinds(d: &FileDiff) -> Vec<(LineKind, Option<u32>, Option<u32>, &str)> {
         d.hunks

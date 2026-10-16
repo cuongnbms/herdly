@@ -89,6 +89,7 @@ pub fn run() {
             commands::git_repo,
             commands::git_log,
             commands::git_commit_files,
+            commands::git_diff,
             commands::files_list_dir,
             commands::files_list_all,
             commands::files_read,

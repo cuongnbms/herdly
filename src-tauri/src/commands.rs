@@ -14,7 +14,7 @@ use crate::{
         watch::{watch_refusal, WatchEvent},
         watch_manager::{FilesWatch, WatchSink},
     },
-    git::{self, GitCommit, GitCommitFile, GitRepo, GitStatus},
+    git::{self, DiffScope, FileDiff, GitCommit, GitCommitFile, GitRepo, GitStatus},
     herdr::rpc,
     layout::LayoutStore,
     machines::{self, MachineManager},
@@ -836,6 +836,22 @@ pub async fn git_commit_files(
     let root = files_root(&mgr, &machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     git::git_commit_files(&*t, &root, &sha).await
+}
+
+/// One file's diff in one scope, capped on the Machine.
+#[tauri::command]
+pub async fn git_diff(
+    mgr: Mgr<'_>,
+    machine_id: String,
+    root: String,
+    path: String,
+    orig_path: Option<String>,
+    scope: DiffScope,
+    untracked: bool,
+) -> Result<FileDiff, AppError> {
+    let root = files_root(&mgr, &machine_id, &root)?;
+    let t = mgr.transport(&machine_id)?;
+    git::git_diff(&*t, &root, &path, orig_path.as_deref(), &scope, untracked).await
 }
 
 #[tauri::command]

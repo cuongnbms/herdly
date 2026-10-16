@@ -74,13 +74,19 @@ fn parse_log(out: &str) -> Vec<GitCommit> {
         .collect()
 }
 
-/// Whether `sha` has a first parent (`rev-parse --verify -q <sha>^` succeeds).
+/// Whether `sha` has a first parent. With `-q`, exit 1 means no such revision (a root commit's
+/// `sha^`); any other failure, such as a repository that is gone, is an error.
 pub(crate) async fn has_parent(t: &dyn Transport, root: &str, sha: &str) -> AppResult<bool> {
     if !valid_sha(sha) {
         return Err(AppError::new("invalid", "not a commit id"));
     }
     let script = format!("{GIT} rev-parse --verify -q \"$1^\" >/dev/null");
-    Ok(run(t, root, &script, &[sha]).await?.status == 0)
+    let o = run(t, root, &script, &[sha]).await?;
+    match o.status {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => Err(failed(&o)),
+    }
 }
 
 /// The files `sha` changed against its first parent (the whole tree for a root commit).

@@ -1,13 +1,13 @@
 //! Read-only git for the Git view and the Chat lens status line (ADR 0010).
 use crate::error::{AppError, AppResult};
-use crate::transport::{exec, ExecOutput, Transport};
+use crate::transport::{exec, exec_bytes, ExecBytes, ExecOutput, Transport};
 
 mod diff;
 mod log;
 mod repo;
 mod status;
 
-pub use diff::{DiffLine, DiffScope, FileDiff, Hunk, LineKind};
+pub use diff::{git_diff, DiffLine, DiffScope, FileDiff, Hunk, LineKind};
 pub use log::*;
 pub use repo::*;
 
@@ -40,6 +40,18 @@ pub(crate) async fn run(
     script: &str,
     args: &[&str],
 ) -> AppResult<ExecOutput> {
+    let o = exec(t, &argv(dir, script, args)).await?;
+    if o.status == 97 {
+        return Err(not_found(dir));
+    }
+    Ok(o)
+}
+
+fn not_found(dir: &str) -> AppError {
+    AppError::new("not_found", format!("no such folder: {dir}"))
+}
+
+fn argv(dir: &str, script: &str, args: &[&str]) -> Vec<String> {
     let mut argv = vec![
         "sh".to_string(),
         "-c".into(),
@@ -48,9 +60,19 @@ pub(crate) async fn run(
         dir.to_string(),
     ];
     argv.extend(args.iter().map(|a| a.to_string()));
-    let o = exec(t, &argv).await?;
+    argv
+}
+
+/// `run` with stdout kept as raw bytes, for output whose length must be exact.
+pub(crate) async fn run_bytes(
+    t: &dyn Transport,
+    dir: &str,
+    script: &str,
+    args: &[&str],
+) -> AppResult<ExecBytes> {
+    let o = exec_bytes(t, &argv(dir, script, args)).await?;
     if o.status == 97 {
-        return Err(AppError::new("not_found", format!("no such folder: {dir}")));
+        return Err(not_found(dir));
     }
     Ok(o)
 }
