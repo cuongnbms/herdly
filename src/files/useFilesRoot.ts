@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { create } from "zustand";
 import { activeItem, useApp } from "../store/app";
 import { useFolder } from "../workspaces/folder";
@@ -6,27 +6,27 @@ import type { WorkspaceRef } from "../workspaces/folder";
 import { panelRoot, type Root } from "./root";
 import { wsKey } from "./store";
 
-/** The root each Workspace was resolved to, keyed by `wsKey`: shared by the Files and Git panels. */
-export const useResolvedRoots = create<{ roots: Record<string, Root | null> }>(() => ({ roots: {} }));
+/** The root each Workspace was resolved to, with the folder it was resolved under, keyed by `wsKey`: shared by the Files and Git panels. */
+export const useResolvedRoots = create<{ roots: Record<string, { root: Root; folder: string | null }> }>(() => ({ roots: {} }));
 
 /**
  * The root of `ref`'s Workspace. The first caller resolves it, and it is resolved again only
- * when the Workspace folder is set: a cd in the pane must not move the root under the open files.
+ * when the Workspace folder differs from the one it was resolved under: a cd in the pane must
+ * not move the root under the open files. A Workspace with no root is retried on every mount.
  * The root of the active file item of this Workspace overrides it.
  */
 export function useFilesRoot(ref: WorkspaceRef): Root | null {
   const key = wsKey(ref);
   const folder = useFolder(ref);
-  const stored = useResolvedRoots((s) => s.roots[key]);
-  // Until the first caller has stored it, resolve for this render.
-  const resolved: Root | null = stored !== undefined ? stored : panelRoot(ref, useApp.getState());
-  const folderSeen = useRef(folder);
+  const entry = useResolvedRoots((s) => s.roots[key]);
+  const fresh = entry !== undefined && entry.folder === folder;
+  // Until a caller has stored it, resolve for this render.
+  const resolved: Root | null = fresh ? entry.root : panelRoot(ref, useApp.getState());
   useEffect(() => {
-    const roots = useResolvedRoots.getState().roots;
-    const changed = folderSeen.current !== folder;
-    folderSeen.current = folder;
-    if (!changed && key in roots) return;
-    useResolvedRoots.setState({ roots: { ...roots, [key]: panelRoot(ref, useApp.getState()) } });
+    const cur = useResolvedRoots.getState().roots[key];
+    if (cur !== undefined && cur.folder === folder) return;
+    const root = panelRoot(ref, useApp.getState());
+    if (root) useResolvedRoots.setState((s) => ({ roots: { ...s.roots, [key]: { root, folder } } }));
   }, [key, folder]);
 
   const itemRoot = useApp((s) => {

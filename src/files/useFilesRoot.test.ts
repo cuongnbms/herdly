@@ -31,6 +31,15 @@ describe("useFilesRoot", () => {
     expect(result.current).toEqual({ path: "/elsewhere", source: "folder" });
   });
 
+  it("resolves again for a remounted Workspace whose folder was set while it was away", () => {
+    const first = renderHook(() => useFilesRoot(ref));
+    expect(first.result.current).toEqual({ path: "/r", source: "pane" });
+    first.unmount();
+    act(() => setFolder(ref, "/elsewhere"));
+    const second = renderHook(() => useFilesRoot(ref));
+    expect(second.result.current).toEqual({ path: "/elsewhere", source: "folder" });
+  });
+
   // Needs openDiff and the diff Open item from Task 8, which switches this to `it`.
   it.todo("follows the root of an active diff item of this Workspace");
 });
