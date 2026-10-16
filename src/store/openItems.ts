@@ -53,11 +53,13 @@ const keepKey = (items: OpenItem[], key: string | null) => (key && indexOfKey(it
 /** Opens `item` (pinned or as the preview) and makes it active. */
 export function openItem(s: OpenItems, item: OpenItem, { pin }: { pin: boolean }): OpenItems {
   const key = itemKey(item);
-  if (indexOfKey(s.items, key) >= 0) return { ...s, preview: pin && s.preview === key ? null : s.preview, active: key };
+  const at = indexOfKey(s.items, key);
+  // The key leaves out fields that can change (a diff's `untracked`), so the stored item is replaced.
+  if (at >= 0) return { items: s.items.map((i, n) => (n === at ? item : i)), preview: pin && s.preview === key ? null : s.preview, active: key };
   // A pinned open promotes the current preview, so it stays.
   if (pin) return { items: [...s.items, item], preview: null, active: key };
-  const at = s.preview ? indexOfKey(s.items, s.preview) : -1;
-  const items = at >= 0 ? s.items.map((i, n) => (n === at ? item : i)) : [...s.items, item];
+  const prev = s.preview ? indexOfKey(s.items, s.preview) : -1;
+  const items = prev >= 0 ? s.items.map((i, n) => (n === prev ? item : i)) : [...s.items, item];
   return { items, preview: key, active: key };
 }
 

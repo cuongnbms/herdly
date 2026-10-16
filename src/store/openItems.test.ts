@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DiffScope, MachineView, PaneRef } from "../lib/types";
-import { closeItems, closingKeys, cycleItem, dropFileItems, dropItems, itemKey, renameFileItems, moveItem, NO_ITEMS, openItem, pinItem, pruneItems, setActive, type OpenItem, type OpenItems } from "./openItems";
+import { closeItems, closingKeys, cycleItem, dropFileItems, dropItems, itemKey, renameFileItems, moveItem, NO_ITEMS, openItem, pinItem, pruneItems, setActive, type DiffItem, type OpenItem, type OpenItems } from "./openItems";
 
 const ws = (workspace_id = "w1", session = "s", machine_id = "local") => ({ machine_id, session, workspace_id });
 const a = (pane_id: string, session = "s", machine_id = "local"): OpenItem => ({ kind: "agent", ref: { machine_id, session, pane_id } as PaneRef });
@@ -127,6 +127,13 @@ describe("diff items", () => {
     let s = openItem(NO_ITEMS, d({ kind: "worktree" }), { pin: false });
     s = openItem(s, d({ kind: "staged" }), { pin: true });
     expect(s.items.length).toBe(2);
+  });
+
+  it("re-opening a diff replaces the stored item, keeping its place", () => {
+    let s = openItem(NO_ITEMS, { ...d({ kind: "worktree" }), untracked: true }, peek);
+    s = openItem(s, { ...d({ kind: "worktree" }), untracked: false }, peek);
+    expect(s.items.length).toBe(1);
+    expect((s.items[0] as DiffItem).untracked).toBe(false);
   });
 
   it("a diff of a workspace that is gone is dropped like a file", () => {
