@@ -2,9 +2,11 @@
 use crate::error::{AppError, AppResult};
 use crate::transport::{exec, ExecOutput, Transport};
 
+mod log;
 mod repo;
 mod status;
 
+pub use log::*;
 pub use repo::*;
 
 pub use status::{git_status, GitChange, GitStatus, MAX_CHANGES};

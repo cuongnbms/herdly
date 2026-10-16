@@ -87,6 +87,8 @@ pub fn run() {
             commands::complete_dirs,
             commands::chat_git_status,
             commands::git_repo,
+            commands::git_log,
+            commands::git_commit_files,
             commands::files_list_dir,
             commands::files_list_all,
             commands::files_read,

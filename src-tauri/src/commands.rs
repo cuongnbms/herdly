@@ -14,7 +14,7 @@ use crate::{
         watch::{watch_refusal, WatchEvent},
         watch_manager::{FilesWatch, WatchSink},
     },
-    git::{self, GitRepo, GitStatus},
+    git::{self, GitCommit, GitCommitFile, GitRepo, GitStatus},
     herdr::rpc,
     layout::LayoutStore,
     machines::{self, MachineManager},
@@ -809,6 +809,33 @@ pub async fn git_repo(
     let dir = files_root(&mgr, &machine_id, &dir)?;
     let t = mgr.transport(&machine_id)?;
     git::git_repo(&*t, &dir).await
+}
+
+/// A page of the commit history of the repository at a Files root.
+#[tauri::command]
+pub async fn git_log(
+    mgr: Mgr<'_>,
+    machine_id: String,
+    root: String,
+    skip: u32,
+    limit: u32,
+) -> Result<Vec<GitCommit>, AppError> {
+    let root = files_root(&mgr, &machine_id, &root)?;
+    let t = mgr.transport(&machine_id)?;
+    git::git_log(&*t, &root, skip, limit).await
+}
+
+/// The files one commit changed.
+#[tauri::command]
+pub async fn git_commit_files(
+    mgr: Mgr<'_>,
+    machine_id: String,
+    root: String,
+    sha: String,
+) -> Result<Vec<GitCommitFile>, AppError> {
+    let root = files_root(&mgr, &machine_id, &root)?;
+    let t = mgr.transport(&machine_id)?;
+    git::git_commit_files(&*t, &root, &sha).await
 }
 
 #[tauri::command]
