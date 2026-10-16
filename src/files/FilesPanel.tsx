@@ -11,22 +11,17 @@ import type { WorkspaceRef } from "../workspaces/folder";
 import { useFilesBus } from "./bus";
 import { FileTree } from "./FileTree";
 import { GoToFile } from "./GoToFile";
-import { filesHidden, useFilesPanel } from "./panelStore";
+import { useFilesPanel } from "./panelStore";
 import { panelRoot, shownWorkspace, type Root } from "./root";
 import { filesKey, useFiles, wsKey } from "./store";
 import { sessionKey } from "../sidebar/groups";
 import { useWatch } from "./useWatch";
-
-/** Each half of the agents column keeps at least this many pixels. */
-const HALF_MIN = 120;
 
 /** The file tree of the active item's Workspace (else the selected Pane's), under the agent list. */
 export function FilesPanel() {
   const pinned = useFilesPanel((s) => s.pinned);
   const ws = useApp(useShallow((s) => shownWorkspace(s, pinned)));
   const view = useFilesPanel((s) => s.view);
-  const collapsed = useFilesPanel(filesHidden);
-  const height = useFilesPanel((s) => s.height);
   const section = useRef<HTMLElement>(null);
   const focusTick = useFilesPanel((s) => s.focusTick);
   const gotoTick = useFilesPanel((s) => s.gotoTick);
@@ -35,45 +30,21 @@ export function FilesPanel() {
     if (!ws) useFilesPanel.getState().handled("both");
   }, [ws, focusTick, gotoTick]);
 
-  const startDrag = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const column = section.current?.parentElement;
-    if (!column) return;
-    const y0 = e.clientY;
-    const h0 = section.current!.getBoundingClientRect().height;
-    const max = Math.max(HALF_MIN, column.getBoundingClientRect().height - HALF_MIN);
-    const move = (ev: MouseEvent) => useFilesPanel.getState().setHeight(Math.min(max, Math.max(HALF_MIN, h0 - (ev.clientY - y0))));
-    const up = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-    };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-  };
-
   return (
     <>
-      {view === "split" && !collapsed && <div className="files-split" role="separator" aria-orientation="horizontal" onMouseDown={startDrag} />}
-      {/* Kept mounted in the agents view: its watch is what reloads the open file. */}
-      <section
-        ref={section}
-        className={"files-panel" + (view === "files" ? " full" : collapsed ? " collapsed" : "")}
-        aria-label="Files"
-        hidden={view === "agents"}
-        style={view === "split" && !collapsed ? { flexBasis: height === null ? "50%" : `${height}px` } : undefined}
-      >
+      {/* Kept mounted outside the files view: its watch is what reloads the open file. */}
+      <section ref={section} className="files-panel full" aria-label="Files" hidden={view !== "files"}>
         {ws ? (
           <ActionsProvider>
             <WorkspacePanel key={wsKey(ws)} wsRef={ws} section={section} />
           </ActionsProvider>
         ) : (
           <>
-            <header className="files-panel-head" onClick={toggleFromHead}>
+            <header className="files-panel-head">
               <span className="files-title">FILES</span>
               <span className="files-head-spacer" />
-              <CollapseButton />
             </header>
-            {!collapsed && <div className="files-empty">Select an agent to browse its files</div>}
+            <div className="files-empty">Select an agent to browse its files</div>
           </>
         )}
       </section>
@@ -81,34 +52,9 @@ export function FilesPanel() {
   );
 }
 
-/** In the split view a click on the header toggles the panel, except on the header's own buttons. */
-function toggleFromHead(e: React.MouseEvent) {
-  if ((e.target as Element).closest("button")) return;
-  const panel = useFilesPanel.getState();
-  if (panel.view === "split") panel.setCollapsed(!panel.collapsed);
-}
-
-/** Only the split view collapses: the files view is the panel alone. */
-function CollapseButton() {
-  const collapsed = useFilesPanel((s) => s.collapsed);
-  const split = useFilesPanel((s) => s.view === "split");
-  if (!split) return null;
-  return (
-    <button
-      type="button"
-      className={"icon-btn files-collapse" + (collapsed ? " collapsed" : "")}
-      aria-label={collapsed ? "Expand files" : "Collapse files"}
-      aria-expanded={!collapsed}
-      onClick={() => useFilesPanel.getState().setCollapsed(!collapsed)}
-    >
-      <ChevronIcon />
-    </button>
-  );
-}
-
 function WorkspacePanel({ wsRef: ref, section }: { wsRef: WorkspaceRef; section: React.RefObject<HTMLElement | null> }) {
   const [reloadKey, setReloadKey] = useState(0);
-  const collapsed = useFilesPanel(filesHidden);
+  const view = useFilesPanel((s) => s.view);
   const machine = useApp((s) => s.machines[ref.machine_id]);
   const actions = useActions();
   const folder = useFolder(ref);
@@ -188,7 +134,7 @@ function WorkspacePanel({ wsRef: ref, section }: { wsRef: WorkspaceRef; section:
   const label = ws?.label ?? ref.workspace_id;
   return (
     <>
-      <header className="files-panel-head" onClick={toggleFromHead}>
+      <header className="files-panel-head">
         <span className="files-title" title={root?.path}>
           {`FILES · ${label}`}
         </span>
@@ -212,37 +158,34 @@ function WorkspacePanel({ wsRef: ref, section }: { wsRef: WorkspaceRef; section:
             <RefreshIcon />
           </button>
         )}
-        <CollapseButton />
       </header>
-      {!collapsed && root?.source === "pane" && !rootMissing && (
+      {root?.source === "pane" && !rootMissing && (
         <div className="files-set-folder-row">
           <button type="button" className="btn btn-xs files-set-folder" title={FOLDER_HINT} onClick={() => setFolder(ref, root.path)}>
             Set as workspace folder
           </button>
         </div>
       )}
-      {!collapsed && !online && <div className="files-banner files-banner-offline">Machine offline</div>}
+      {!online && <div className="files-banner files-banner-offline">Machine offline</div>}
       {root && !rootMissing ? (
-        // Kept mounted while collapsed or hidden: its watch is what reloads the open file.
+        // Kept mounted while hidden: its watch is what reloads the open file.
         <PanelBody
           key={filesKey(ref, root.path)}
           wsRef={ref}
           root={root.path}
           online={online}
           showHeavy={showHeavy}
-          hidden={collapsed}
+          hidden={view !== "files"}
           gotoRef={goto}
           onMissing={() => onlineRef.current && setMissing(root.path)}
         />
       ) : (
-        !collapsed && (
-          <div className="files-empty">
+        <div className="files-empty">
             <p>{root ? "This folder no longer exists." : "This workspace has no folder."}</p>
             <button type="button" className="btn" title={FOLDER_HINT} onClick={() => actions?.changeFolder(ref, folder ?? (ws ? suggestFolder(ws) : ""))}>
               Change folder…
             </button>
-          </div>
-        )
+        </div>
       )}
     </>
   );
@@ -286,7 +229,6 @@ function WorkspacePicker({ wsRef: ref, workspaces }: { wsRef: WorkspaceRef; work
         <ChevronIcon />
       </button>
       {at && (
-        // Clicks stay out of the header, which would toggle the panel.
         <div className="overlay clear" onMouseDown={() => setAt(null)} onClick={(e) => e.stopPropagation()}>
           <ul className="ctx-menu files-ws-menu" role="menu" aria-label="Workspaces" style={{ left: at.x, top: at.y }} onMouseDown={(e) => e.stopPropagation()}>
             {choices.map((c) => (
@@ -309,7 +251,7 @@ interface BodyProps {
   root: string;
   online: boolean;
   showHeavy: boolean;
-  /** The panel is collapsed: nothing shows, but the listing and the watch go on. */
+  /** The panel is hidden: nothing shows, but the listing and the watch go on. */
   hidden: boolean;
   gotoRef: React.RefObject<HTMLInputElement | null>;
   onMissing(): void;

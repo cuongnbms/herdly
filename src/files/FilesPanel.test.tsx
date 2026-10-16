@@ -60,12 +60,19 @@ describe("FilesPanel", () => {
     useFilesPanel.setState({ view: "agents" });
     const { container } = render(<FilesPanel />);
     expect((container.querySelector("section.files-panel") as HTMLElement).hidden).toBe(true);
-    expect(container.querySelector(".files-split")).toBeNull();
     expect(container.querySelector(".files-panel-body")).toBeTruthy();
   });
 
+  it("hides the panel in the git view but keeps it mounted", () => {
+    useFilesPanel.setState({ view: "git" });
+    const { container } = render(<FilesPanel />);
+    expect((container.querySelector("section.files-panel") as HTMLElement).hidden).toBe(true);
+    expect(container.querySelector(".files-panel-body")).toBeTruthy();
+    expect(screen.queryByRole("separator")).toBeNull();
+  });
+
   it("fills the column in the files view, with no divider or collapse", () => {
-    useFilesPanel.setState({ view: "files", collapsed: true });
+    useFilesPanel.setState({ view: "files" });
     const { container } = render(<FilesPanel />);
     const section = screen.getByRole("region", { name: "Files" });
     expect(section.classList.contains("full")).toBe(true);
@@ -140,7 +147,6 @@ describe("FilesPanel", () => {
     expect(screen.queryByRole("menu")).toBeNull();
     expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("files_list_all", expect.objectContaining({ root: "/o" })));
-    expect(useFilesPanel.getState().collapsed).toBe(false);
     select("p2");
     select("p1");
     expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
@@ -178,31 +184,11 @@ describe("FilesPanel", () => {
     expect(viewedItems(useApp.getState()).preview).toBe("file:local/default/w1|/r|a.md");
   });
 
-  it("collapse hides the tree; focusTree expands it and focuses the tree", async () => {
-    render(<FilesPanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Collapse files" }));
-    expect(screen.queryByRole("tree")).toBeNull();
-    expect(screen.getByRole("button", { name: "Expand files" })).toBeTruthy();
-    act(() => useFilesPanel.getState().focusTree());
-    await waitFor(() => expect(document.activeElement?.closest("[role=tree]")).toBeTruthy());
-  });
-
-  it("clicking the header toggles the panel; its buttons keep their own action", async () => {
-    render(<FilesPanel />);
-    fireEvent.click(screen.getByText("FILES · app"));
-    expect(useFilesPanel.getState().collapsed).toBe(true);
-    fireEvent.click(screen.getByText("FILES · app"));
-    expect(useFilesPanel.getState().collapsed).toBe(false);
-    fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
-    expect(useFilesPanel.getState().collapsed).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Collapse files" }));
-    expect(useFilesPanel.getState().collapsed).toBe(true);
-  });
-
   it("focusGoto expands the panel and focuses Go to file", async () => {
-    useFilesPanel.getState().setCollapsed(true);
+    useFilesPanel.setState({ view: "git" });
     render(<FilesPanel />);
     act(() => useFilesPanel.getState().focusGoto());
+    expect(useFilesPanel.getState().view).toBe("files");
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("combobox")));
   });
 
@@ -225,21 +211,6 @@ describe("FilesPanel", () => {
     act(() => useApp.getState().select({ machine_id: "local", session: "default", pane_id: "p1" }));
     await screen.findByRole("tree");
     expect(document.activeElement?.closest("[role=tree]")).toBeNull();
-  });
-
-  it("dragging the splitter sets a height clamped to keep both halves", () => {
-    render(
-      <div style={{ height: 600 }}>
-        <FilesPanel />
-      </div>,
-    );
-    const sep = screen.getByRole("separator");
-    expect(sep.getAttribute("aria-orientation")).toBe("horizontal");
-    fireEvent.mouseDown(sep, { clientY: 300 });
-    fireEvent.mouseMove(window, { clientY: 290 });
-    fireEvent.mouseUp(window);
-    expect(useFilesPanel.getState().height).not.toBeNull();
-    expect(useFilesPanel.getState().height!).toBeGreaterThanOrEqual(120);
   });
 
   it("offers Change folder… when the root does not exist", async () => {
@@ -403,8 +374,8 @@ describe("FilesPanel", () => {
       });
     });
 
-    it("keeps watching while collapsed and hands the changes to the open file", async () => {
-      useFilesPanel.getState().setCollapsed(true);
+    it("keeps watching in the git view and hands the changes to the open file", async () => {
+      useFilesPanel.setState({ view: "git" });
       render(<FilesPanel />);
       await waitFor(() => expect(watch()).toBeTruthy());
       expect(screen.queryByRole("tree")).toBeNull();

@@ -20,10 +20,12 @@ async function freshWithApp() {
 describe("useFilesPanel view", () => {
   beforeEach(() => localStorage.clear());
 
-  it("starts split when nothing is stored, and on a stored value it does not know", async () => {
-    expect((await fresh()).getState().view).toBe("split");
+  it("starts in files when nothing is stored, and on a stored value it does not know, including the old split", async () => {
+    expect((await fresh()).getState().view).toBe("files");
     localStorage.setItem(VIEW_KEY, "sideways");
-    expect((await fresh()).getState().view).toBe("split");
+    expect((await fresh()).getState().view).toBe("files");
+    localStorage.setItem(VIEW_KEY, "split");
+    expect((await fresh()).getState().view).toBe("files");
   });
 
   it("remembers the chosen view across launches", async () => {
@@ -32,14 +34,21 @@ describe("useFilesPanel view", () => {
     expect((await fresh()).getState().view).toBe("files");
   });
 
-  it("brings the files into view when focus is asked for from the agents view", async () => {
+  it("brings the files into view when focus is asked for from the agents or git view", async () => {
     const panel = await fresh();
-    panel.getState().setView("agents");
-    panel.getState().focusTree();
-    expect(panel.getState().view).toBe("split");
-    panel.getState().setView("agents");
-    panel.getState().focusGoto();
-    expect(panel.getState().view).toBe("split");
+    for (const from of ["agents", "git"] as const) {
+      panel.getState().setView(from);
+      panel.getState().focusTree();
+      expect(panel.getState().view).toBe("files");
+      panel.getState().setView(from);
+      panel.getState().focusGoto();
+      expect(panel.getState().view).toBe("files");
+    }
+  });
+
+  it("remembers the git view", async () => {
+    (await fresh()).getState().setView("git");
+    expect((await fresh()).getState().view).toBe("git");
   });
 
   it("keeps the files view when focus is asked for", async () => {
@@ -91,16 +100,16 @@ describe("useFilesPanel view per session", () => {
     panel.getState().setView("agents");
     panel.getState().focusTree();
     view("local", "a");
-    expect(panel.getState().view).toBe("split");
+    expect(panel.getState().view).toBe("files");
   });
 
   it("ignores stored views it does not know", async () => {
-    localStorage.setItem(VIEWS_KEY, JSON.stringify({ "local/a": "sideways", "local/b": "files" }));
+    localStorage.setItem(VIEWS_KEY, JSON.stringify({ "local/a": "split", "local/b": "git" }));
     const { panel, view } = await freshWithApp();
     view("local", "a");
-    expect(panel.getState().view).toBe("split");
-    view("local", "b");
     expect(panel.getState().view).toBe("files");
+    view("local", "b");
+    expect(panel.getState().view).toBe("git");
   });
 });
 

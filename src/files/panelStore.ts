@@ -3,15 +3,15 @@ import { sessionKey } from "../sidebar/groups";
 import { useApp } from "../store/app";
 import type { WorkspaceRef } from "../workspaces/folder";
 
-/** What the agents column shows: the agent list, the Files panel, or both split. */
-export type SidebarView = "agents" | "files" | "split";
+/** What the agents column shows: the agent list, the Files panel, or the Git view. */
+export type SidebarView = "agents" | "files" | "git";
 
 /** The last chosen view: what a Session that never chose one shows. */
 const VIEW_KEY = "herdly:sidebar-view";
 const VIEWS_KEY = "herdly:sidebar-views";
 const PINNED_KEY = "herdly:files-pinned";
 
-const isView = (v: unknown): v is SidebarView => v === "agents" || v === "files" || v === "split";
+const isView = (v: unknown): v is SidebarView => v === "agents" || v === "files" || v === "git";
 
 function storedView(): SidebarView {
   try {
@@ -20,7 +20,7 @@ function storedView(): SidebarView {
   } catch {
     /* storage unavailable */
   }
-  return "split";
+  return "files";
 }
 
 function storedViews(): Record<string, SidebarView> {
@@ -65,9 +65,6 @@ interface FilesPanelState {
   view: SidebarView;
   /** The view chosen in each Session (by sessionKey). Persisted. */
   views: Record<string, SidebarView>;
-  /** Pixels of the panel; null is half the column. */
-  height: number | null;
-  collapsed: boolean;
   /** Bumped to focus the tree. */
   focusTick: number;
   /** Bumped to focus Go to file. */
@@ -79,13 +76,11 @@ interface FilesPanelState {
   pinned: Record<string, string>;
   /** Chooses the view for the viewed Session, and for Sessions that never chose one. */
   setView(view: SidebarView): void;
-  setHeight(px: number): void;
   /** Pins a Workspace for its Session; a null workspace_id goes back to following the active item. */
   pinWorkspace(ref: Omit<WorkspaceRef, "workspace_id"> & { workspace_id: string | null }): void;
-  setCollapsed(on: boolean): void;
-  /** Expands the panel (out of the agents view) and asks for the tree's focus. */
+  /** Shows the Files view (unpersisted) and asks for the tree's focus. */
   focusTree(): void;
-  /** Expands the panel (out of the agents view) and asks for Go to file's focus. */
+  /** Shows the Files view (unpersisted) and asks for Go to file's focus. */
   focusGoto(): void;
   /** Marks the pending focus requests as acted on. */
   handled(which: "tree" | "goto" | "both"): void;
@@ -95,8 +90,6 @@ interface FilesPanelState {
 export const useFilesPanel = create<FilesPanelState>((set) => ({
   view: storedView(),
   views: storedViews(),
-  height: null,
-  collapsed: false,
   focusTick: 0,
   gotoTick: 0,
   focusHandled: 0,
@@ -110,7 +103,6 @@ export const useFilesPanel = create<FilesPanelState>((set) => ({
       store(VIEWS_KEY, JSON.stringify(views));
       return { view, views };
     }),
-  setHeight: (height) => set({ height }),
   pinWorkspace: ({ machine_id, session, workspace_id }) =>
     set((s) => {
       const { [sessionKey(machine_id, session)]: _, ...rest } = s.pinned;
@@ -118,9 +110,8 @@ export const useFilesPanel = create<FilesPanelState>((set) => ({
       store(PINNED_KEY, JSON.stringify(pinned));
       return { pinned };
     }),
-  setCollapsed: (collapsed) => set({ collapsed }),
-  focusTree: () => set((s) => ({ collapsed: false, view: shownView(s.view), focusTick: s.focusTick + 1 })),
-  focusGoto: () => set((s) => ({ collapsed: false, view: shownView(s.view), gotoTick: s.gotoTick + 1 })),
+  focusTree: () => set((s) => ({ view: "files", focusTick: s.focusTick + 1 })),
+  focusGoto: () => set((s) => ({ view: "files", gotoTick: s.gotoTick + 1 })),
   handled: (which) =>
     set((s) => ({
       focusHandled: which === "goto" ? s.focusHandled : s.focusTick,
@@ -134,11 +125,3 @@ useApp.subscribe((s, prev) => {
   if (key === viewedKey(prev.viewed)) return;
   useFilesPanel.setState({ view: (key !== null && useFilesPanel.getState().views[key]) || storedView() });
 });
-
-/** A view that shows the Files panel: the agents view gives way to split, unpersisted. */
-function shownView(view: SidebarView): SidebarView {
-  return view === "agents" ? "split" : view;
-}
-
-/** The Files panel shows nothing: hidden by the agents view, or collapsed in split. */
-export const filesHidden = (s: Pick<FilesPanelState, "view" | "collapsed">) => s.view === "agents" || (s.view === "split" && s.collapsed);

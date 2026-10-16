@@ -9,7 +9,7 @@ import type { MenuItem } from "../sidebar/ContextMenu";
 import { ActionsProvider, useActions } from "../sidebar/actions";
 import { Chevron } from "../sidebar/Sidebar";
 import { StatusDot } from "../sidebar/StatusDot";
-import { BotIcon, CloseIcon, FolderIcon, FolderOpenIcon, PencilIcon, PlusIcon, SplitDownIcon, SplitRightIcon, TabPlusIcon, TerminalIcon } from "../ui/icons";
+import { BotIcon, CloseIcon, FolderIcon, GitBranchIcon, FolderOpenIcon, PencilIcon, PlusIcon, SplitDownIcon, SplitRightIcon, TabPlusIcon, TerminalIcon } from "../ui/icons";
 import { folderName, setFolder, suggestFolder, useFolder } from "../workspaces/folder";
 import { AgentIcon } from "./AgentIcon";
 import { AGENTS, openAgentTab, type Agent } from "./openAgentTab";
@@ -238,10 +238,10 @@ function NewWorkspaceButton({ machineId, session }: { machineId: string; session
 const VIEWS: { view: SidebarView; label: string; Icon: typeof BotIcon }[] = [
   { view: "agents", label: "Agents", Icon: BotIcon },
   { view: "files", label: "Files", Icon: FolderIcon },
-  { view: "split", label: "Split", Icon: SplitDownIcon },
+  { view: "git", label: "Git", Icon: GitBranchIcon },
 ];
 
-/** What the column shows: the agent list, the Files panel, or both. */
+/** What the column shows: the agent list, the Files panel, or the Git view. */
 function ViewSwitch() {
   const view = useFilesPanel((s) => s.view);
   return (
@@ -264,7 +264,7 @@ function ViewSwitch() {
 // Takes no props: memo keeps it out of App's re-renders; it reads the store itself.
 export const AgentList = memo(function AgentList() {
   const viewed = useApp((s) => s.viewed);
-  const listHidden = useFilesPanel((s) => s.view === "files");
+  const listHidden = useFilesPanel((s) => s.view !== "agents");
   const machineLabel = useApp((s) => (s.viewed ? s.machines[s.viewed.machine_id]?.label : undefined));
   const session = useApp((s) =>
     s.viewed ? s.machines[s.viewed.machine_id]?.sessions.find((x) => x.name === s.viewed!.session) : undefined,
@@ -286,7 +286,7 @@ export const AgentList = memo(function AgentList() {
       </div>
       {/* Only the list scrolls, so the head needs no background of its own: a second layer of the
           translucent chrome would darken it against the column. */}
-      {/* Hidden rather than unmounted in the files view, so the list keeps its scroll. */}
+      {/* Hidden rather than unmounted outside the agents view, so the list keeps its scroll. */}
       {!listHidden && (
         <header className="panes-head">
           <span className="files-title">{`PANES · ${machineLabel}:${session.name}`}</span>

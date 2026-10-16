@@ -46,6 +46,8 @@ describe("AgentList", () => {
     vi.clearAllMocks();
     localStorage.clear();
     useApp.setState({ machines: { local: m }, order: ["local"], selected: null, expanded: {}, viewed: { machine_id: "local", session: "default" } });
+    // Viewing a session restores its stored view, so the view is set after.
+    useFilesPanel.setState({ view: "agents" });
   });
 
   it("lists every pane of the viewed session with agent icon and status badge", () => {
@@ -62,6 +64,7 @@ describe("AgentList", () => {
 
   it("falls back to a monogram for an unknown agent", () => {
     useApp.setState({ viewed: { machine_id: "local", session: "other" } });
+    useFilesPanel.setState({ view: "agents" });
     render(<AgentList />);
     expect(screen.getByRole("img", { name: "mystery" }).textContent).toBe("M");
     expect(screen.getByText("WORKING")).toBeTruthy();
@@ -192,24 +195,25 @@ describe("AgentList", () => {
   });
 
   it("titles the pane list with the session, like the Files panel, and drops it in the files view", () => {
-    useFilesPanel.setState({ view: "split" });
+    useFilesPanel.setState({ view: "agents" });
     const { container, rerender } = render(<AgentList />);
     expect(container.querySelector(".panes-head .files-title")!.textContent).toBe("PANES · local:default");
     useFilesPanel.setState({ view: "files" });
     rerender(<AgentList />);
     expect(container.querySelector(".panes-head")).toBeNull();
-    useFilesPanel.setState({ view: "split" });
+    useFilesPanel.setState({ view: "agents" });
   });
 
-  it("switches the column between agents, files and both from the header", () => {
-    useFilesPanel.setState({ view: "split" });
+  it("switches the column between agents, files and git from the header", () => {
+    useFilesPanel.setState({ view: "agents" });
     const { container } = render(<AgentList />);
     const view = screen.getByRole("group", { name: "Sidebar view" });
-    expect(within(view).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Agents", "Files", "Split"]);
-    expect(within(view).getByRole("button", { name: "Split" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(view).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Agents", "Files", "Git"]);
+    fireEvent.click(within(view).getByRole("button", { name: "Git" }));
+    expect(useFilesPanel.getState().view).toBe("git");
+    expect(within(view).getByRole("button", { name: "Git" }).getAttribute("aria-pressed")).toBe("true");
+    expect((container.querySelector(".agents-list") as HTMLElement).hidden).toBe(true);
     fireEvent.click(within(view).getByRole("button", { name: "Files" }));
-    expect(useFilesPanel.getState().view).toBe("files");
-    expect(within(view).getByRole("button", { name: "Files" }).getAttribute("aria-pressed")).toBe("true");
     expect((container.querySelector(".agents-list") as HTMLElement).hidden).toBe(true);
     fireEvent.click(within(view).getByRole("button", { name: "Agents" }));
     expect((container.querySelector(".agents-list") as HTMLElement).hidden).toBe(false);
@@ -312,6 +316,7 @@ describe("AgentList", () => {
 
   it("asks for a session when none is viewed", () => {
     useApp.setState({ viewed: null });
+    useFilesPanel.setState({ view: "agents" });
     render(<AgentList />);
     expect(screen.getByText("Select a session")).toBeTruthy();
   });
@@ -336,6 +341,8 @@ describe("AgentList tab reordering", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useApp.setState({ machines: { local: m }, order: ["local"], selected: null, expanded: {}, viewed: { machine_id: "local", session: "default" } });
+    // Viewing a session restores its stored view, so the view is set after.
+    useFilesPanel.setState({ view: "agents" });
   });
 
   it("moves a tab after the tab it is dropped on", () => {
