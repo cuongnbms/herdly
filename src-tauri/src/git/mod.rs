@@ -2,10 +2,12 @@
 use crate::error::{AppError, AppResult};
 use crate::transport::{exec, ExecOutput, Transport};
 
+mod diff;
 mod log;
 mod repo;
 mod status;
 
+pub use diff::{DiffLine, DiffScope, FileDiff, Hunk, LineKind};
 pub use log::*;
 pub use repo::*;
 
