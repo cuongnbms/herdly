@@ -14,7 +14,7 @@ use crate::{
         watch::{watch_refusal, WatchEvent},
         watch_manager::{FilesWatch, WatchSink},
     },
-    git::{self, GitStatus},
+    git::{self, GitRepo, GitStatus},
     herdr::rpc,
     layout::LayoutStore,
     machines::{self, MachineManager},
@@ -766,7 +766,10 @@ pub async fn pi_models_list(
 ) -> Result<Vec<crate::pi::PiModel>, AppError> {
     let info = mgr.info(&machine_id)?;
     if info.pi.is_empty() {
-        return Err(AppError::new("not_found", "pi was not found on this machine"));
+        return Err(AppError::new(
+            "not_found",
+            "pi was not found on this machine",
+        ));
     }
     crate::pi::list_models(&*mgr.transport(&machine_id)?, &info.pi).await
 }
@@ -794,6 +797,18 @@ pub async fn layout_save(
 /// Resolves `root` on a Machine; every `files_*` command goes through it.
 fn files_root(mgr: &MachineManager, machine_id: &str, root: &str) -> Result<String, AppError> {
     resolve_root(&mgr.info(machine_id)?.home, root)
+}
+
+/// The git repository of a Files root, with every changed entry; None outside a repository.
+#[tauri::command]
+pub async fn git_repo(
+    mgr: Mgr<'_>,
+    machine_id: String,
+    dir: String,
+) -> Result<Option<GitRepo>, AppError> {
+    let dir = files_root(&mgr, &machine_id, &dir)?;
+    let t = mgr.transport(&machine_id)?;
+    git::git_repo(&*t, &dir).await
 }
 
 #[tauri::command]
