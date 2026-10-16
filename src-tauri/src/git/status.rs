@@ -59,53 +59,101 @@ pub async fn git_status(t: &dyn Transport, cwd: &str) -> AppResult<GitStatus> {
     })
 }
 
+/// One NUL-separated record of `git status --porcelain=v2 [--branch] -z`.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Record<'a> {
+    /// `# branch.<key> <value>`.
+    Branch {
+        key: &'a str,
+        value: &'a str,
+    },
+    /// A changed (`1`), renamed or copied (`2`, with `orig_path`) or unmerged (`u`) entry.
+    Entry {
+        xy: &'a str,
+        path: &'a str,
+        orig_path: Option<&'a str>,
+        unmerged: bool,
+    },
+    Untracked {
+        path: &'a str,
+    },
+}
+
+/// Split porcelain v2 `-z` output into records; ignored (`!`) and unknown records are dropped.
+pub(crate) fn porcelain_records(out: &str) -> Vec<Record<'_>> {
+    let mut v = Vec::new();
+    let mut records = out.split('\0');
+    while let Some(rec) = records.next() {
+        if let Some(h) = rec.strip_prefix("# branch.") {
+            let (key, value) = h.split_once(' ').unwrap_or((h, ""));
+            v.push(Record::Branch { key, value });
+            continue;
+        }
+        // Fields before the path: ordinary 8, renamed or copied 9 (then the original path as a
+        // record of its own), unmerged 10.
+        let (path, orig_path, unmerged) = match rec.as_bytes().first() {
+            Some(b'1') => (rec.splitn(9, ' ').nth(8), None, false),
+            Some(b'2') => (rec.splitn(10, ' ').nth(9), records.next(), false),
+            Some(b'u') => (rec.splitn(11, ' ').nth(10), None, true),
+            Some(b'?') => {
+                if let Some(path) = rec.get(2..) {
+                    v.push(Record::Untracked { path });
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        if let Some(path) = path {
+            v.push(Record::Entry {
+                xy: field(rec, 1),
+                path,
+                orig_path,
+                unmerged,
+            });
+        }
+    }
+    v
+}
+
 /// Parse `git status --porcelain=v2 [--branch] -z`, listing the first `limit` changes; empty output
 /// (no repository) has no branch.
 pub(crate) fn parse_porcelain_v2(out: &str, limit: usize) -> GitStatus {
     let mut s = GitStatus::default();
     let (mut head, mut oid) = (None, None);
-    let mut records = out.split('\0');
-    while let Some(rec) = records.next() {
-        if let Some(h) = rec.strip_prefix("# branch.") {
-            let (key, value) = h.split_once(' ').unwrap_or((h, ""));
-            match key {
-                "oid" => oid = Some(value),
-                "head" => head = Some(value),
-                "upstream" => s.upstream = Some(value.to_string()),
-                "ab" => {
-                    for n in value.split(' ') {
-                        if let Some(a) = n.strip_prefix('+') {
-                            s.ahead = a.parse().unwrap_or(0);
-                        } else if let Some(b) = n.strip_prefix('-') {
-                            s.behind = b.parse().unwrap_or(0);
+    for rec in porcelain_records(out) {
+        let (xy, path, unmerged) = match rec {
+            Record::Branch { key, value } => {
+                match key {
+                    "oid" => oid = Some(value),
+                    "head" => head = Some(value),
+                    "upstream" => s.upstream = Some(value.to_string()),
+                    "ab" => {
+                        for n in value.split(' ') {
+                            if let Some(a) = n.strip_prefix('+') {
+                                s.ahead = a.parse().unwrap_or(0);
+                            } else if let Some(b) = n.strip_prefix('-') {
+                                s.behind = b.parse().unwrap_or(0);
+                            }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
+                continue;
             }
-            continue;
-        }
-        // Fields before the path: ordinary 8, renamed or copied 9 (then the original path as a
-        // record of its own), unmerged 10.
-        let (xy, path) = match rec.as_bytes().first() {
-            Some(b'1') => (field(rec, 1), rec.splitn(9, ' ').nth(8)),
-            Some(b'2') => {
-                records.next();
-                (field(rec, 1), rec.splitn(10, ' ').nth(9))
-            }
-            Some(b'u') => (field(rec, 1), rec.splitn(11, ' ').nth(10)),
-            Some(b'?') => {
+            Record::Entry {
+                xy, path, unmerged, ..
+            } => (xy, path, unmerged),
+            Record::Untracked { path } => {
                 s.untracked += 1;
-                ("??", rec.get(2..))
+                ("??", path, false)
             }
-            _ => continue,
         };
         let (x, y) = (
             xy.chars().next().unwrap_or('.'),
             xy.chars().nth(1).unwrap_or('.'),
         );
         if xy != "??" {
-            if rec.starts_with('u') {
+            if unmerged {
                 s.modified += 1;
             } else {
                 s.staged += u32::from(x != '.');
@@ -114,20 +162,18 @@ pub(crate) fn parse_porcelain_v2(out: &str, limit: usize) -> GitStatus {
         }
         s.changed += 1;
         if s.changes.len() < limit {
-            if let Some(path) = path {
-                let code = if xy == "??" {
-                    "??".to_string()
-                } else {
-                    [x, y]
-                        .iter()
-                        .map(|&c| if c == '.' { ' ' } else { c })
-                        .collect()
-                };
-                s.changes.push(GitChange {
-                    code,
-                    path: path.to_string(),
-                });
-            }
+            let code = if xy == "??" {
+                "??".to_string()
+            } else {
+                [x, y]
+                    .iter()
+                    .map(|&c| if c == '.' { ' ' } else { c })
+                    .collect()
+            };
+            s.changes.push(GitChange {
+                code,
+                path: path.to_string(),
+            });
         }
     }
     s.branch = match (head, oid) {
@@ -154,36 +200,9 @@ fn folder_name(cwd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::testutil::{git, repo};
     use crate::transport::local::LocalTransport;
     use std::path::Path;
-    use std::process::Command;
-
-    fn git(dir: &Path, args: &[&str]) {
-        let ok = Command::new("git")
-            .args([
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgsign=false",
-            ])
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap()
-            .status
-            .success();
-        assert!(ok, "git {args:?}");
-    }
-
-    fn repo(dir: &Path) {
-        std::fs::create_dir_all(dir).unwrap();
-        git(dir, &["init", "-q", "-b", "main"]);
-        std::fs::write(dir.join("a.txt"), "a").unwrap();
-        git(dir, &["add", "a.txt"]);
-        git(dir, &["commit", "-q", "-m", "init"]);
-    }
 
     async fn status(dir: &Path) -> GitStatus {
         git_status(&LocalTransport, &dir.to_string_lossy())
@@ -345,6 +364,49 @@ mod tests {
         assert_eq!((s.changed, s.branch), (3, None));
         let paths: Vec<&str> = s.changes.iter().map(|c| c.path.as_str()).collect();
         assert_eq!(paths, ["new.rs", "u0", "u1"]);
+    }
+
+    #[test]
+    fn records_split_branch_headers_entries_and_untracked() {
+        let mut out = String::from("# branch.oid abc\0# branch.head main\0");
+        out += "1 .M N... 100644 100644 100644 h1 h2 a b.rs\0";
+        out += "2 R. N... 100644 100644 100644 h1 h2 R100 new name.rs\0old.rs\0";
+        out += "u UU N... 100644 100644 100644 100644 h1 h2 h3 both.rs\0";
+        out += "? tệp mới.txt\0! ignored\0";
+        assert_eq!(
+            porcelain_records(&out),
+            vec![
+                Record::Branch {
+                    key: "oid",
+                    value: "abc"
+                },
+                Record::Branch {
+                    key: "head",
+                    value: "main"
+                },
+                Record::Entry {
+                    xy: ".M",
+                    path: "a b.rs",
+                    orig_path: None,
+                    unmerged: false
+                },
+                Record::Entry {
+                    xy: "R.",
+                    path: "new name.rs",
+                    orig_path: Some("old.rs"),
+                    unmerged: false
+                },
+                Record::Entry {
+                    xy: "UU",
+                    path: "both.rs",
+                    orig_path: None,
+                    unmerged: true
+                },
+                Record::Untracked {
+                    path: "tệp mới.txt"
+                },
+            ]
+        );
     }
 
     #[test]
