@@ -61,7 +61,7 @@ The file tree of one Workspace under the agent list, following the active Open i
 _Avoid_: files overlay, file browser
 
 **Open item**:
-An Agent's Pane or a file the user opened, shown as a tab in the **Open strip** above the main area, across all Machines and Sessions.
+An Agent's Pane, a file, or a **Diff item** the user opened, shown as a tab in the **Open strip** above the main area, across all Machines and Sessions.
 _Avoid_: tab (a herdr Tab is a layout of Panes), editor
 
 **File viewer**:
@@ -84,6 +84,14 @@ _Avoid_: buffer, unsaved file
 The live feed of changes under the Files panel's root (`inotifywait`, a `find` poll loop, or FSEvents) that reloads the open file and the loaded folders of the tree. One at a time, owned by the Files panel.
 _Avoid_: watcher (herdr's session watcher), polling
 
+**Git view**:
+The agents column's view of the repository holding the Files panel's root: its branch, its uncommitted changes (staged, unstaged, untracked, conflicted) and its commits, each commit listing the files it changed. It only reads the repository; changing it stays with the Agent or a Terminal.
+_Avoid_: source control, git panel, split
+
+**Diff item**:
+An Open item showing how one file changed in one scope: the working tree against the index, the index against the last commit, or one commit against its first parent. The same file in two scopes is two Diff items.
+_Avoid_: diff tab, compare view
+
 **Transcript**:
 The Agent's own conversation file (`.jsonl`) that the Chat lens reads.
 _Avoid_: history, log
@@ -102,7 +110,7 @@ _Avoid_: scroll position, bookmark
 
 **Fork**:
 A new Agent in a new Tab whose Transcript is a copy of another's, cut just before one of its user messages; that message's text waits in the new Agent's Composer. The original Agent is unchanged.
-_Avoid_: branch, clone (pi's `/fork` and `/clone` act inside one Agent; a git fork is a repository)
+_Avoid_: branch for a Fork (a git branch, as the Git view shows, is still a branch), clone (pi's `/fork` and `/clone` act inside one Agent; a git fork is a repository)
 
 **Side question**:
 A question asked beside an Agent's Transcript, from the Composer's btw mode: a separate `claude -p` process answers it from a fork of the Transcript, so the Agent and its Transcript are untouched. Follow-ups continue that fork; closing the card deletes it.
