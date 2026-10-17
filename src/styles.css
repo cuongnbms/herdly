@@ -329,12 +329,20 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 
 /* ---------- Status dots & badges ---------- */
 .dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; }
-.dot-blocked { background: var(--amber); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 22%, transparent); animation: pulse 1.6s ease-in-out infinite; }
+/* The blocked dot breathes on transform and opacity only, which the compositor runs without
+   repainting; an animated box-shadow repaints every frame and kept the GPU process busy. */
+.dot-blocked { position: relative; background: var(--amber); animation: pulse 1.6s ease-in-out infinite; }
+.dot-blocked::after {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%;
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
+  animation: pulse-ring 1.6s ease-in-out infinite;
+}
 .dot-working { background: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 20%, transparent); }
 .dot-done { background: var(--green); }
 .dot-idle { background: var(--grey); }
 .dot-unknown { background: transparent; border: 1.5px solid var(--grey); }
-@keyframes pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--amber) 0%, transparent); opacity: 0.7; } }
+@keyframes pulse { 50% { opacity: 0.7; } }
+@keyframes pulse-ring { 50% { transform: scale(1.3); opacity: 0; } }
 
 .badge {
   flex: none; display: inline-flex; align-items: center; height: 15px; padding: 0 6px; box-sizing: border-box;
@@ -1247,11 +1255,16 @@ button.composer-model:disabled { cursor: default; }
   color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent);
 }
 .dash-count-done { --c: var(--green); }
-.dash-count-blocked i, .dash-count-done i { width: 8px; height: 8px; animation: dash-halo 1.6s ease-out infinite; }
-.dash-count-done i { animation-duration: 2.4s; }
+.dash-count-blocked i, .dash-count-done i { position: relative; width: 8px; height: 8px; }
+/* The halo is a copy of the dot that grows and fades: transform and opacity, no repaint. */
+.dash-count-blocked i::after, .dash-count-done i::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--c); opacity: 0;
+  animation: dash-halo 1.6s ease-out infinite;
+}
+.dash-count-done i::after { animation-duration: 2.4s; }
 @keyframes dash-halo {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 70%, transparent); }
-  70%, 100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 0%, transparent); }
+  0% { transform: scale(1); opacity: 0.7; }
+  70%, 100% { transform: scale(2); opacity: 0; }
 }
 /* The whole row lights up like a blocked agent card: amber while an agent needs you, green for
    unseen Done. */
@@ -1509,7 +1522,7 @@ button.composer-model:disabled { cursor: default; }
 .tab-lead .agent-tile-bare svg { width: 100%; height: 100%; }
 /* The status dot sits on the tile's bottom-right corner, ringed in the tab's background. */
 .tab-lead > .dot { position: absolute; right: -3px; bottom: -3px; width: 8px; height: 8px; box-shadow: none; outline: 2px solid var(--tab-bg); }
-.tab-lead > .dot-blocked { animation: pulse 1.6s ease-in-out infinite; }
+.tab-lead > .dot-blocked::after { content: none; }
 .tab-lead > .dot-unknown { background: var(--tab-bg); }
 .tab-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); font-size: 11px; }
 .files-tab-item.active .tab-project { color: var(--fg-2); }
