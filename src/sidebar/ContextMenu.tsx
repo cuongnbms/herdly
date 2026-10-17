@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ComponentType, SVGProps } from "react";
 import { InfoTip } from "../ui/InfoTip";
 import { PathInput } from "../ui/PathInput";
@@ -11,15 +11,42 @@ export interface MenuItem {
   group?: boolean;
 }
 
+type Size = { w: number; h: number };
+const EDGE = 4;
+
+/** Opens down-right of the pointer, flipping up or left where the window has no room, and never past its edges. */
+export function placeMenu(x: number, y: number, menu: Size, view: Size) {
+  const up = y + menu.h > view.h - EDGE && y - menu.h >= EDGE;
+  const leftward = x + menu.w > view.w - EDGE && x - menu.w >= EDGE;
+  const clamp = (v: number, size: number, max: number) => Math.max(EDGE, Math.min(v, max - size - EDGE));
+  return {
+    left: clamp(leftward ? x - menu.w : x, menu.w, view.w),
+    top: clamp(up ? y - menu.h : y, menu.h, view.h),
+    up,
+    leftward,
+  };
+}
+
 export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
+  const ref = useRef<HTMLUListElement>(null);
+  const [place, setPlace] = useState<ReturnType<typeof placeMenu> | null>(null);
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onClose]);
+  // Measured before paint, so a menu near the bottom never shows cut off first.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setPlace(placeMenu(x, y, { w: el.offsetWidth, h: el.offsetHeight }, { w: window.innerWidth, h: window.innerHeight }));
+  }, [x, y, items]);
+  const style = place
+    ? { left: place.left, top: place.top, transformOrigin: `${place.up ? "bottom" : "top"} ${place.leftward ? "right" : "left"}` }
+    : { left: x, top: y };
   return (
     <div className="overlay clear" onMouseDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>
-      <ul className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+      <ul ref={ref} className="ctx-menu" role="menu" style={style} onMouseDown={(e) => e.stopPropagation()}>
         {items.map((it, i) => [
           it.group && i > 0 && <li key={`${it.label}-sep`} role="separator" className="ctx-menu-sep" />,
           <li key={it.label} role="none">
