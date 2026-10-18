@@ -13,6 +13,7 @@ pub mod notify;
 pub mod pi;
 pub mod quota;
 pub mod sshconfig;
+pub mod synthetic_keys;
 pub mod transcript;
 pub mod transport;
 pub mod view;
@@ -117,6 +118,7 @@ pub fn run() {
             tracing::info!("herdly starting");
             notify::init(app.handle());
             mouse::init(app.handle());
+            synthetic_keys::init();
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             app.manage(Arc::new(layout::LayoutStore::new(

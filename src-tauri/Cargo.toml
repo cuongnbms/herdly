@@ -49,5 +49,6 @@ core-foundation = "0.10"
 core-text = "22.0.0"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSUserNotification"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSEvent"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSEvent", "NSResponder", "NSWindow", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGEvent", "CGEventTypes"] }
 block2 = "0.6"
