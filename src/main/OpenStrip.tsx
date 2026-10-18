@@ -8,6 +8,9 @@ import { useTabLayout } from "../settings/tabLayout";
 import { closeItemsGuarded } from "../files/closeGuard";
 import { useShallow } from "zustand/react/shallow";
 import { useDrafts } from "../files/drafts";
+import { absPath, type Root } from "../files/root";
+import { wsKey } from "../files/store";
+import { useResolvedRoots } from "../files/useFilesRoot";
 import { useApp, viewedItems } from "../store/app";
 import { diffLabel } from "../git/paths";
 import { itemKey, type OpenItem } from "../store/openItems";
@@ -26,7 +29,12 @@ interface Entry {
   icon?: "file" | "diff";
 }
 
-function entries(machines: Record<string, MachineView>, items: OpenItem[]): Entry[] {
+/** A file item's path for its tooltip: `rel` under its Workspace's resolved root, else the full path. */
+function filePath(item: Extract<OpenItem, { kind: "file" }>, roots: Record<string, { root: Root }>): string {
+  return roots[wsKey(item.ws)]?.root.path === item.root ? item.rel : absPath(item.root, item.rel);
+}
+
+function entries(machines: Record<string, MachineView>, items: OpenItem[], roots: Record<string, { root: Root }>): Entry[] {
   return items.flatMap((item): Entry[] => {
     const key = itemKey(item);
     if (item.kind === "diff") {
@@ -35,7 +43,7 @@ function entries(machines: Record<string, MachineView>, items: OpenItem[]): Entr
     }
     if (item.kind === "file") {
       const place = placeOf(machines, item.ws.machine_id, item.ws.session, item.ws.workspace_id);
-      return place ? [{ key, label: item.rel.split("/").pop() ?? item.rel, project: place.project, title: `${place.where} · ${item.rel}` }] : [];
+      return place ? [{ key, label: item.rel.split("/").pop() ?? item.rel, project: place.project, title: `${place.where} · ${filePath(item, roots)}` }] : [];
     }
     const { machine_id, session, pane_id } = item.ref;
     const machine = machines[machine_id];
@@ -71,13 +79,14 @@ export const OpenStrip = memo(function OpenStrip() {
   const pin = useApp((s) => s.pinItem);
   const moveItem = useApp((s) => s.moveItem);
   const layout = useTabLayout((s) => s.layout);
+  const roots = useResolvedRoots((s) => s.roots);
   // Keys of the dirty Drafts: unchanged by keystrokes once a Draft is dirty.
   const dirty = useDrafts(useShallow((s) => Object.entries(s.drafts).filter(([, d]) => d.dirty).map(([k]) => k)));
   const [menu, setMenu] = useState<{ x: number; y: number; key: string } | null>(null);
   // The tab being dragged, and the tab and side it would land on.
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<{ key: string; side: Side } | null>(null);
-  const tabs = entries(machines, items);
+  const tabs = entries(machines, items, roots);
   if (tabs.length === 0) return null;
 
   const close = (key: string) => void closeItemsGuarded(key, "one");

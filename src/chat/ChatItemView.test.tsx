@@ -167,11 +167,10 @@ describe("file paths open in Files", () => {
     expect(viewedItems(useApp.getState()).items).toBe(before);
     expect(screen.getByRole("button", { name: /Write/ }).getAttribute("aria-expanded")).toBe("true");
   });
-  it("says so when the file is outside the workspace folder", () => {
+  it("opens a file outside the workspace folder from its own folder", () => {
     inPane(<ChatItemView item={{ kind: "assistant_text", markdown: "`/etc/x.conf`" }} />);
-    const before = viewedItems(useApp.getState()).items;
     fireEvent.click(screen.getByRole("link", { name: "/etc/x.conf" }), { metaKey: true });
-    expect(viewedItems(useApp.getState()).items).toBe(before);
+    expect(viewedItems(useApp.getState()).active).toBe("file:local/default/w1|/etc|x.conf");
   });
 });
 

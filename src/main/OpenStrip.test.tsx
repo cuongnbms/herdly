@@ -5,6 +5,7 @@ import { OpenStrip } from "./OpenStrip";
 import { itemKey } from "../store/openItems";
 import { draftKey, useDrafts } from "../files/drafts";
 import { filesKey } from "../files/store";
+import { useResolvedRoots } from "../files/useFilesRoot";
 import { UnsavedDialog } from "../files/unsaved";
 import { useTabLayout } from "../settings/tabLayout";
 import type { MachineView, PaneView } from "../lib/types";
@@ -39,6 +40,7 @@ const openPinned = (...ids: string[]) => {
 describe("OpenStrip", () => {
   beforeEach(() => {
     useApp.setState({ machines: {}, order: [], selected: null, tabs: {}, viewed: null });
+    useResolvedRoots.setState({ roots: {} });
     useApp.getState().upsertMachine(m);
     useTabLayout.setState({ layout: "one-line" });
   });
@@ -151,8 +153,27 @@ describe("OpenStrip", () => {
     await waitFor(() => expect(open()).toEqual(["p2"]));
   });
 
+  it("shows the full path in the tooltip of a file outside its Workspace's root", () => {
+    openPinned("p1");
+    useResolvedRoots.setState({ roots: { "local/default/w2": { root: { path: "/r", source: "folder" }, folder: "/r" } } });
+    const ws = { machine_id: "local", session: "default", workspace_id: "w2" };
+    useApp.getState().openFile(ws, "/r", "src/main.ts", { pin: true });
+    useApp.getState().openFile(ws, "/tmp/pad", "before.png", { pin: true });
+    render(<OpenStrip />);
+    expect(screen.getByRole("tab", { name: "main.ts, herdr-app" }).closest(".files-tab-item")?.getAttribute("title")).toBe("local/default · herdr-app · src/main.ts");
+    expect(screen.getByRole("tab", { name: "before.png, herdr-app" }).closest(".files-tab-item")?.getAttribute("title")).toBe("local/default · herdr-app · /tmp/pad/before.png");
+  });
+
+  it("shows the full path in a file's tooltip until its Workspace's root is known", () => {
+    openPinned("p1");
+    useApp.getState().openFile({ machine_id: "local", session: "default", workspace_id: "w2" }, "/r", "src/main.ts", { pin: true });
+    render(<OpenStrip />);
+    expect(screen.getByRole("tab", { name: "main.ts, herdr-app" }).closest(".files-tab-item")?.getAttribute("title")).toBe("local/default · herdr-app · /r/src/main.ts");
+  });
+
   it("shows a file item by basename with its place in the tooltip, and activates it on click", () => {
     openPinned("p1");
+    useResolvedRoots.setState({ roots: { "local/default/w2": { root: { path: "/r", source: "folder" }, folder: "/r" } } });
     useApp.getState().openFile({ machine_id: "local", session: "default", workspace_id: "w2" }, "/r", "src/main.ts", { pin: true });
     useApp.getState().select(ref("p1"));
     render(<OpenStrip />);

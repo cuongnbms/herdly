@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { looksLikePath, openInFiles, relUnderRoot } from "./fileLinks";
+import { fileOutside, looksLikePath, openInFiles, relUnderRoot } from "./fileLinks";
 import { filesRead } from "../lib/ipc";
 import { showToast } from "../ui/Toast";
 
-const app = vi.hoisted(() => ({ openFile: vi.fn(), machineState: "connected" }));
+const app = vi.hoisted(() => ({ openFile: vi.fn(), machineState: "connected", root: "/repo" as string | null, cwd: "/repo" as string | null }));
 vi.mock("../lib/ipc", () => ({ filesRead: vi.fn() }));
 vi.mock("../ui/Toast", () => ({ showToast: vi.fn() }));
-vi.mock("../files/root", () => ({ panelRoot: () => ({ path: "/repo", source: "folder" }) }));
+vi.mock("../files/root", () => ({ panelRoot: () => (app.root ? { path: app.root, source: "folder" } : null) }));
 vi.mock("../store/app", () => ({
   useApp: { getState: () => ({ machines: { m: { state: app.machineState } }, selected: null, openFile: app.openFile }) },
-  selectedPane: () => ({ workspace: { workspace_id: "w" }, pane: { cwd: "/repo" } }),
+  selectedPane: () => ({ workspace: { workspace_id: "w" }, pane: { cwd: app.cwd } }),
 }));
 
 describe("looksLikePath", () => {
@@ -67,11 +67,31 @@ describe("relUnderRoot", () => {
   });
 });
 
+describe("fileOutside", () => {
+  it("splits an absolute path into its folder and name", () => {
+    expect(fileOutside("/tmp/x/scratchpad/before.png", "/w/app", "/w/app")).toEqual({ root: "/tmp/x/scratchpad", rel: "before.png" });
+    expect(fileOutside("/x.conf", null, null)).toEqual({ root: "/", rel: "x.conf" });
+    expect(fileOutside("~/notes/a.md", null, null)).toEqual({ root: "~/notes", rel: "a.md" });
+    expect(fileOutside("~/a.md", null, null)).toEqual({ root: "~", rel: "a.md" });
+  });
+  it("reads a relative path from the cwd, else the root", () => {
+    expect(fileOutside("../other/./x.md", "/w/app", "/w")).toEqual({ root: "/w/other", rel: "x.md" });
+    expect(fileOutside("../x.md", null, "~/app")).toEqual({ root: "~", rel: "x.md" });
+  });
+  it("is null with nowhere to read a relative path from, or above the top", () => {
+    expect(fileOutside("x.md", null, null)).toBeNull();
+    expect(fileOutside("/../x.md", null, null)).toBeNull();
+  });
+});
+
 describe("openInFiles", () => {
   const pane = { machine_id: "m", session: "s", pane_id: "p" };
+  const ws = { machine_id: "m", session: "s", workspace_id: "w" };
   beforeEach(() => {
     vi.clearAllMocks();
     app.machineState = "connected";
+    app.root = "/repo";
+    app.cwd = "/repo";
   });
 
   it("opens a file that is there", async () => {
@@ -101,5 +121,44 @@ describe("openInFiles", () => {
     await openInFiles(pane, "src/a.ts");
     expect(filesRead).not.toHaveBeenCalled();
     expect(app.openFile).toHaveBeenCalled();
+  });
+
+  it("opens a file outside the workspace folder with its own folder as the root", async () => {
+    vi.mocked(filesRead).mockResolvedValue({ kind: "image", text: "", truncated: false } as never);
+    await openInFiles(pane, "/tmp/x/scratchpad/before.png");
+    expect(filesRead).toHaveBeenCalledWith("m", "/tmp/x/scratchpad", "before.png");
+    expect(app.openFile).toHaveBeenCalledWith(ws, "/tmp/x/scratchpad", "before.png", { pin: false });
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it("opens a relative path that leaves the workspace folder", async () => {
+    vi.mocked(filesRead).mockResolvedValue({ kind: "text", text: "", truncated: false } as never);
+    await openInFiles(pane, "../other/x.md");
+    expect(app.openFile).toHaveBeenCalledWith(ws, "/other", "x.md", { pin: false });
+  });
+
+  it("toasts when a file outside the workspace folder is missing", async () => {
+    vi.mocked(filesRead).mockRejectedValue({ code: "not_found", message: "no such file" });
+    await openInFiles(pane, "/tmp/gone.md");
+    expect(app.openFile).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith("/tmp/gone.md does not exist");
+  });
+
+  it("opens a path in a workspace with no folder", async () => {
+    app.root = null;
+    vi.mocked(filesRead).mockResolvedValue({ kind: "text", text: "", truncated: false } as never);
+    await openInFiles(pane, "/etc/x.conf");
+    expect(app.openFile).toHaveBeenCalledWith(ws, "/etc", "x.conf", { pin: false });
+    app.cwd = null;
+    await openInFiles(pane, "/etc/y.conf");
+    expect(app.openFile).toHaveBeenLastCalledWith(ws, "/etc", "y.conf", { pin: false });
+  });
+
+  it("says the workspace has no folder for a relative path with nowhere to read it from", async () => {
+    app.root = null;
+    app.cwd = null;
+    await openInFiles(pane, "docs/a.md");
+    expect(app.openFile).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith("This workspace has no folder");
   });
 });

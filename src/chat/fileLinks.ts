@@ -69,8 +69,23 @@ export function relUnderRoot(path: string, cwd: string | null, root: string): st
 }
 
 /**
+ * `path` as a file item outside the Workspace root: its own folder becomes the root. A relative
+ * `path` is read from `cwd`, else from `root`; null when there is neither, or `path` goes above the top.
+ */
+export function fileOutside(path: string, cwd: string | null, root: string | null): { root: string; rel: string } | null {
+  const own = path.startsWith("/") || path.startsWith("~");
+  const base = cwd ?? root;
+  if (!own && !base) return null;
+  const target = normalize(own ? path : `${base}/${path}`);
+  const rel = target?.parts.pop();
+  if (!target || !rel) return null;
+  const top = target.home ? "~" : "";
+  return { root: target.parts.length > 0 ? `${top}/${target.parts.join("/")}` : top || "/", rel };
+}
+
+/**
  * Opens `path`, as the agent in `pane` wrote it, as a file item of its Workspace; `hash` is shown once it opens.
- * A file that is not there gets a toast instead of a tab.
+ * A file outside the Workspace root opens from its own folder. A file that is not there gets a toast instead of a tab.
  */
 export async function openInFiles(pane: PaneRef, path: string, hash?: string | null): Promise<void> {
   const state = useApp.getState();
@@ -78,14 +93,15 @@ export async function openInFiles(pane: PaneRef, path: string, hash?: string | n
   if (!found) return;
   const ref = { machine_id: pane.machine_id, session: pane.session, workspace_id: found.workspace.workspace_id };
   const root = panelRoot(ref, state);
-  const rel = root && relUnderRoot(path, found.pane.cwd, root.path);
-  if (!root || !rel) {
-    showToast(root ? `${path} is outside the workspace folder` : "This workspace has no folder");
+  const under = root && relUnderRoot(path, found.pane.cwd, root.path);
+  const file = under ? { root: root.path, rel: under } : fileOutside(path, found.pane.cwd, root?.path ?? null);
+  if (!file) {
+    showToast(root || found.pane.cwd ? `Cannot open ${path}` : "This workspace has no folder");
     return;
   }
   // A Machine that is not connected fails every read with not_found; that says nothing about the file.
   if (state.machines[pane.machine_id]?.state === "connected") {
-    const missing = await filesRead(pane.machine_id, root.path, rel).then(
+    const missing = await filesRead(pane.machine_id, file.root, file.rel).then(
       () => false,
       (e: unknown) => (e as { code?: string } | null)?.code === "not_found",
     );
@@ -94,8 +110,8 @@ export async function openInFiles(pane: PaneRef, path: string, hash?: string | n
       return;
     }
   }
-  useFilesBus.getState().setJump(hash ? { key: itemKey({ kind: "file", ws: ref, root: root.path, rel }), hash } : null);
-  useApp.getState().openFile(ref, root.path, rel, { pin: false });
+  useFilesBus.getState().setJump(hash ? { key: itemKey({ kind: "file", ws: ref, ...file }), hash } : null);
+  useApp.getState().openFile(ref, file.root, file.rel, { pin: false });
 }
 
 /** Marks `<html>` with `cmd-held` while ⌘ is down, so file links in Chat look clickable only then. */
