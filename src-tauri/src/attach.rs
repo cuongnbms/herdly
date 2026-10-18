@@ -27,6 +27,14 @@ const DRAIN_GRACE: Duration = Duration::from_millis(250);
 /// `Attached` waits this long after the first byte so a refusal message (which follows
 /// terminal-reset escape sequences) can still be recognised as `Held`.
 const ATTACH_SETTLE: Duration = Duration::from_millis(400);
+/// `herdr terminal attach` (0.9.5) asks the outer terminal about SGR-pixel mouse (DECRQM 1016, then
+/// DA1 as the sentinel) and waits only 250ms before handing stdin to the pane. Over ssh plus
+/// the frontend round trip xterm.js often answers later, and the late reply lands at the
+/// shell prompt as typed text (`1016;2$y1;2c`). So the reader answers it here and keeps it
+/// from xterm.js, which would otherwise answer a second time.
+const PROBE: &[u8] = b"\x1b[?1016$p\x1b[c";
+/// What xterm.js 6.0 answers before any mouse mode is set: 1016 reset, VT100 with AVO.
+const PROBE_REPLY: &[u8] = b"\x1b[?1016;2$y\x1b[?1;2c";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AttachKey {
@@ -489,6 +497,7 @@ fn read_loop(e: &Arc<Entry>, mut reader: Box<dyn Read + Send>) {
     });
     let mut head: Vec<u8> = Vec::new();
     let mut first = true;
+    let mut probe = ProbeFilter::default();
     coalesce(&rx, COALESCE, |bytes| {
         if e.closed.load(Ordering::SeqCst) {
             return false;
@@ -513,6 +522,16 @@ fn read_loop(e: &Arc<Entry>, mut reader: Box<dyn Read + Send>) {
         } else if head.len() >= HELD_SCAN {
             e.emit_attached();
         }
+        let (bytes, asked) = probe.feed(bytes);
+        if asked {
+            let mut w = e.writer.lock().unwrap();
+            if let Err(err) = w.write_all(PROBE_REPLY).and_then(|_| w.flush()) {
+                tracing::warn!("terminal probe reply failed: {err}");
+            }
+        }
+        if bytes.is_empty() {
+            return !e.closed.load(Ordering::SeqCst);
+        }
         let n = bytes.len();
         sink.data(bytes);
         let mut unacked = e.unacked.lock().unwrap();
@@ -524,6 +543,42 @@ fn read_loop(e: &Arc<Entry>, mut reader: Box<dyn Read + Send>) {
         }
         !e.closed.load(Ordering::SeqCst)
     });
+}
+
+/// Takes herdr's startup `PROBE` out of the first HELD_SCAN bytes of output, once. A tail
+/// that could start the probe is held back until the next read settles it.
+#[derive(Default)]
+struct ProbeFilter {
+    done: bool,
+    scanned: usize,
+    carry: Vec<u8>,
+}
+
+impl ProbeFilter {
+    /// The bytes to forward, and whether the probe was found in them.
+    fn feed(&mut self, bytes: Vec<u8>) -> (Vec<u8>, bool) {
+        if self.done {
+            return (bytes, false);
+        }
+        self.scanned += bytes.len();
+        let mut buf = std::mem::take(&mut self.carry);
+        buf.extend_from_slice(&bytes);
+        if let Some(i) = buf.windows(PROBE.len()).position(|w| w == PROBE) {
+            self.done = true;
+            buf.drain(i..i + PROBE.len());
+            return (buf, true);
+        }
+        if self.scanned >= HELD_SCAN {
+            self.done = true;
+            return (buf, false);
+        }
+        let keep = (1..PROBE.len().min(buf.len() + 1))
+            .rev()
+            .find(|&k| buf.ends_with(&PROBE[..k]))
+            .unwrap_or(0);
+        self.carry = buf.split_off(buf.len() - keep);
+        (buf, false)
+    }
 }
 
 /// Merge reads that arrive within `window` of a batch's first read, up to READ_CHUNK,
@@ -911,6 +966,42 @@ mod tests {
         m.release_async(key("h")).await;
         wait_for(|| rec.events.lock().unwrap().contains(&AttachEvent::Detached)).await;
         m.close_async(key("h")).await;
+    }
+    #[tokio::test]
+    async fn answers_the_startup_probe_without_forwarding_it() {
+        let m = AttachManager::new(Duration::from_secs(5));
+        let rec = Arc::new(Rec::default());
+        let n = PROBE_REPLY.len();
+        let cmd =
+            format!(r"stty raw -echo; printf '\033[?1016$p\033[c'; head -c {n} | tr '\033' E");
+        m.open(key("p"), sh(&cmd), 80, 24, rec.clone()).unwrap();
+        wait_for(|| String::from_utf8_lossy(&rec.bytes.lock().unwrap()).contains("E[?1;2c")).await;
+        let out = rec.bytes.lock().unwrap().clone();
+        assert!(String::from_utf8_lossy(&out).contains("E[?1016;2$yE[?1;2c"));
+        assert!(!out.windows(PROBE.len()).any(|w| w == PROBE));
+        m.close(&key("p"));
+    }
+    #[test]
+    fn probe_filter_strips_a_probe_split_across_reads() {
+        let mut f = ProbeFilter::default();
+        assert_eq!(f.feed(b"ab\x1b[?10".to_vec()), (b"ab".to_vec(), false));
+        assert_eq!(f.feed(b"16$p\x1b[".to_vec()), (Vec::new(), false));
+        assert_eq!(f.feed(b"cz".to_vec()), (b"z".to_vec(), true));
+        // Answered once: a later probe is the pane's own and reaches xterm.js.
+        assert_eq!(f.feed(PROBE.to_vec()), (PROBE.to_vec(), false));
+    }
+    #[test]
+    fn probe_filter_releases_a_held_prefix_that_is_not_the_probe() {
+        let mut f = ProbeFilter::default();
+        assert_eq!(f.feed(b"x\x1b[".to_vec()), (b"x".to_vec(), false));
+        assert_eq!(f.feed(b"0m".to_vec()), (b"\x1b[0m".to_vec(), false));
+    }
+    #[test]
+    fn probe_filter_stops_looking_after_the_head() {
+        let mut f = ProbeFilter::default();
+        let head = vec![b'a'; HELD_SCAN];
+        assert_eq!(f.feed(head.clone()), (head, false));
+        assert_eq!(f.feed(PROBE.to_vec()), (PROBE.to_vec(), false));
     }
     #[test]
     fn builds_attach_argv() {
