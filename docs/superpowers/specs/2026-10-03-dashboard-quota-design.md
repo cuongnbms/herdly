@@ -73,7 +73,11 @@ percent everywhere and never converts to remaining. Every request is a `GET` wit
 
 ### OpenCode Go
 
-- **Credential**: `~/.local/share/opencode/auth.json`, field `["opencode-go"].key`.
+- **Credential**: opencode v2 keeps it in `~/.local/share/opencode/opencode.db`, table
+  `credential`, the newest active row with `integration_id = 'opencode-go'`, field `key` of
+  its JSON `value`; read with `/usr/bin/sqlite3 -readonly`, then `immutable=1` when a clean
+  exit has removed the WAL. opencode v1 kept it in `~/.local/share/opencode/auth.json`,
+  field `["opencode-go"].key`, still read when the database has none.
 - **Request**: `https://opencode.ai/zen/go/v1/usage`, no extra headers.
 - **Windows**: `usage.rolling` → `5h`, `usage.weekly` → `week`, `usage.monthly` → `month`
   (no duration); each has `percent` and `resetsAt`.

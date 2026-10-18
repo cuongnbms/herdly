@@ -67,6 +67,43 @@ pub fn file_path(provider: Provider, home: &Path) -> Option<PathBuf> {
     }
 }
 
+/// opencode v2 keeps its credentials in this SQLite database under `home`.
+const OPENCODE_DB: &str = ".local/share/opencode/opencode.db";
+
+/// The newest active OpenCode Go key, wrapped in the v1 `auth.json` shape `parse` reads.
+const OPENCODE_QUERY: &str = "select json_object('opencode-go', json(value)) from credential \
+     where integration_id = 'opencode-go' and coalesce(active, 1) = 1 \
+     order by time_updated desc limit 1";
+
+/// `None` = no OpenCode Go key, or the database did not open.
+async fn read_opencode_db(db: &Path) -> Option<Credential> {
+    // `-readonly` also sees what opencode has not checkpointed yet, but it cannot
+    // open the database once a clean exit removed the WAL; `immutable` reads that
+    // one without creating or touching anything beside it.
+    let immutable = format!("file:{}?mode=ro&immutable=1", db.display());
+    let opens: [&[&std::ffi::OsStr]; 2] = [
+        &["-readonly".as_ref(), db.as_os_str()],
+        &[immutable.as_ref()],
+    ];
+    for open in opens {
+        let child = tokio::process::Command::new("/usr/bin/sqlite3")
+            .arg("-bail")
+            .args(open)
+            .arg(OPENCODE_QUERY)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output();
+        let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(10), child).await else {
+            continue;
+        };
+        if out.status.success() {
+            return parse(Provider::OpencodeGo, &out.stdout);
+        }
+    }
+    None
+}
+
 /// Map the `security find-generic-password` outcome. `None` = signal/timeout/spawn failure.
 pub fn keychain_result(exit_code: Option<i32>, stdout: &[u8]) -> Result<Credential, QuotaOutcome> {
     match exit_code {
@@ -102,6 +139,12 @@ pub async fn read(provider: Provider) -> Result<Credential, QuotaOutcome> {
         return read_keychain().await;
     }
     let home = std::env::var_os("HOME").ok_or(QuotaOutcome::NotSignedIn)?;
+    if provider == Provider::OpencodeGo {
+        if let Some(cred) = read_opencode_db(&Path::new(&home).join(OPENCODE_DB)).await {
+            return Ok(cred);
+        }
+    }
+    // opencode v1 kept its key in `auth.json`.
     let path = file_path(provider, Path::new(&home)).ok_or(QuotaOutcome::NotSignedIn)?;
     let data = tokio::fs::read(path)
         .await
@@ -219,6 +262,61 @@ mod tests {
             Some(PathBuf::from("/Users/me/.grok/auth.json"))
         );
     }
+
+    /// An opencode v2 database as opencode leaves it after a clean exit: WAL
+    /// mode, everything checkpointed, no `-wal` or `-shm` beside it.
+    fn closed_opencode_db(dir: &Path, rows: &str) -> PathBuf {
+        let db = dir.join("opencode.db");
+        let sql = format!(
+            "pragma journal_mode=wal;
+             create table credential (id text primary key, integration_id text, label text not null,
+               value text not null, connector_id text, method_id text, active integer,
+               time_created integer not null, time_updated integer not null);
+             {rows}
+             pragma wal_checkpoint(truncate);"
+        );
+        let out = std::process::Command::new("/usr/bin/sqlite3")
+            .arg(&db)
+            .arg(sql)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        for sidecar in ["opencode.db-wal", "opencode.db-shm"] {
+            let _ = std::fs::remove_file(dir.join(sidecar));
+        }
+        db
+    }
+
+    #[tokio::test]
+    async fn opencode_db_reads_the_active_go_key_after_a_clean_exit() {
+        let d = tempfile::tempdir().unwrap();
+        let db = closed_opencode_db(
+            d.path(),
+            r#"insert into credential values
+                 ('c1','opencode-go','OpenCode Go','{"type":"key","key":"old"}',null,null,1,1,1),
+                 ('c2','opencode-go','OpenCode Go','{"type":"key","key":"new"}',null,null,1,2,2),
+                 ('c3','opencode-go','OpenCode Go','{"type":"key","key":"off"}',null,null,0,3,3),
+                 ('c4','nvidia','NVIDIA','{"type":"key","key":"nv"}',null,null,1,4,4);"#,
+        );
+        assert_eq!(read_opencode_db(&db).await, cred("new", None));
+        assert!(!d.path().join("opencode.db-wal").exists());
+        assert!(!d.path().join("opencode.db-shm").exists());
+    }
+
+    #[tokio::test]
+    async fn opencode_db_without_a_go_key_or_missing_is_not_signed_in() {
+        let d = tempfile::tempdir().unwrap();
+        let db = closed_opencode_db(
+            d.path(),
+            r#"insert into credential values
+                 ('c4','nvidia','NVIDIA','{"type":"key","key":"nv"}',null,null,1,4,4);"#,
+        );
+        assert_eq!(read_opencode_db(&db).await, None);
+        let missing = d.path().join("none/opencode.db");
+        assert_eq!(read_opencode_db(&missing).await, None);
+        assert!(!missing.exists());
+    }
+
     #[test]
     fn keychain_exit_codes() {
         let json = br#"{"claudeAiOauth":{"accessToken":"t"}}"#;
