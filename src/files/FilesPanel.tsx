@@ -3,7 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import { filesListAll } from "../lib/ipc";
 import { useHiddenFolders } from "../settings/hiddenFolders";
 import type { FileList, WorkspaceView } from "../lib/types";
-import { activeItem, useApp } from "../store/app";
+import { activeItem, selectedPane, useApp } from "../store/app";
 import { ActionsProvider, useActions } from "../sidebar/actions";
 import { CheckIcon, ChevronIcon, EyeIcon, EyeOffIcon, RefreshIcon } from "../ui/icons";
 import { FOLDER_HINT, setFolder, suggestFolder, useFolder } from "../workspaces/folder";
@@ -21,7 +21,13 @@ import { useWatch } from "./useWatch";
 /** The file tree of the active item's Workspace (else the selected Pane's), under the agent list. */
 export function FilesPanel() {
   const pinned = useFilesPanel((s) => s.pinned);
-  const ws = useApp(useShallow((s) => shownWorkspace(s, pinned)));
+  const shown = useApp(useShallow((s) => shownWorkspace(s, pinned)));
+  // A pane selected before herdr's snapshot lists it (a Tab just opened) has no Workspace yet.
+  // Keep the last one meanwhile: remounting relists the whole tree and restarts its watch.
+  const pending = useApp((s) => s.selected !== null && selectedPane(s) === null);
+  const last = useRef(shown);
+  if (shown) last.current = shown;
+  const ws = shown ?? (pending ? last.current : null);
   const view = useFilesPanel((s) => s.view);
   const section = useRef<HTMLElement>(null);
   const focusTick = useFilesPanel((s) => s.focusTick);
@@ -253,8 +259,13 @@ function PanelBody({ wsRef, root, online, showHeavy, hidden, gotoRef, onMissing 
   const hiddenFolders = useHiddenFolders((s) => s.folders);
   const [watchError, setWatchError] = useState<string | null>(null);
   const reload = useCallback(() => useFilesBus.getState().reload(key), [key]);
+  // Hidden, only the watch is needed (it reloads the open file). The tree and Go to File's
+  // list wait for the panel to show: a big folder's list is megabytes over ssh.
+  const [shown, setShown] = useState(!hidden);
+  if (!hidden && !shown) setShown(true);
 
   useEffect(() => {
+    if (!shown) return;
     let gone = false;
     filesListAll(machineId, root, hiddenFolders).then(
       (l) => !gone && setList(l),
@@ -267,7 +278,7 @@ function PanelBody({ wsRef, root, online, showHeavy, hidden, gotoRef, onMissing 
     return () => {
       gone = true;
     };
-  }, [machineId, root, reloadKey, hiddenFolders]);
+  }, [machineId, root, reloadKey, hiddenFolders, shown]);
 
   // The mount just listed everything, so the first Resync of a watch that started with it is
   // skipped; a watch started later (back online) or restarted after an error reloads.
@@ -311,7 +322,9 @@ function PanelBody({ wsRef, root, online, showHeavy, hidden, gotoRef, onMissing 
       )}
       <GoToFile list={list} recent={recent} onOpen={onOpen} inputRef={gotoRef} />
       <div className="files-side-scroll">
-        <FileTree machineId={machineId} root={root} filesKey={key} onOpen={onOpen} onMoved={onMoved} reloadKey={reloadKey} showHeavy={showHeavy} changes={batch} />
+        {shown && (
+          <FileTree machineId={machineId} root={root} filesKey={key} onOpen={onOpen} onMoved={onMoved} reloadKey={reloadKey} showHeavy={showHeavy} changes={batch} />
+        )}
       </div>
     </div>
   );

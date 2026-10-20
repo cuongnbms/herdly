@@ -65,6 +65,24 @@ describe("FilesPanel", () => {
     expect(container.querySelector(".files-panel-body")).toBeTruthy();
   });
 
+  it("watches while hidden but lists nothing until first shown, and does not relist when shown again", async () => {
+    useFilesPanel.setState({ view: "agents" });
+    render(<FilesPanel />);
+    const count = (cmd: string) => vi.mocked(invoke).mock.calls.filter((c) => c[0] === cmd).length;
+    await waitFor(() => expect(count("files_watch")).toBe(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(count("files_list_all")).toBe(0);
+    expect(count("files_list_dir")).toBe(0);
+    act(() => useFilesPanel.setState({ view: "files" }));
+    await waitFor(() => expect(count("files_list_all")).toBe(1));
+    await waitFor(() => expect(count("files_list_dir")).toBe(1));
+    act(() => useFilesPanel.setState({ view: "agents" }));
+    act(() => useFilesPanel.setState({ view: "files" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(count("files_list_all")).toBe(1);
+    expect(count("files_list_dir")).toBe(1);
+  });
+
   it("hides the panel in the git view but keeps it mounted", () => {
     useFilesPanel.setState({ view: "git" });
     const { container } = render(<FilesPanel />);
@@ -154,6 +172,27 @@ describe("FilesPanel", () => {
     expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
     fireEvent.click(screen.getByRole("button", { name: "Choose workspace" }));
     expect(screen.getAllByRole("menuitemradio").map((i) => i.getAttribute("aria-checked"))).toEqual(["false", "false", "true"]);
+  });
+
+  it("keeps the pinned workspace mounted while a just-opened pane waits for herdr's snapshot", async () => {
+    useFilesPanel.getState().pinWorkspace({ machine_id: "local", session: "default", workspace_id: "w2" });
+    render(<FilesPanel />);
+    const count = (cmd: string) => vi.mocked(invoke).mock.calls.filter((c) => c[0] === cmd).length;
+    await waitFor(() => expect(count("files_watch")).toBe(1));
+    const lists = count("files_list_all");
+    // openAgentTab selects the new pane right after tab.create, before the snapshot lists it.
+    select("p3");
+    expect(screen.getByText(/FILES/).textContent).toBe("FILES · other");
+    act(() =>
+      useApp.setState((s) => {
+        const ws = s.machines.local.sessions[0].workspaces;
+        const w1 = { ...ws[0], tabs: [...ws[0].tabs, { tab_id: "t3", label: "shell", panes: [{ pane_id: "p3", cwd: "/r" }] }] };
+        return { machines: { local: { ...s.machines.local, sessions: [{ ...s.machines.local.sessions[0], workspaces: [w1, ws[1]] }] } } as never };
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(count("files_list_all")).toBe(lists);
+    expect(count("files_watch")).toBe(1);
   });
 
   it("Follow active item unpins the session", () => {
