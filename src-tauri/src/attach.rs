@@ -28,13 +28,19 @@ const DRAIN_GRACE: Duration = Duration::from_millis(250);
 /// terminal-reset escape sequences) can still be recognised as `Held`.
 const ATTACH_SETTLE: Duration = Duration::from_millis(400);
 /// `herdr terminal attach` (0.9.5) asks the outer terminal about SGR-pixel mouse (DECRQM 1016, then
-/// DA1 as the sentinel) and waits only 250ms before handing stdin to the pane. Over ssh plus
-/// the frontend round trip xterm.js often answers later, and the late reply lands at the
-/// shell prompt as typed text (`1016;2$y1;2c`). So the reader answers it here and keeps it
-/// from xterm.js, which would otherwise answer a second time.
+/// DA1 as the sentinel) and waits only 250ms, counted from when it sent the probe, before
+/// handing stdin to the pane. A reply that lands later reaches the shell prompt as typed
+/// text (`1016;2$y1;2c`). The reader keeps the probe from xterm.js (too slow over ssh plus
+/// the frontend round trip) and answers it itself, but only within PROBE_ANSWER_WINDOW.
 const PROBE: &[u8] = b"\x1b[?1016$p\x1b[c";
 /// What xterm.js 6.0 answers before any mouse mode is set: 1016 reset, VT100 with AVO.
 const PROBE_REPLY: &[u8] = b"\x1b[?1016;2$y\x1b[?1;2c";
+/// A probe that reaches us later than this after spawn crossed a slow link (opening a
+/// workspace streams session logs over the same ssh master, and probes then arrive 1-2s
+/// late), so a reply would miss herdr's deadline and land at the prompt. Left unanswered,
+/// herdr just times out: it only uses pixel mouse with exact pixel geometry, which our PTY
+/// never reports. Unloaded, probes arrive in 30-140ms and the spawn alone costs a round trip.
+const PROBE_ANSWER_WINDOW: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AttachKey {
@@ -91,6 +97,7 @@ struct Entry {
     /// Bumped by `open`/`release` so a stale idle timer does nothing.
     generation: AtomicU64,
     handle: Option<tokio::runtime::Handle>,
+    spawned: Instant,
 }
 
 impl Entry {
@@ -253,6 +260,7 @@ impl AttachManager {
                 pixel_height: 0,
             })
             .map_err(|e| AppError::new("io", e.to_string()))?;
+        let spawned = Instant::now();
         let mut cmd = CommandBuilder::new(program);
         cmd.args(&argv[1..]);
         cmd.env("TERM", "xterm-256color");
@@ -286,6 +294,7 @@ impl AttachManager {
             attached: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             handle: tokio::runtime::Handle::try_current().ok(),
+            spawned,
         });
         self.entries.lock().unwrap().insert(key, entry.clone());
 
@@ -523,7 +532,9 @@ fn read_loop(e: &Arc<Entry>, mut reader: Box<dyn Read + Send>) {
             e.emit_attached();
         }
         let (bytes, asked) = probe.feed(bytes);
-        if asked {
+        if asked && e.spawned.elapsed() >= PROBE_ANSWER_WINDOW {
+            tracing::debug!("terminal probe arrived late; leaving it unanswered");
+        } else if asked {
             let mut w = e.writer.lock().unwrap();
             if let Err(err) = w.write_all(PROBE_REPLY).and_then(|_| w.flush()) {
                 tracing::warn!("terminal probe reply failed: {err}");
@@ -980,6 +991,22 @@ mod tests {
         assert!(String::from_utf8_lossy(&out).contains("E[?1016;2$yE[?1;2c"));
         assert!(!out.windows(PROBE.len()).any(|w| w == PROBE));
         m.close(&key("p"));
+    }
+    #[tokio::test]
+    async fn leaves_a_late_probe_unanswered() {
+        let m = AttachManager::new(Duration::from_secs(5));
+        let rec = Arc::new(Rec::default());
+        let wait = PROBE_ANSWER_WINDOW.as_millis() as f64 / 1000.0 + 0.1;
+        let cmd = format!(
+            r"stty raw -echo min 0 time 5; sleep {wait}; printf '\033[?1016$p\033[c'; echo got[$(head -c 1 | tr '\033' E)]"
+        );
+        m.open(key("late"), sh(&cmd), 80, 24, rec.clone()).unwrap();
+        wait_for(|| String::from_utf8_lossy(&rec.bytes.lock().unwrap()).contains("got[")).await;
+        wait_for(|| String::from_utf8_lossy(&rec.bytes.lock().unwrap()).contains(']')).await;
+        let out = rec.bytes.lock().unwrap().clone();
+        assert!(String::from_utf8_lossy(&out).contains("got[]"));
+        assert!(!out.windows(PROBE.len()).any(|w| w == PROBE));
+        m.close(&key("late"));
     }
     #[test]
     fn probe_filter_strips_a_probe_split_across_reads() {
