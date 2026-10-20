@@ -334,19 +334,20 @@ export function PromptPanel({
     [agent, fallback],
   );
   const mirrorOn = useRef(false);
-  const refresh = useCallback(
-    () =>
-      read()
-        .then(async (text) => {
-          const next = show(text);
-          if (mirrorOn.current || next?.fallback) {
-            const ansi = await readAs("ansi");
-            if (live.current) setScreenText(ansi);
-          }
-        })
-        .catch((e) => console.error("pane.read failed", e)),
-    [read, readAs, show],
-  );
+  const inFlight = useRef(false);
+  const refresh = useCallback(() => {
+    inFlight.current = true;
+    return read()
+      .then(async (text) => {
+        const next = show(text);
+        if (mirrorOn.current || next?.fallback) {
+          const ansi = await readAs("ansi");
+          if (live.current) setScreenText(ansi);
+        }
+      })
+      .catch((e) => console.error("pane.read failed", e))
+      .finally(() => (inFlight.current = false));
+  }, [read, readAs, show]);
 
   useEffect(() => {
     live.current = true;
@@ -355,11 +356,12 @@ export function PromptPanel({
     };
   }, []);
 
-  // Read on mount, on every status update, and on a timer while waiting (not while the window is in the background).
+  // Read on mount, on every status update, and on a timer while waiting (not while the window is in the background,
+  // nor while the last read is still out: a stalled link would pile them up).
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => {
-      if (!busy.current && !document.hidden) void refresh();
+      if (!busy.current && !inFlight.current && !document.hidden) void refresh();
     }, PROMPT_POLL_MS);
     return () => clearInterval(timer);
   }, [refresh, view.status, view.title]);

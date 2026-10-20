@@ -27,9 +27,12 @@ export function useClaudeSuggestion(pane: PaneRef, agent: string | null, status:
   useEffect(() => {
     if (!waiting || !reading) return;
     let live = true;
+    let inFlight = false;
     const read = () => {
       // No reads while the window is in the background; the next tick after it returns reads.
-      if (document.hidden) return;
+      // Nor while the last one is still out: a stalled link would pile them up.
+      if (document.hidden || inFlight) return;
+      inFlight = true;
       return herdrCall(pane.machine_id, pane.session, "pane.read", {
         pane_id: pane.pane_id,
         source: "visible",
@@ -42,7 +45,7 @@ export function useClaudeSuggestion(pane: PaneRef, agent: string | null, status:
         },
         // Only a nicety: a failed read leaves no suggestion.
         () => live && setSuggestion(null),
-      );
+      ).finally(() => (inFlight = false));
     };
     void read();
     const timer = setInterval(read, SUGGESTION_POLL_MS);

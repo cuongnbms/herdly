@@ -14,8 +14,8 @@ use crate::{
         local::LocalTransport,
         parse_probe, parse_session_list, probe_argv, split_probe,
         ssh::{
-            classify_ssh_error, clear_stale_ctl, master_alive, master_exit, start_master,
-            SshTransport,
+            classify_ssh_error, clear_stale_ctl, link_alive, master_alive, master_exit,
+            start_master, SshTransport,
         },
         MachineInfo, SessionEntry, Transport,
     },
@@ -236,6 +236,8 @@ struct Machine {
     epoch: u64,
     /// Periodic master check while an ssh Machine is connected.
     health: Option<JoinHandle<()>>,
+    /// A link probe is out (see `check_link`); further timeouts wait for its verdict.
+    probing: bool,
     /// Being removed: its views are no longer emitted.
     removing: bool,
 }
@@ -255,6 +257,7 @@ impl Machine {
             gate: Arc::default(),
             epoch: 0,
             health: None,
+            probing: false,
             removing: false,
         }
     }
@@ -330,6 +333,8 @@ pub struct MachineManager {
     master_start: Mutex<Option<MasterStart>>,
     master_exit: Mutex<Option<MasterExit>>,
     alive_check: Mutex<Option<AliveCheck>>,
+    /// Test seam: replaces `link_alive` in `check_link`.
+    link_check: Mutex<Option<AliveCheck>>,
     health_every: Mutex<Duration>,
     throttle: Mutex<HashMap<String, Throttle>>,
 }
@@ -377,6 +382,7 @@ impl MachineManager {
             master_start: Mutex::new(None),
             master_exit: Mutex::new(None),
             alive_check: Mutex::new(None),
+            link_check: Mutex::new(None),
             health_every: Mutex::new(HEALTH_EVERY),
             throttle: Mutex::new(HashMap::new()),
         })
@@ -411,6 +417,11 @@ impl MachineManager {
     fn with_health_check(&self, every: Duration, f: AliveCheck) {
         *self.health_every.lock().unwrap() = every;
         *self.alive_check.lock().unwrap() = Some(f);
+    }
+
+    #[cfg(test)]
+    fn with_link_check(&self, f: AliveCheck) {
+        *self.link_check.lock().unwrap() = Some(f);
     }
 
     async fn end_master(&self, s: &SshTransport) {
@@ -1000,6 +1011,51 @@ impl MachineManager {
         }
     }
 
+    /// An RPC to `id` timed out: ask the remote for an answer with a short deadline. None
+    /// means the master's TCP died without the master noticing yet (its keepalives give up
+    /// only after 15 s, which is how a Mac waking from sleep finds it), so end the master
+    /// and reconnect now. Timeouts while a probe is out wait for its verdict.
+    pub(crate) async fn check_link(&self, id: &str) {
+        if id == LOCAL {
+            return;
+        }
+        let epoch = self
+            .with_machine(id, |m| {
+                if m.state != MachineState::Connected || m.probing {
+                    return None;
+                }
+                m.probing = true;
+                Some(m.epoch)
+            })
+            .ok()
+            .flatten();
+        let Some(epoch) = epoch else { return };
+        let alive = self.link_ok(id).await;
+        let _ = self.with_machine(id, |m| m.probing = false);
+        if alive || !self.is_current(id, epoch) {
+            return;
+        }
+        tracing::warn!("{id}: the ssh link stopped answering, reconnecting");
+        let seam = self.master_exit.lock().unwrap().clone();
+        match (seam, self.ssh_of(id)) {
+            (Some(f), _) => f(),
+            (None, Some(s)) => master_exit(&s.ctl, &s.target).await,
+            (None, None) => {}
+        }
+        self.on_master_lost(id).await;
+    }
+
+    async fn link_ok(&self, id: &str) -> bool {
+        let seam = self.link_check.lock().unwrap().clone();
+        if let Some(f) = seam {
+            return f().await;
+        }
+        match self.ssh_of(id) {
+            Some(s) => link_alive(&s.ctl, &s.target).await,
+            None => true, // a test transport: nothing to check
+        }
+    }
+
     /// Retry the connection with `backoff`; an auth failure (or any state that needs the
     /// user) ends the retries.
     async fn reconnect_loop(self: Arc<Self>, id: String) {
@@ -1338,7 +1394,14 @@ impl MachineManager {
                 });
             }
         }
-        let result = rpc::call(&socket, method, params).await?;
+        let result = rpc::call(&socket, method, params).await;
+        if matches!(&result, Err(e) if e.code == "timeout") {
+            if let Some(me) = self.me.upgrade() {
+                let id = pane_machine.to_string();
+                tokio::spawn(async move { me.check_link(&id).await });
+            }
+        }
+        let result = result?;
         if method == "pane.rename" || method == "pane.close" {
             // Refetch now rather than wait for herdr's `pane.updated` / `pane.closed` event.
             let _ = self.with_machine(pane_machine, |m| {
@@ -2194,6 +2257,99 @@ mod tests {
             .await
         );
         mgr.disconnect("health-dead").await;
+    }
+
+    /// A connected fake Machine whose link probe answers `alive` (after `delay_ms`) and whose
+    /// master exits are counted.
+    async fn link_machine(
+        id: &str,
+        alive: bool,
+        delay_ms: u64,
+    ) -> (
+        Arc<MachineManager>,
+        FakeHerdr,
+        tempfile::TempDir,
+        Arc<std::sync::atomic::AtomicU32>,
+        Arc<std::sync::atomic::AtomicU32>,
+    ) {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let f = FakeHerdr::start(Arc::new(|_, _| Ok(json!({"type":"ok"}))));
+        let d = tempfile::tempdir().unwrap();
+        let mgr = MachineManager::new(d.path().join("m.json"), Arc::new(|_| {}));
+        let sock = f.path.to_string_lossy().to_string();
+        mgr.with_transport_factory(Arc::new(move |_| {
+            Arc::new(FakeT { sock: sock.clone() }) as Arc<dyn Transport>
+        }));
+        let (probes, exits): (Arc<AtomicU32>, Arc<AtomicU32>) = Default::default();
+        let p = probes.clone();
+        mgr.with_link_check(Arc::new(move || {
+            p.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                alive
+            })
+        }));
+        let e = exits.clone();
+        mgr.with_master_exit(Arc::new(move || {
+            e.fetch_add(1, Ordering::SeqCst);
+        }));
+        mgr.add(id.into(), None, None).await.unwrap();
+        mgr.connect(id).await.unwrap();
+        (mgr, f, d, probes, exits)
+    }
+
+    fn state_of(mgr: &MachineManager, id: &str) -> MachineState {
+        mgr.views().into_iter().find(|v| v.id == id).unwrap().state
+    }
+
+    #[tokio::test]
+    async fn a_dead_link_ends_the_master_and_reconnects() {
+        use std::sync::atomic::Ordering;
+        let (mgr, _f, _d, probes, exits) = link_machine("link-dead", false, 0).await;
+        mgr.check_link("link-dead").await;
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
+        assert_eq!(exits.load(Ordering::SeqCst), 1);
+        assert_eq!(state_of(&mgr, "link-dead"), MachineState::Disconnected);
+        // The reconnect that follows brings it back.
+        let m = mgr.clone();
+        assert!(wait_for(move || state_of(&m, "link-dead") == MachineState::Connected).await);
+        mgr.disconnect("link-dead").await;
+    }
+
+    #[tokio::test]
+    async fn a_live_link_is_left_alone() {
+        use std::sync::atomic::Ordering;
+        let (mgr, _f, _d, probes, exits) = link_machine("link-ok", true, 0).await;
+        mgr.check_link("link-ok").await;
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
+        assert_eq!(exits.load(Ordering::SeqCst), 0);
+        assert_eq!(state_of(&mgr, "link-ok"), MachineState::Connected);
+        mgr.disconnect("link-ok").await;
+    }
+
+    #[tokio::test]
+    async fn timeouts_at_once_share_one_probe() {
+        use std::sync::atomic::Ordering;
+        let (mgr, _f, _d, probes, exits) = link_machine("link-many", false, 200).await;
+        let (a, b, c) = tokio::join!(
+            mgr.check_link("link-many"),
+            mgr.check_link("link-many"),
+            mgr.check_link("link-many"),
+        );
+        let _ = (a, b, c);
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
+        assert_eq!(exits.load(Ordering::SeqCst), 1);
+        mgr.disconnect("link-many").await;
+    }
+
+    #[tokio::test]
+    async fn the_local_machine_has_no_link_to_probe() {
+        use std::sync::atomic::Ordering;
+        let (mgr, _f, _d, probes, _exits) = link_machine("link-local", false, 0).await;
+        mgr.connect("local").await.unwrap();
+        mgr.check_link("local").await;
+        assert_eq!(probes.load(Ordering::SeqCst), 0);
+        mgr.disconnect("link-local").await;
     }
 
     #[tokio::test]

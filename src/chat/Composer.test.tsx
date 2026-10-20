@@ -376,6 +376,27 @@ describe("Composer suggestion", () => {
     }
   });
 
+  it("does not read again while the last read is still out", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer!: () => void;
+      vi.mocked(herdrCall).mockImplementation(async (_m, _s, method) => {
+        if (method !== "pane.read") return {};
+        await new Promise<void>((r) => (answer = r));
+        return { text: claudeScreen("commit it") };
+      });
+      render(<Composer pane={pane} agent="claude" status="idle" />);
+      await act(async () => {});
+      await act(async () => vi.advanceTimersByTime(SUGGESTION_POLL_MS * 3));
+      expect(reads()).toHaveLength(1);
+      await act(async () => answer());
+      await act(async () => vi.advanceTimersByTime(SUGGESTION_POLL_MS));
+      expect(reads()).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reads no suggestion for other agents", async () => {
     render(<Composer pane={pane} agent="codex" status="idle" />);
     await act(async () => {});

@@ -157,9 +157,9 @@ impl Transport for SshTransport {
     }
 }
 
-/// `ssh -M -S ctl -o ControlPersist=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3
+/// `ssh -M -S ctl -o ControlPersist=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=3
 /// [-o BatchMode=yes] -f -N target`. Keepalives make a wedged connection end the master
-/// (about 45 s) instead of leaving the Machine "connected" with frozen terminals.
+/// (about 15 s) instead of leaving the Machine "connected" with frozen terminals.
 pub fn master_argv(ctl: &Path, target: &str, batch: bool) -> Vec<String> {
     let mut v: Vec<String> = vec![
         "ssh".into(),
@@ -169,7 +169,7 @@ pub fn master_argv(ctl: &Path, target: &str, batch: bool) -> Vec<String> {
         "-o".into(),
         "ControlPersist=yes".into(),
         "-o".into(),
-        "ServerAliveInterval=15".into(),
+        "ServerAliveInterval=5".into(),
         "-o".into(),
         "ServerAliveCountMax=3".into(),
     ];
@@ -197,6 +197,24 @@ fn control_argv(ctl: &Path, target: &str, op: &str) -> Vec<String> {
 /// True when the ControlMaster for `ctl` is running (`ssh -O check` exits 0).
 pub async fn master_alive(ctl: &Path, target: &str) -> bool {
     matches!(exec(&LocalTransport, &control_argv(ctl, target, "check")).await, Ok(o) if o.status == 0)
+}
+
+/// How long `link_alive` waits for the remote to answer.
+const LINK_PROBE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// True when `true` run through the master answers within `LINK_PROBE`. Unlike `-O check`
+/// this crosses the network, so it fails while the master's TCP is dead but not yet noticed
+/// (as after the Mac slept).
+pub async fn link_alive(ctl: &Path, target: &str) -> bool {
+    answers(&ssh_wrap(ctl, target, &["true".into()], false), LINK_PROBE).await
+}
+
+/// True when `argv` exits 0 within `within`; a slower one is killed.
+async fn answers(argv: &[String], within: std::time::Duration) -> bool {
+    matches!(
+        tokio::time::timeout(within, exec(&LocalTransport, argv)).await,
+        Ok(Ok(o)) if o.status == 0
+    )
 }
 
 /// Ask the ControlMaster to exit; errors are ignored.
@@ -328,7 +346,7 @@ mod tests {
                 "-o",
                 "ControlPersist=yes",
                 "-o",
-                "ServerAliveInterval=15",
+                "ServerAliveInterval=5",
                 "-o",
                 "ServerAliveCountMax=3",
                 "-o",
@@ -349,7 +367,7 @@ mod tests {
                 "-o",
                 "ControlPersist=yes",
                 "-o",
-                "ServerAliveInterval=15",
+                "ServerAliveInterval=5",
                 "-o",
                 "ServerAliveCountMax=3",
                 "-f",
@@ -409,6 +427,19 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, "io");
+    }
+    #[tokio::test]
+    async fn the_link_answers_only_with_success_in_time() {
+        let within = std::time::Duration::from_secs(5);
+        assert!(answers(&sh("exit 0"), within).await);
+        assert!(!answers(&sh("exit 255"), within).await);
+        let t = std::time::Instant::now();
+        assert!(!answers(&sh("sleep 5"), std::time::Duration::from_millis(200)).await);
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            t.elapsed()
+        );
     }
     #[test]
     fn classifies_errors() {
