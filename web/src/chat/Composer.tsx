@@ -22,7 +22,9 @@ export function Composer({ pane, working, draft, setDraft, onSend }: { pane: Web
     const line = parseFloat(getComputedStyle(el).lineHeight);
     const rowHeight = Number.isNaN(line) ? FALLBACK_ROW_PX : line;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, rowHeight * COMPOSER_MAX_ROWS + VERTICAL_PADDING_PX) + "px";
+    // border-box: scrollHeight leaves the border out, so add it (offsetHeight - clientHeight) to both sides.
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = Math.min(el.scrollHeight + border, rowHeight * COMPOSER_MAX_ROWS + VERTICAL_PADDING_PX + border) + "px";
   }, [draft.text]);
 
   const onStop = async () => {

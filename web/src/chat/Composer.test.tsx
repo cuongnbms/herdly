@@ -53,4 +53,20 @@ describe("Composer", () => {
     render(<Harness working={false} text="hello" error="pane gone" />);
     expect(screen.getByRole("alert")).toHaveTextContent("pane gone");
   });
+
+  it("sizes the field to its content plus the border, capped at six rows plus padding and border", () => {
+    const proto = HTMLTextAreaElement.prototype;
+    const stub = (name: string, value: number) => vi.spyOn(proto, name as "scrollHeight", "get").mockReturnValue(value);
+    stub("offsetHeight", 44);
+    stub("clientHeight", 42); // a 2px border
+    const scroll = stub("scrollHeight", 42);
+    render(<Harness working={false} />);
+    const field = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    expect(field.style.height).toBe("44px");
+    scroll.mockReturnValue(500);
+    fireEvent.change(field, { target: { value: "a\nb\nc\nd\ne\nf\ng\nh" } });
+    // jsdom has no line-height, so the row falls back to 22px: 22 * 6 + 20 + 2
+    expect(field.style.height).toBe("154px");
+    vi.restoreAllMocks();
+  });
 });
