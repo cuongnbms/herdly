@@ -587,7 +587,7 @@ async fn input_loop(
 /// Both the socket's read loop and the supervisor report through this state, so the order in
 /// which they wake the writer cannot decide the outcome. A failed open is recorded with its
 /// frame, so it is always sent before its 1008 close, whatever else is pending.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Ending {
     /// The error frame a failed open owes the client, if any.
     error: Option<String>,
@@ -626,54 +626,66 @@ impl Ending {
     }
 }
 
+/// A publication a test forces at the writer's decision boundary (test builds only).
+#[cfg(test)]
+type DecisionHook = Arc<dyn Fn() + Send + Sync>;
+
 /// The attempt's ending, shared by the read loop, the supervisor and the writer.
+///
+/// It is a `watch` channel rather than a mutex plus `Notify` for two reasons that the review
+/// named, and both are structural:
+///
+/// - `borrow()` hands out one coherent `Ending`, so a decision never reads the error frame and
+///   the close code as two separate snapshots that a publication can slip between.
+/// - the channel is **stateful and versioned**: `changed()` compares versions, so a publication
+///   that happens between a snapshot and the wait is still observed. `Notify::notify_waiters`
+///   stores no permit, and would have been lost exactly in that window.
 #[derive(Clone)]
 struct EndingState {
-    state: Arc<Mutex<Ending>>,
-    changed: Arc<tokio::sync::Notify>,
+    tx: watch::Sender<Ending>,
+    /// A test-only seam that publishes *at the decision boundary*: it runs immediately after
+    /// the writer takes its snapshot and before it decides. That is the exact window in which
+    /// a torn read (error now, code later) would lose a failed open's frame, so a test can
+    /// force the interleaving instead of waiting for a scheduler to produce it. It is empty in
+    /// production and never changes behaviour.
+    #[cfg(test)]
+    interleave: Arc<Mutex<Option<DecisionHook>>>,
 }
 
 impl EndingState {
     fn new() -> EndingState {
         EndingState {
-            state: Arc::new(Mutex::new(Ending::default())),
-            changed: Arc::new(tokio::sync::Notify::new()),
+            tx: watch::channel(Ending::default()).0,
+            #[cfg(test)]
+            interleave: Arc::new(Mutex::new(None)),
         }
     }
 
-    fn get(&self) -> Ending {
-        self.state.lock().unwrap().clone()
+    /// The writer's own view of this state: every publication after this point is observed.
+    fn subscribe(&self) -> watch::Receiver<Ending> {
+        self.tx.subscribe()
     }
 
     /// Records the close code (first wins) and wakes the writer.
     fn close(&self, code: u16) {
-        let changed = self.state.lock().unwrap().close(code);
-        if changed {
-            self.changed.notify_waiters();
-        }
+        self.tx.send_if_modified(|ending| ending.close(code));
     }
 
     /// Records a failed open's error frame, which always decides the close code.
     fn open_failed(&self, frame: String) {
-        let changed = self.state.lock().unwrap().open_failed(frame);
-        if changed {
-            self.changed.notify_waiters();
+        self.tx
+            .send_if_modified(|ending| ending.open_failed(frame.clone()));
+    }
+
+    /// Runs the test seam, if a test installed one. A no-op in production.
+    fn at_decision_boundary(&self) {
+        #[cfg(test)]
+        {
+            let hook = self.interleave.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook();
+            }
         }
-    }
-
-    /// Resolves when the ending changes. Registered before the state is read, so a change
-    /// between the read and the wait is not missed; a state that already has a code returns
-    /// immediately, because the caller checks it first.
-    async fn changed(&self) {
-        let notified = self.changed.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
-        notified.await;
-    }
-
-    /// Prunes an error frame the writer has just sent, so it is sent exactly once.
-    fn take_error(&self) -> Option<String> {
-        self.state.lock().unwrap().error.take()
     }
 }
 
@@ -689,20 +701,43 @@ async fn writer_loop<S>(
     mut sink: S,
     queue: Arc<Queue>,
     ledger: Arc<AckLedger>,
-    ending: EndingState,
+    ending_state: EndingState,
 ) -> u16
 where
     S: futures_util::Sink<Message, Error = axum::Error> + Unpin,
 {
+    // The writer's own receiver: every publication after this point is versioned against it.
+    let mut ending = ending_state.subscribe();
+    // The writer's own decisions (a sealed drain, an overflow, a send that ran out of time)
+    // need no notification: they are recorded here and merged with the shared ending.
+    let mut own = Ending::default();
+    // Set when the ending's last sender is gone: the branch is then disabled rather than
+    // polled against a closed channel, which would spin or read as a policy close.
+    let mut ending_alive = true;
     let code = loop {
-        // One place decides what happens next: a failed open first, then any close code.
-        if let Some(frame) = ending.get().error {
+        // One snapshot of the *shared* ending per decision, merged with what the writer itself
+        // decided. A failed open and its 1008 can therefore never be torn apart into
+        // "no error" plus "close 1008".
+        let remote = ending.borrow_and_update().clone();
+        // Test-only: a publication here lands after the snapshot and before the decision. The
+        // loop re-decides from the next version, so nothing is lost; a torn read would break.
+        ending_state.at_decision_boundary();
+        let decided = if remote.error.is_some() {
+            remote
+        } else {
+            let mut merged = own.clone();
+            if merged.code.is_none() {
+                merged.code = remote.code;
+            }
+            merged
+        };
+        if let Some(frame) = decided.error {
+            // The error frame always precedes its policy close, so the client sees why.
             let _ =
                 tokio::time::timeout(SEND_DEADLINE, sink.send(Message::Text(frame.into()))).await;
-            ending.take_error();
             break CLOSE_POLICY;
         }
-        if let Some(code) = ending.get().code {
+        if let Some(code) = decided.code {
             break code;
         }
         let drain_by = DrainDeadline::from(queue.grace_deadline());
@@ -721,20 +756,20 @@ where
                     }
                     // Recorded rather than broken out of, so a pending open error still wins.
                     Err(Stop::Sealed) => {
-                        ending.close(CLOSE_NORMAL);
+                        own.close(CLOSE_NORMAL);
                         continue;
                     }
                     Err(Stop::Overflow) => {
-                        ending.close(CLOSE_LAGGED);
+                        own.close(CLOSE_LAGGED);
                         continue;
                     }
                 };
-                match send_frame(&mut sink, message, &ending, drain_by).await {
+                match send_frame(&mut sink, message, &mut ending, drain_by).await {
                     Outcome::Sent => {}
                     // Not `break`: the ending may carry an open error frame that must be sent
                     // before this code, so the top of the loop decides.
                     Outcome::Code(code) => {
-                        ending.close(code);
+                        own.close(code);
                         continue;
                     }
                     Outcome::Gone => return CLOSE_NORMAL,
@@ -744,13 +779,18 @@ where
             _ = wait_drain(drain_by) => {
                 // A drain that cannot finish in its bound is lagged, not a good close; recorded
                 // so a pending open error can still be sent first.
-                ending.close(CLOSE_LAGGED);
+                own.close(CLOSE_LAGGED);
                 continue;
             }
             // Any ending, including a failed open whose frame is sent at the top of the loop.
-            // Nothing here treats a closed channel as an ending: this state is never dropped
-            // before the writer finishes, and a vanished *sender* alone must not close 1008.
-            _ = ending.changed() => continue,
+            // The watch compares versions, so a publication in the window above is observed
+            // rather than lost. A closed channel is not an ending: it disables the branch.
+            changed = ending.changed(), if ending_alive => {
+                if changed.is_err() {
+                    ending_alive = false;
+                }
+                continue;
+            }
         }
     };
     send_close(&mut sink, code).await;
@@ -814,17 +854,24 @@ enum Outcome {
 
 /// Sends one frame behind both deadlines, so neither a single wedged send nor a long series of
 /// slow-but-acceptable ones can hold the writer (and with it the close) past its bound.
+///
+/// The ending is read as one snapshot, and the wait for a new ending is a versioned
+/// `changed()`: a publication that lands between the snapshot and the select is compared
+/// against the version the receiver has already seen, so it wakes this call rather than being
+/// lost until the send's own deadline.
 async fn send_frame<S>(
     sink: &mut S,
     frame: Message,
-    ending: &EndingState,
+    ending: &mut watch::Receiver<Ending>,
     drain_by: DrainDeadline,
 ) -> Outcome
 where
     S: futures_util::Sink<Message, Error = axum::Error> + Unpin,
 {
-    let ending_now = ending.get();
-    if let Some(code) = ending_now.code {
+    // `borrow_and_update` marks this version seen, so `changed()` below can only fire for a
+    // publication *after* this snapshot.
+    let snapshot = ending.borrow_and_update().clone();
+    if let Some(code) = snapshot.code {
         return Outcome::Code(code);
     }
     // The frame may take no longer than the smaller of its own bound and the drain's remainder.
@@ -842,7 +889,13 @@ where
             Err(_) => Outcome::Code(CLOSE_LAGGED),
         },
         // Any ending interrupts the send; the loop then sends a pending error frame first.
-        _ = ending.changed() => Outcome::Code(ending.get().code()),
+        changed = ending.changed() => match changed {
+            // Versioned: this fires for a publication after the snapshot above, not only for
+            // one that happened to arrive before this future was polled.
+            Ok(()) => Outcome::Code(ending.borrow_and_update().code()),
+            // A vanished sender is not an ending; let the send's own deadline decide.
+            Err(_) => Outcome::Sent,
+        },
     }
 }
 
@@ -946,19 +999,18 @@ mod tests {
         }
     }
 
-    /// A peer that stopped reading: every send stays in flight forever.
-    #[derive(Clone, Default)]
-    struct Stalled {
-        in_flight: Arc<AtomicUsize>,
-        /// Every frame that entered a send, in order.
+    /// A peer that publishes a failed open from inside its own `poll_flush`: the publication
+    /// happens after `send_frame` took its snapshot and before that call's `changed()` is first
+    /// polled, which is the send-path window N3 names, forced by the code path and not by
+    /// timing.
+    #[derive(Clone)]
+    struct PublishOnFlush {
         frames: Arc<Mutex<Vec<Message>>>,
+        ending: EndingState,
+        published: Arc<AtomicUsize>,
     }
 
-    impl Stalled {
-        fn in_flight(&self) -> usize {
-            self.in_flight.load(Ordering::SeqCst)
-        }
-        /// The frames that entered a send, skipping the final close frame.
+    impl PublishOnFlush {
         fn frames(&self) -> Vec<Message> {
             self.frames
                 .lock()
@@ -967,6 +1019,61 @@ mod tests {
                 .filter(|m| !matches!(m, Message::Close(_)))
                 .cloned()
                 .collect()
+        }
+    }
+
+    impl futures_util::Sink<Message> for PublishOnFlush {
+        type Error = axum::Error;
+
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: std::pin::Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+            self.frames.lock().unwrap().push(item);
+            if self.published.load(Ordering::SeqCst) == 0 {
+                // Mid-send: the first frame is inside the sink when the failure lands.
+                self.published.fetch_add(1, Ordering::SeqCst);
+                self.ending.close(CLOSE_NORMAL);
+                self.ending
+                    .open_failed(json_error("io", "cannot open a pty"));
+            }
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            // The interrupted frame never completes, the way a send racing a close does not.
+            if self.published.load(Ordering::SeqCst) > 0
+                && self.frames.lock().unwrap().iter().any(|m| matches!(m, Message::Binary(_)))
+            {
+                return std::task::Poll::Pending;
+            }
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// A peer that stopped reading: every send stays in flight forever.
+    #[derive(Clone, Default)]
+    struct Stalled {
+        in_flight: Arc<AtomicUsize>,
+    }
+
+    impl Stalled {
+        fn in_flight(&self) -> usize {
+            self.in_flight.load(Ordering::SeqCst)
         }
     }
 
@@ -980,9 +1087,8 @@ mod tests {
             std::task::Poll::Ready(Ok(()))
         }
 
-        fn start_send(self: std::pin::Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        fn start_send(self: std::pin::Pin<&mut Self>, _item: Message) -> Result<(), Self::Error> {
             self.in_flight.fetch_add(1, Ordering::SeqCst);
-            self.frames.lock().unwrap().push(item);
             Ok(())
         }
 
@@ -1257,10 +1363,12 @@ mod tests {
         ));
         // The failure is recorded for the writer without the socket having to ask for it, and
         // the attempt ends instead of waiting for output that can never come.
-        tokio::time::timeout(Duration::from_secs(2), ending.changed())
+        let mut seen = ending.subscribe();
+        tokio::time::timeout(Duration::from_secs(2), seen.changed())
             .await
-            .expect("the failed open must be reported");
-        let reported = ending.get().error.expect("an error frame");
+            .expect("the failed open must be reported")
+            .expect("the channel stays open");
+        let reported = seen.borrow().error.clone().expect("an error frame");
         let parsed: serde_json::Value = serde_json::from_str(&reported).unwrap();
         assert_eq!(parsed["type"], "error");
         assert_eq!(parsed["error"]["code"], "io");
@@ -1295,44 +1403,132 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_pending_open_error_beats_a_close_that_arrived_first() {
-        // I1's race: the read loop's normal close and a failed open land in the same instant.
-        // Both notifications are ready before the writer looks, and the close was recorded
-        // *first*, which is exactly the interleaving that used to hide the error frame.
+    #[test]
+    fn one_ending_snapshot_is_never_torn_between_the_error_frame_and_its_close() {
+        // I1: the writer used to read the error frame and the close code as two separate
+        // snapshots, so a failed open landing between them produced "no error" plus "close
+        // 1008" and the client never learned why. One `Ending` value makes that interleaving
+        // unrepresentable: whatever a reader sees is one publication, and any snapshot that
+        // carries an error frame carries its 1008 with it.
         let ending = EndingState::new();
+        // The read loop's normal close is recorded first, then the spawn fails.
         ending.close(CLOSE_NORMAL);
         ending.open_failed(json_error("io", "cannot open a pty"));
-        let queue = Queue::new();
-        let ledger = Arc::new(AckLedger::default());
-        let (ctl_tx, ctl_rx) = watch::channel::<Option<u16>>(None);
-        drop(ctl_tx);
-        // Drive the writer's decision without a socket: the state alone must decide.
-        assert_eq!(ending.get().code, Some(CLOSE_POLICY));
+
+        let snapshot = ending.subscribe().borrow().clone();
+        assert_eq!(
+            snapshot.code,
+            Some(CLOSE_POLICY),
+            "a failed open decides the code, whatever arrived first"
+        );
         let recorded: serde_json::Value =
-            serde_json::from_str(&ending.get().error.expect("an error frame")).unwrap();
+            serde_json::from_str(&snapshot.error.expect("the same snapshot carries the frame"))
+                .unwrap();
         assert_eq!(
             recorded,
             serde_json::json!({
                 "type": "error",
                 "error": {"code": "io", "message": "cannot open a pty"}
-            }),
-            "the ending carries the Spec's error shape and its 1008"
+            })
         );
-        // And the real writer sends that frame and closes 1008, never 1000.
+
+        // The invariant, checked over every publication of a longer sequence: an error frame
+        // and its 1008 are never separated.
+        let ending = EndingState::new();
+        let rx = ending.subscribe();
+        let sequence: [&dyn Fn(&EndingState); 6] = [
+            &|e| e.close(CLOSE_NORMAL),
+            &|e| e.open_failed(json_error("io", "first")),
+            &|e| e.close(CLOSE_LAGGED),
+            &|e| e.open_failed(json_error("io", "second")),
+            &|e| e.close(crate::config::CLOSE_REVOKED),
+            &|e| e.open_failed(json_error("timeout", "third")),
+        ];
+        for publish in sequence {
+            publish(&ending);
+            let seen = rx.borrow().clone();
+            if seen.error.is_some() {
+                assert_eq!(
+                    seen.code,
+                    Some(CLOSE_POLICY),
+                    "an error frame always travels with its 1008: {seen:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_publication_between_the_snapshot_and_the_wait_is_still_observed() {
+        // N3's window, forced by hand with no scheduler luck: take the snapshot the writer
+        // takes, publish, and only then wait. A `Notify` stores no permit for a waiter that
+        // arrives later, so that design would park here forever; a versioned `watch` reports
+        // the publication against the version this receiver already saw.
+        let ending = EndingState::new();
+        let mut rx = ending.subscribe();
+        let snapshot = rx.borrow_and_update().clone();
+        assert_eq!(snapshot, Ending::default(), "nothing published yet");
+
+        // The read loop closes, then the supervisor reports the failed open - both after the
+        // snapshot was taken and before anything waits.
+        ending.close(CLOSE_NORMAL);
+        ending.open_failed(json_error("io", "cannot open a pty"));
+
+        let woke = futures_util::FutureExt::now_or_never(rx.changed());
+        assert!(
+            matches!(woke, Some(Ok(()))),
+            "the wait must complete at once for a publication it has not seen: {woke:?}"
+        );
+        let after = rx.borrow_and_update().clone();
+        assert_eq!(after.code, Some(CLOSE_POLICY));
+        assert!(after.error.is_some(), "the frame travels with the code");
+
+        // And the mirror case: a wait already registered when the publication lands.
+        let ending = EndingState::new();
+        let mut rx = ending.subscribe();
+        {
+            let armed = rx.changed();
+            tokio::pin!(armed);
+            // Poll it once so its version is recorded, without letting it complete.
+            assert!(futures_util::FutureExt::now_or_never(armed.as_mut()).is_none());
+            ending.close(CLOSE_NORMAL);
+            let woke = futures_util::FutureExt::now_or_never(armed.as_mut());
+            assert!(matches!(woke, Some(Ok(()))), "an armed wait wakes: {woke:?}");
+        }
+        assert_eq!(rx.borrow_and_update().code, Some(CLOSE_NORMAL));
+    }
+
+    #[tokio::test]
+    async fn an_open_error_published_while_the_writer_is_parked_reaches_the_peer_then_closes_1008() {
+        // The end-to-end version of the I1/N3 window. The queue is empty and the drain is
+        // absent, so the writer parks in its select; the failure is published *then*. On the
+        // default current-thread runtime a single yield takes the writer to its parked point,
+        // so this ordering is deterministic rather than timed.
+        let queue = Queue::new();
+        let ledger = Arc::new(AckLedger::default());
+        let ending = EndingState::new();
         let sink = Slow::new(Duration::ZERO);
-        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
+        let writer = tokio::spawn(writer_loop(
+            sink.clone(),
+            queue,
+            ledger,
+            ending.clone(),
+        ));
+        tokio::task::yield_now().await;
+        assert!(!writer.is_finished(), "the writer is parked, not finished");
+        assert!(sink.frames().is_empty(), "nothing was sent before the failure");
+
+        // The read loop's own close first, then the failed open: exactly the ordering that
+        // used to hide the error frame.
+        ending.close(CLOSE_NORMAL);
+        ending.open_failed(json_error("io", "cannot open a pty"));
+
         let code = tokio::time::timeout(Duration::from_secs(5), writer)
             .await
-            .expect("the writer ends")
+            .expect("a parked writer must be woken by the publication")
             .unwrap();
         assert_eq!(code, CLOSE_POLICY);
         let frames = sink.frames();
-        assert_eq!(
-            frames.len(),
-            1,
-            "exactly one frame before the close: {frames:?}"
-        );
+        assert_eq!(frames.len(), 1, "exactly the error frame: {frames:?}");
         match &frames[0] {
             Message::Text(text) => assert_eq!(
                 serde_json::from_str::<serde_json::Value>(text.as_str()).unwrap(),
@@ -1343,50 +1539,129 @@ mod tests {
             ),
             other => panic!("expected the error frame, got {other:?}"),
         }
-        assert_eq!(
-            ending.get().error,
-            None,
-            "the error frame is sent exactly once"
-        );
-        drop(ctl_rx);
     }
 
     #[tokio::test]
-    async fn an_open_error_arriving_during_a_send_interrupts_it_and_is_still_sent() {
-        // The same race on the send path: the frame is in flight when the error is recorded.
+    async fn a_failure_published_at_the_decision_boundary_is_never_torn_from_its_close() {
+        // I1, forced rather than hoped for: the seam publishes the normal close *and* the
+        // failed open after the writer's single snapshot and before its decision. A design
+        // that read the error frame and the close code as two snapshots would decide "no
+        // error" from the first and "1008" from the second, then close without the frame.
+        let queue = Queue::new();
+        let ledger = Arc::new(AckLedger::default());
         let ending = EndingState::new();
+        let sink = Slow::new(Duration::ZERO);
+        let publishes = Arc::new(AtomicUsize::new(0));
+        let boundary_hits = Arc::new(AtomicUsize::new(0));
+        *ending.interleave.lock().unwrap() = Some({
+            let ending = ending.clone();
+            let publishes = publishes.clone();
+            let boundary_hits = boundary_hits.clone();
+            Arc::new(move || {
+                boundary_hits.fetch_add(1, Ordering::SeqCst);
+                // Exactly once, so the writer cannot loop on its own publication.
+                if publishes.load(Ordering::SeqCst) == 0 {
+                    publishes.store(1, Ordering::SeqCst);
+                    ending.close(CLOSE_NORMAL);
+                    ending.open_failed(json_error("io", "cannot open a pty"));
+                }
+            })
+        });
+        let writer = tokio::spawn(writer_loop(
+            sink.clone(),
+            queue,
+            ledger,
+            ending.clone(),
+        ));
+        let code = tokio::time::timeout(Duration::from_secs(5), writer)
+            .await
+            .expect("the forced publication must not wedge the writer")
+            .unwrap();
+        assert_eq!(publishes.load(Ordering::SeqCst), 1, "the seam published once");
+        assert!(
+            boundary_hits.load(Ordering::SeqCst) >= 1,
+            "the seam really ran at the writer's decision boundary"
+        );
+        assert_eq!(
+            code, CLOSE_POLICY,
+            "the failure decides the close even though the normal close was recorded first"
+        );
+        let frames = sink.frames();
+        assert_eq!(frames.len(), 1, "the error frame is delivered: {frames:?}");
+        assert!(
+            matches!(&frames[0], Message::Text(t) if t.contains(r#""type":"error""#)),
+            "and it is the error frame, not a bare close: {frames:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_normal_close_published_while_the_writer_is_parked_is_not_lost() {
+        // The same wakeup, with no error at all: an empty queue and an absent drain leave
+        // nothing else to wake the writer, so a lost publication would park it until the
+        // socket's own join bound and the peer would see no close.
+        let queue = Queue::new();
+        let ledger = Arc::new(AckLedger::default());
+        let ending = EndingState::new();
+        let sink = Slow::new(Duration::ZERO);
+        let writer = tokio::spawn(writer_loop(
+            sink.clone(),
+            queue,
+            ledger,
+            ending.clone(),
+        ));
+        tokio::task::yield_now().await;
+        assert!(!writer.is_finished(), "the writer is parked on an empty queue");
+
+        ending.close(CLOSE_NORMAL);
+        let code = tokio::time::timeout(Duration::from_secs(5), writer)
+            .await
+            .expect("the parked writer must observe the normal close")
+            .unwrap();
+        assert_eq!(code, CLOSE_NORMAL);
+        assert!(sink.frames().is_empty(), "a normal close sends no data frame");
+    }
+
+    #[tokio::test]
+    async fn a_publication_from_inside_a_pending_send_interrupts_it_and_is_still_sent() {
+        // The send path's version of the window, with the ordering fixed by the code path
+        // rather than by timing: the sink publishes the failure from inside its own poll, i.e.
+        // after `send_frame` took its snapshot and before its select first polls `changed()`.
         let queue = Queue::new();
         let ledger = Arc::new(AckLedger::default());
         assert_eq!(queue.push_data(b"output".to_vec()), Push::Accepted);
-        let sink = Stalled::default();
-        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert_eq!(sink.in_flight(), 1, "the writer is inside a send");
-        // A close and then the error: the error must still reach the client.
-        ending.close(CLOSE_NORMAL);
-        ending.open_failed(json_error("io", "cannot open a pty"));
+        let ending = EndingState::new();
+        let sink = PublishOnFlush {
+            frames: Arc::new(Mutex::new(Vec::new())),
+            ending: ending.clone(),
+            published: Arc::new(AtomicUsize::new(0)),
+        };
+        let writer = tokio::spawn(writer_loop(
+            sink.clone(),
+            queue,
+            ledger,
+            ending.clone(),
+        ));
         let code = tokio::time::timeout(Duration::from_secs(5), writer)
             .await
-            .expect("the ending interrupts the send")
+            .expect("a publication during a send must interrupt it")
             .unwrap();
+        assert_eq!(sink.published.load(Ordering::SeqCst), 1, "published once, mid-send");
         assert_eq!(
             code, CLOSE_POLICY,
-            "the open error decides the close, not the normal one"
+            "the open error decides the close, not the interrupted frame"
         );
-        // The interrupted data frame was already started, so it precedes the error: what
-        // matters is that the error frame is delivered after it, before the close.
         let frames = sink.frames();
+        // The interrupted data frame entered the sink, then the error frame, then the close.
+        assert!(
+            matches!(frames.first(), Some(Message::Binary(_))),
+            "the data frame comes first: {frames:?}"
+        );
         let last = frames.last().expect("the error frame");
         assert!(
             matches!(last, Message::Text(t) if t.contains(r#""type":"error""#)),
-            "the error frame is the last frame before the close: {frames:?}"
-        );
-        assert!(
-            matches!(frames.first(), Some(Message::Binary(_))),
-            "the interrupted output frame comes first: {frames:?}"
+            "the error frame is delivered after it: {frames:?}"
         );
         assert_eq!(frames.len(), 2, "nothing else is sent: {frames:?}");
-        assert_eq!(ending.get().error, None);
     }
 
     #[test]

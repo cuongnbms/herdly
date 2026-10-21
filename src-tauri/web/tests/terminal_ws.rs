@@ -1356,45 +1356,41 @@ async fn sigterm_through_the_real_serve_path_exits_cleanly() {
 }
 
 #[tokio::test]
-async fn a_failed_open_after_the_client_disconnects_still_records_the_policy_close() {
-    // The read loop's own close and the failed open race. Whatever order they land in, the
-    // attempt ends 1008 with its error recorded - never a silent 1000.
+async fn a_failed_open_whose_spawn_fails_after_a_client_disconnect_is_closed_exactly_once() {
+    // The client goes away while the spawn is in flight, and that spawn then *fails*. The
+    // attempt is still owned: it is closed exactly once, before its registration clears.
     let server = Server::start(Duration::from_secs(15)).await;
     let (attempt, open_gate) = FakeTerminal::gated();
+    *attempt.pending_open_failure().lock().unwrap() =
+        Some(herdly_core::error::AppError::new("io", "cannot open a pty"));
     server.fake.script_terminal(attempt.clone());
     let mut ws = server.connect().await;
     ws.send(open_frame("s", "p1", 80, 24, false)).await.unwrap();
     wait_until("the pending open", || attempt.sizes().len() == 1).await;
-    // The client goes away while the spawn is still in flight.
+    // The browser goes away while core is still spawning, and the spawn then fails.
     drop(ws);
     wait_until("the registration to be owned", || {
         server.st.terminals.len() == 1
     })
     .await;
     drop(open_gate);
-    // The late open succeeded here, so it is closed; the attempt ends without an error frame
-    // and its registration clears only after the close.
-    wait_until("the late open to be closed", || attempt.is_closed()).await;
-    wait_until("the registration to clear", || {
+    // The failure must not leave the attempt unowned or half-closed.
+    wait_until("the failed attempt to be closed", || attempt.is_closed()).await;
+    assert_eq!(attempt.close_count(), 1, "closed exactly once");
+    wait_until("the registration to clear after cleanup", || {
         server.st.terminals.is_empty()
     })
     .await;
-    assert_eq!(attempt.close_count(), 1);
 }
 
 #[tokio::test]
-async fn a_failed_open_with_a_pending_client_close_reports_the_error_not_a_normal_close() {
-    // Both endings are ready at the same moment: the client's own close frame and the failed
-    // spawn. The error must be delivered, and the close must be 1008 rather than 1000.
+async fn a_failed_open_with_a_pending_client_close_delivers_the_error_then_1008() {
+    // The client's own close frame and the failed spawn land in the same instant. The peer is
+    // still reading a live socket, so what it receives is observable: the error frame first,
+    // then close 1008 - never a bare 1000.
     let server = Server::start(Duration::from_secs(15)).await;
     let (attempt, open_gate) = FakeTerminal::gated();
     server.fake.script_terminal(attempt.clone());
-    let (failing, gate) = FakeTerminal::gated();
-    // A gated spawn that fails once its gate opens: the failure lands right after the client
-    // asked to close, which is the interleaving I1 named.
-    *failing.pending_open_failure().lock().unwrap() =
-        Some(herdly_core::error::AppError::new("io", "cannot open a pty"));
-    server.fake.script_terminal(failing.clone());
     let mut first = server.connect().await;
     first
         .send(open_frame("s", "p1", 80, 24, false))
@@ -1403,24 +1399,24 @@ async fn a_failed_open_with_a_pending_client_close_reports_the_error_not_a_norma
     wait_until("the pending open", || attempt.sizes().len() == 1).await;
     drop(open_gate);
 
+    let (failing, gate) = FakeTerminal::gated();
+    *failing.pending_open_failure().lock().unwrap() =
+        Some(herdly_core::error::AppError::new("io", "cannot open a pty"));
+    server.fake.script_terminal(failing.clone());
     let mut ws = server.connect().await;
     ws.send(open_frame("s", "p2", 80, 24, false)).await.unwrap();
     wait_until("the second pending open", || failing.sizes().len() == 1).await;
-    // The client closes at the same instant the spawn fails.
+    // The client asks to close, then the spawn fails: the error still has to reach it.
     ws.send(Message::Close(None)).await.unwrap();
     drop(gate);
-    // The frame the client sees before the connection ends is the error, not silence.
-    loop {
-        match tokio::time::timeout(Duration::from_secs(5), ws.next()).await {
-            Ok(Some(Ok(Message::Text(text)))) => {
-                let value: Value = serde_json::from_str(&text).unwrap();
-                assert_eq!(value["type"], "error", "{value}");
-                assert_eq!(value["error"]["code"], "io");
-            }
-            Ok(Some(Ok(_))) | Ok(None) | Ok(Some(Err(_))) => break,
-            Err(_) => panic!("the socket must end"),
-        }
-    }
+
+    // The error frame arrives before the connection ends...
+    let error = next_event(&mut ws).await;
+    assert_eq!(error["type"], "error", "{error}");
+    assert_eq!(error["error"]["code"], "io");
+    assert_eq!(error["error"]["message"], "cannot open a pty");
+    // ...and the close is the policy close, not a normal one.
+    assert_eq!(close_code(&mut ws).await, 1008);
     wait_until("the failed attempt to be closed", || failing.is_closed()).await;
     assert_eq!(failing.close_count(), 1);
 }
