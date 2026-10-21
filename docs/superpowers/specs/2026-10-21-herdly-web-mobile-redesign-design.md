@@ -186,7 +186,8 @@ modules.
   item inside it (narration, thinking, call rows) renders through the memoised `ItemView`,
   which receives only that item and, for a call, its own `ToolResult` object (stable across
   runs, it is the store's item), never the `results` Map. Call groups get stable keys from
-  their first call's id; single items from their item (call id, or the absolute index).
+  their first call's id, single calls from their id, other items from their position in
+  `block.items` (a block only grows at its end).
 - **`WorkBlock`**: a header button (`aria-expanded`) with a chevron, the title ("Working…"
   when live, else "Worked for <duration>", else "Worked") and `workSummary` after " · ".
   Open, it lists `groupCalls(block.items, live)`: narration as Markdown, thinking as a
@@ -195,7 +196,9 @@ modules.
 - **Open state** lives in `ChatScreen` as a `Map<blockId, boolean>`; a block not in the map is
   open when it is live and closed otherwise. `WorkBlock` is memoised and takes a stable
   `onToggle(id, open)`.
-- **Call row**: a `<details>` whose summary is the tool name (mono, accent) and
+- Every collapsible row (work block, call group, call, thinking, lone result) is a `<button
+  aria-expanded>` toggling its body, not `<details>`: one pattern, and testable in jsdom.
+- **Call row**: a toggle whose label is the tool name (mono, accent) and
   `input_summary` (mono, `--fg-2`, ellipsis), plus the checklist count when `checklist(input)`
   is non-null. Open, it shows the checklist (marks ○ ◐ ●) and the call's result from
   `results` (mono, `pre-wrap`, max-height 40vh scrolling, `--err-fg` when `is_error`). A
