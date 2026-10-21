@@ -16,6 +16,7 @@ pub fn status_for(code: &str) -> StatusCode {
     }
 }
 
+#[derive(Debug)]
 pub struct ApiError(pub AppError);
 
 impl From<AppError> for ApiError {

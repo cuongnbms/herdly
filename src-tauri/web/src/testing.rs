@@ -1,13 +1,23 @@
 //! A scripted `Backend` for tests.
+use crate::app::{AppState, Config};
+use crate::auth::{complete_pairing, start_pairing, Auth};
 use crate::backend::{Backend, ChatSink, WebPane};
+use crate::config::now_secs;
+use crate::store::Store;
 use async_trait::async_trait;
+use axum::body::Body;
+use axum::http::{HeaderMap, Request, StatusCode};
+use axum::Router;
 use herdly_core::error::{AppError, AppResult};
 use herdly_core::transcript::{ChatEvent, ChatItem, Located};
 use herdly_core::view::MachineView;
+use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tower::ServiceExt;
 
 #[derive(Default)]
 pub struct FakeBackend {
@@ -124,4 +134,45 @@ impl Backend for FakeBackend {
             .unwrap()
             .push(format!("close:{}", pane.pane_id));
     }
+}
+
+/// An `AppState` over `backend` with a static bundle and a state dir under `dir`.
+pub fn state(backend: Arc<FakeBackend>, dir: &Path) -> Arc<AppState> {
+    let dist = dir.join("dist");
+    std::fs::create_dir_all(dist.join("assets")).unwrap();
+    std::fs::write(
+        dist.join("index.html"),
+        "<!doctype html><title>Herdly</title>",
+    )
+    .unwrap();
+    std::fs::write(dist.join("assets/app-1a2b.js"), "console.log(1)").unwrap();
+    let store = Store::open(&dir.join("state")).unwrap();
+    Arc::new(AppState {
+        backend,
+        auth: Arc::new(Auth::new(store)),
+        cfg: Config {
+            origin: "http://192.0.2.10:7380".into(),
+            static_dir: dist,
+        },
+    })
+}
+
+/// Pairs a fresh device through the state's store and returns its cookie value.
+pub fn paired_cookie(state: &AppState) -> String {
+    let now = now_secs();
+    let token = start_pairing(state.auth.store(), now).unwrap();
+    complete_pairing(state.auth.store(), &token, "test-agent", now)
+        .unwrap()
+        .1
+}
+
+pub async fn send(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, String) {
+    let res = app.clone().oneshot(req).await.unwrap();
+    let (parts, body) = res.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    (
+        parts.status,
+        parts.headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
 }
