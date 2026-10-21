@@ -243,11 +243,9 @@ button:disabled { opacity: 0.45; cursor: default; }
   background: color-mix(in srgb, var(--amber) 8%, var(--surface-1));
 }
 .pane-card[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent); }
-.pane-card-dim { opacity: 0.55; }
 .pane-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pane-card-title { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-card-sub { font-size: 12px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pane-card-hint { font-size: 13px; color: var(--fg-2); padding: 6px 12px 0; }
 .agent-mark {
   display: inline-flex;
   align-items: center;
@@ -296,6 +294,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 .chat-header {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: calc(env(safe-area-inset-top) + 4px) 4px 4px;
@@ -332,6 +331,39 @@ button:disabled { opacity: 0.45; cursor: default; }
   white-space: nowrap;
 }
 .chat-title .status { grid-column: 2; grid-row: 1; font-size: 0; }
+/* ---------- Pane screen and its Lens selector ---------- */
+.pane-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.pane-screen > .chat { height: auto; flex: 1; min-height: 0; max-width: none; margin: 0; }
+/* Inside this column the terminal is a flex item, whose automatic minimum size is the measured
+   grid's min-content width: without this a narrow viewport overflows sideways. */
+.pane-screen > .term-lens { flex: 1; min-width: 0; width: 100%; height: auto; max-width: none; margin: 0; }
+/* The selector is its own row so it fits a 320px viewport beside the header buttons. */
+.lens-switch {
+  order: 1;
+  flex-basis: 100%;
+  display: flex;
+  gap: 4px;
+  padding: 0 4px 4px;
+}
+.lens-opt {
+  flex: 1;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--fg-2);
+  background: var(--surface-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+}
+.lens-opt[aria-pressed="true"] { color: var(--fg); background: var(--accent-soft); border-color: var(--accent); }
+.lens-opt:disabled { opacity: 0.45; cursor: default; }
 /* The 32px pill sits inside a transparent 6px border, so the tap area is 44px. */
 .need-chip {
   min-height: 44px;
@@ -597,8 +629,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   height: 100dvh;
   max-width: 720px;
   margin: 0 auto;
-}
-.transcript { flex: 1; overflow-y: auto; }
+}.transcript { flex: 1; overflow-y: auto; }
 .banner-err span { flex: 1; }
 
 /* ---------- Mobile sidebar ---------- */

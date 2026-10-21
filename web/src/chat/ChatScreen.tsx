@@ -71,7 +71,7 @@ function BlockedPrompt({ pane, view }: { pane: WebPane; view: PaneView }) {
   return prompt ? <PromptCard key={prompt.id} prompt={prompt} busy={busy} error={error} onAnswer={(a) => void answer(a)} /> : <div className="prompt-card prompt-waiting">Reading the prompt…</div>;
 }
 
-export function ChatScreen({ pane, onBack, onRetry, onSwitch, onMenu }: { pane: WebPane; onBack(): void; onRetry(): void; onSwitch?(p: WebPane): void; onMenu?(): void }) {
+export function ChatScreen({ pane, onBack, onRetry, onSwitch, onMenu, showHeader = true }: { pane: WebPane; onBack(): void; onRetry(): void; onSwitch?(p: WebPane): void; onMenu?(): void; showHeader?: boolean }) {
   const key = webKey(pane);
   const view = useWeb((s) => s.chats[key]);
   const paneView = useWeb((s) =>
@@ -166,8 +166,7 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch, onMenu }: { pane: 
 
   return (
     <div className="chat">
-      <ChatHeader pane={pane} onBack={onBack} onSwitch={onSwitch} onMenu={onMenu} />
-      {view?.located?.ambiguous && <div className="banner banner-warn">Several transcripts match; showing the newest</div>}
+      {showHeader && <ChatHeader pane={pane} onBack={onBack} onSwitch={onSwitch} onMenu={onMenu} />}      {view?.located?.ambiguous && <div className="banner banner-warn">Several transcripts match; showing the newest</div>}
       {error && (
         <div role="alert" className="banner banner-err">
           <span>{error.message}</span>

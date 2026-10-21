@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { canChat } from "../config";
 import { useWeb } from "../store";
 import { webKey, type WebPane } from "../types";
 import { ChevronIcon } from "../ui/icons";
@@ -76,7 +75,7 @@ export function Sidebar({ current, onOpen, onClose }: { current: WebPane | null;
                     return (
                       <button type="button" key={`${tab.tab_id}/${pane.pane_id}`} className="sidebar-pane"
                         aria-current={current && webKey(current) === webKey(target) ? "true" : undefined}
-                        disabled={!session.running || !canChat(pane)} title={!canChat(pane) ? "Chat lens supports Claude Code and pi only" : undefined}
+                        disabled={!session.running}
                         onClick={() => { if (pane.status === "done") markSeen(webKey(target)); onOpen(target); }}>
                         <AgentMark agent={pane.agent} /><span className="sidebar-pane-title">{pane.title}</span>
                         <span className="status" data-status={pane.status}>{pane.status}</span>

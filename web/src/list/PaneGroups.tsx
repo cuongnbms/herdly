@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { canChat } from "../config";
 import { webKey, type MachineView, type WebPane } from "../types";
 import { PaneCard } from "./PaneCard";
 import { groupByStatus, rowPane, type PaneRow } from "./order";
@@ -9,18 +8,13 @@ const LABELS = [["needs", "Needs you"], ["working", "Working"], ["done", "Done"]
 
 export function PaneGroups({ machine, current, onOpen }: { machine: MachineView | undefined; current: string | null; onOpen(p: WebPane): void }) {
   const [bump, setBump] = useState(0);
-  const [unsupported, setUnsupported] = useState<string | null>(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- bump re-reads the seen marks
   const groups = useMemo(() => groupByStatus(machine?.sessions ?? [], shownStatus), [machine, bump]);
 
+  // Every Pane opens: a shell has no Chat lens but its Terminal lens is always there.
   const tap = (row: PaneRow) => {
-    const key = webKey(rowPane(row));
-    if (!canChat(row.pane)) {
-      setUnsupported(key);
-      return;
-    }
     if (row.pane.status === "done") {
-      markSeen(key);
+      markSeen(webKey(rowPane(row)));
       setBump((n) => n + 1);
     }
     onOpen(rowPane(row));
@@ -35,7 +29,7 @@ export function PaneGroups({ machine, current, onOpen }: { machine: MachineView 
             <ul className="pane-cards">
               {groups[id].map((row) => {
                 const key = webKey(rowPane(row));
-                return <PaneCard key={`${key}@${row.workspace_id}`} row={row} current={current === key} hint={unsupported === key} onTap={() => tap(row)} />;
+                return <PaneCard key={`${key}@${row.workspace_id}`} row={row} current={current === key} onTap={() => tap(row)} />;
               })}
             </ul>
           </section>
