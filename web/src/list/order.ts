@@ -7,9 +7,9 @@ export function orderSessions(ss: SessionView[]): SessionView[] {
   return [...ss].sort((a, b) => Number(b.running) - Number(a.running));
 }
 
-export function groupSession(s: SessionView): { waiting: PaneRow[]; workspaces: { label: string; panes: PaneRow[] }[] } {
+export function groupSession(s: SessionView): { waiting: PaneRow[]; workspaces: { workspace_id: string; label: string; panes: PaneRow[] }[] } {
   const waiting: PaneRow[] = [];
-  const workspaces: { label: string; panes: PaneRow[] }[] = [];
+  const workspaces: { workspace_id: string; label: string; panes: PaneRow[] }[] = [];
   for (const w of s.workspaces) {
     const panes: PaneRow[] = [];
     for (const t of w.tabs) {
@@ -17,7 +17,7 @@ export function groupSession(s: SessionView): { waiting: PaneRow[]; workspaces: 
         (pane.status === "blocked" ? waiting : panes).push({ pane, workspace: w.label });
       }
     }
-    if (panes.length > 0) workspaces.push({ label: w.label, panes });
+    if (panes.length > 0) workspaces.push({ workspace_id: w.workspace_id, label: w.label, panes });
   }
   return { waiting, workspaces };
 }

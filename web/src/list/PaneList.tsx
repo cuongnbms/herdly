@@ -57,7 +57,7 @@ export function PaneList({ onOpen }: { onOpen(p: WebPane): void }) {
               </>
             )}
             {g.workspaces.map((w) => (
-              <div key={w.label}>
+              <div key={w.workspace_id}>
                 <h3 style={{ margin: "8px 12px 0" }}>{w.label}</h3>
                 <ul style={{ margin: 0, padding: 0 }}>{w.panes.map((r) => row(s.name, r))}</ul>
               </div>

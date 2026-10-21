@@ -50,4 +50,21 @@ describe("PaneList", () => {
     expect(screen.getByText("herdr not found")).toBeInTheDocument();
     expect(screen.getByText("error")).toBeInTheDocument();
   });
+
+  it("lists two workspaces that share a label, each under its own heading", () => {
+    const m = machine([p("1", "idle", "claude")]);
+    const w = m.sessions[0].workspaces[0];
+    m.sessions[0].workspaces = [w, { ...w, workspace_id: "w2", tabs: [{ ...w.tabs[0], panes: [p("2", "idle", "claude")] }] }];
+    useWeb.setState({ machines: [m] as never });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(<PaneList onOpen={() => {}} />);
+      expect(screen.getAllByText("herdly")).toHaveLength(2);
+      expect(screen.getByText("title 1")).toBeInTheDocument();
+      expect(screen.getByText("title 2")).toBeInTheDocument();
+      expect(errors.mock.calls.map((c) => String(c[0])).filter((t) => t.includes("same key"))).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
 });
