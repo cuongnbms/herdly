@@ -48,7 +48,7 @@ run = "pnpm typecheck"
 [tasks.lint]
 description = "Clippy on the backend, warnings as errors"
 dir = "src-tauri"
-run = "cargo clippy -- -D warnings"
+run = "cargo clippy --workspace -- -D warnings"
 
 [tasks."test:frontend"]
 description = "Frontend tests (vitest)"
@@ -57,7 +57,7 @@ run = "pnpm test"
 [tasks."test:backend"]
 description = "Backend tests (cargo)"
 dir = "src-tauri"
-run = "cargo test"
+run = "cargo test --workspace"
 
 # A throwaway keychain and a tiny bundle; never the login keychain or /Applications.
 [tasks."test:sign"]
@@ -73,7 +73,7 @@ depends = ["test:frontend", "test:backend", "test:sign"]
 [tasks."test:integration"]
 description = "Integration tests against a real local herdr"
 dir = "src-tauri"
-run = "cargo test -- --ignored --test-threads=1"
+run = "cargo test --workspace -- --ignored --test-threads=1"
 
 [tasks.check]
 description = "Typecheck, lint and test"

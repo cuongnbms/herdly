@@ -6,7 +6,7 @@ authors = ["Cuong Nguyen"]
 edition = "2021"
 
 [workspace]
-members = ["core"]
+members = ["core", "web"]
 default-members = [".", "core"]
 
 [lib]
