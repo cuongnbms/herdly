@@ -1,10 +1,9 @@
 import { useState } from "react";
+import { canChat } from "../config";
 import { useWeb } from "../store";
 import { webKey, type WebPane } from "../types";
 import { groupSession, orderSessions, type PaneRow } from "./order";
 import { markSeen, shownStatus } from "./seen";
-
-const CHAT_AGENTS = ["claude", "pi"];
 
 const BADGE: Record<string, string> = { blocked: "#c0392b", working: "#2e7d32", done: "#1565c0", idle: "#757575", unknown: "#757575" };
 
@@ -20,7 +19,7 @@ export function PaneList({ onOpen }: { onOpen(p: WebPane): void }) {
     const key = webKey(web);
     const shown = shownStatus(key, pane.status);
     const tap = () => {
-      if (!pane.agent || !CHAT_AGENTS.includes(pane.agent)) {
+      if (!canChat(pane)) {
         setUnsupported(key);
         return;
       }

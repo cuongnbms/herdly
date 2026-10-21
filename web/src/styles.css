@@ -1,0 +1,138 @@
+/* Copied from src/styles.css:1-80; keep the values in sync by hand. */
+@import "./fonts/fonts.css";
+
+/* ---------- Tokens ---------- */
+:root {
+  --surface-0: #1a1b1f;
+  --surface-1: #1f2024;
+  --surface-2: #25262b;
+  --surface-3: #2d2e34;
+  --surface-code: #151619;
+  --hover: rgba(255, 255, 255, 0.045);
+  --active: rgba(255, 255, 255, 0.08);
+  --fg: #e6e7eb;
+  --fg-2: #a3a6b0;
+  --fg-3: #6e717c;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-2: rgba(255, 255, 255, 0.11);
+  --line-3: rgba(255, 255, 255, 0.16);
+  --accent: #7c8cff;
+  --accent-fg: #0d0f1f;
+  --accent-soft: rgba(124, 140, 255, 0.14);
+  --ring: 0 0 0 2px rgba(124, 140, 255, 0.55);
+  --amber: #f0a742;
+  --blue: #5b9dff;
+  --green: #46c37b;
+  --grey: #6e717c;
+  --err: #f0716b;
+  --scrim: rgba(8, 8, 10, 0.45);
+  --link: #9fb0ff;
+  --code-head: rgba(255, 255, 255, 0.025);
+  --code-inline: #e9d8ff;
+  --err-fg: #f2a6a2;
+  --hl-fg: #e4e5e8;
+  --hl-comment: #6e7381;
+  --hl-keyword: #c099ff;
+  --hl-string: #a8dc9c;
+  --hl-number: #ffad7a;
+  --hl-title: #86b2ff;
+  --hl-type: #ffd27a;
+  --hl-attr: #86e1fc;
+  --hl-meta: #8b8e97;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-dialog: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 24px 64px rgba(0, 0, 0, 0.55);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-composer: 0 4px 16px rgba(0, 0, 0, 0.25);
+  --shadow-panel: 0 0 40px rgba(0, 0, 0, 0.4);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-fast: 120ms;
+  --t: 180ms;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* ---------- Base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: var(--surface-0);
+  color: var(--fg);
+  color-scheme: dark;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-tap-highlight-color: transparent;
+}
+code, pre, kbd { font-family: var(--mono); }
+::selection { background: var(--accent-soft); }
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+button:focus-visible { outline: none; box-shadow: var(--ring); }
+button:disabled { opacity: 0.45; cursor: default; }
+
+/* ---------- Button ---------- */
+.btn {
+  min-height: 44px;
+  padding: 0 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+}
+.btn:active { background: var(--surface-3); }
+
+/* ---------- Icon button ---------- */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: transparent;
+}
+.icon-btn:active { background: var(--active); }
+
+/* ---------- Status ---------- */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--tone);
+}
+.status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+.status[data-status="blocked"] { --tone: var(--amber); }
+.status[data-status="working"] { --tone: var(--blue); }
+.status[data-status="done"] { --tone: var(--green); }
+.status[data-status="idle"], .status[data-status="unknown"] { --tone: var(--grey); }
+
+/* ---------- Banner ---------- */
+.banner {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+.banner-err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err-fg); }
+.banner-warn { background: color-mix(in srgb, var(--amber) 16%, transparent); color: var(--amber); }
