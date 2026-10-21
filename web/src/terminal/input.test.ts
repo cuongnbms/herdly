@@ -29,6 +29,15 @@ describe("controlCharacter", () => {
     expect(controlCharacter("ab")).toBeNull();
     expect(controlCharacter(" ")).toBeNull();
   });
+
+  it("never folds a non-ASCII character into a control byte", () => {
+    // "ß" upper-cases to "SS": checking the range after case folding would yield U+0013.
+    expect(controlCharacter("ß")).toBeNull();
+    // Dotless "ı" upper-cases to "I", which would yield Tab.
+    expect(controlCharacter("ı")).toBeNull();
+    // Long "ſ" upper-cases to "S", which would yield control-S.
+    expect(controlCharacter("ſ")).toBeNull();
+  });
 });
 
 describe("cursorKey", () => {
@@ -60,6 +69,16 @@ describe("UserEntry", () => {
     entry.arm();
     expect(entry.apply("ướ")).toBe("ướ");
     expect(entry.ctrl).toBe(false);
+  });
+
+  it("keeps non-ASCII text unchanged and still clears Ctrl", () => {
+    for (const text of ["ß", "ı", "ſ"]) {
+      const entry = new UserEntry();
+      entry.arm();
+      // Sent as typed, not as a control byte, and the one-shot modifier is spent either way.
+      expect(entry.apply(text)).toBe(text);
+      expect(entry.ctrl).toBe(false);
+    }
   });
 
   it("clears Ctrl without sending anything", () => {

@@ -261,9 +261,23 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
     };
 
     /**
+     * One insertion is reported as `beforeinput` then `input` with the same text: this says the
+     * next matching event is the tail of an insertion already handled. Consumption-based rather
+     * than a text comparison, because typing "c", arming Ctrl and typing "c" again must still
+     * produce ^C: a repeated character is not a duplicate.
+     */
+    let pendingInsert = false;
+    /** The text of the insertion already handled, so only its own tail is swallowed. */
+    let pendingText = "";
+
+    /**
      * The gate: capture phase on the host, ahead of the terminal's own textarea listeners, so a
      * settling attempt sees none of the user's keyboard, composition or paste while output
      * parsing still answers terminal queries.
+     *
+     * Ctrl is spent at the boundary that actually inserts text, never by a mere modifier or
+     * action key: a desktop keydown carries the character, but a mobile keyboard enters text
+     * through `beforeinput`/`input` insertText with no printable keydown at all.
      */
     const gate = (e: Event) => {
       if (!live) return;
@@ -276,25 +290,76 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
         charge(e);
         return;
       }
-      if (!entry.current.ctrl) return;
+      const isInsert =
+        e instanceof InputEvent && (e.inputType === "insertText" || e.inputType === "insertCompositionText");
+      // The tail of an insertion already sent must be kept from xterm even though Ctrl is now
+      // spent: without this check first, the raw character would follow the mapped control byte.
+      if (pendingInsert && isInsert && ((e as InputEvent).data ?? "") === pendingText) {
+        pendingInsert = false;
+        pendingText = "";
+        charge(e);
+        return;
+      }
+      if (!entry.current.ctrl) {
+        // A plain insertion passing through: its pair must be known so a later Ctrl is not confused.
+        if (isInsert) {
+          pendingInsert = false;
+          pendingText = "";
+        }
+        return;
+      }
       switch (e.type) {
         case "keyup":
           return;
         case "keydown": {
           const text = entryText(e);
-          const mapped = text === null ? null : controlCharacter(text);
-          // Ctrl is one-shot: any next key spends it, accelator or not.
+          if (text === null) return; // a modifier or an action key: not a character, Ctrl stays armed
+          const mapped = controlCharacter(text);
+          // Ctrl is one-shot: the next character spends it, accelerator or not.
           syncCtrl(false);
-          if (mapped === null) return; // unsupported or an action key: xterm sends it unchanged
+          pendingInsert = false;
+          pendingText = "";
+          if (mapped === null) return; // unsupported text goes out unchanged through xterm
           charge(e);
           swallowed = true;
           send(mapped);
           return;
         }
+        case "beforeinput":
+        case "input": {
+          const data = (e as InputEvent).data ?? "";
+          if (!isInsert) {
+            // Composition and paste deliver a whole run: it goes out unchanged and spends Ctrl.
+            syncCtrl(false);
+            pendingInsert = false;
+            pendingText = "";
+            return;
+          }
+          // Consume this insertion's own tail; the flag is spent, not the text compared, so a
+          // repeated character after a fresh Ctrl still maps.
+          const mapped = controlCharacter(data);
+          syncCtrl(false);
+          if (mapped === null) {
+            // Unsupported text goes out unchanged through xterm, which will deliver it once, so
+            // there is no tail of ours to consume.
+            pendingInsert = false;
+            pendingText = "";
+            return;
+          }
+          pendingInsert = true;
+          pendingText = data;
+          charge(e);
+          // No `swallowed` here: an insertion reached this branch because its own keydown did not
+          // map it, so no keyup belongs to it. Marking it swallowed would wedge the gate forever.
+          send(mapped);
+          return;
+        }
         default:
-          // Composition and paste deliver a whole run, never a control key: they go out changed
+          // Composition and paste deliver a whole run, never a control key: they go out unchanged
           // and spend the modifier.
           syncCtrl(false);
+          pendingInsert = false;
+          pendingText = "";
           return;
       }
     };

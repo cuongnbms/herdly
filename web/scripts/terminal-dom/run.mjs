@@ -214,6 +214,91 @@ async function main() {
       JSON.stringify(ctrlTyped),
     );
 
+    // A mobile keyboard can insert text with no printable keydown: only beforeinput/input
+    // insertText fires. Ctrl must still map to U+0003 exactly once for that path.
+    await clear();
+    await page.getByRole("button", { name: "Ctrl" }).click();
+    await page.evaluate(() => {
+      const ta = document.querySelector(".xterm-helper-textarea");
+      ta.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: "c", bubbles: true, cancelable: true }));
+      ta.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: "c", bubbles: true }));
+    });
+    await page.waitForTimeout(200);
+    const inputOnly = sentTexts(await log());
+    check(
+      "Ctrl maps an insertText-only c to U+0003 once",
+      JSON.stringify(inputOnly) === JSON.stringify(["\u0003"]) &&
+        (await page.getByRole("button", { name: "Ctrl" }).getAttribute("aria-pressed")) === "false",
+      JSON.stringify(inputOnly),
+    );
+
+    // The same character typed once before arming Ctrl must still map: dedupe is per insertion,
+    // not a text comparison.
+    await clear();
+    const insert = (data) =>
+      page.evaluate((text) => {
+        const ta = document.querySelector(".xterm-helper-textarea");
+        ta.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: text, bubbles: true, cancelable: true }));
+        ta.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: text, bubbles: true }));
+      }, data);
+    await insert("c");
+    await page.waitForTimeout(150);
+    await page.getByRole("button", { name: "Ctrl" }).click();
+    await insert("c");
+    await page.waitForTimeout(200);
+    const repeat = sentTexts(await log());
+    check(
+      "a repeated character after a fresh Ctrl still maps to U+0003",
+      JSON.stringify(repeat) === JSON.stringify(["c", "\u0003"]),
+      JSON.stringify(repeat),
+    );
+
+    // A modifier keydown must not spend Ctrl before the character arrives.
+    await clear();
+    await page.getByRole("button", { name: "Ctrl" }).click();
+    await page.keyboard.down("Shift");
+    await page.waitForTimeout(100);
+    const afterShift = {
+      armed: await page.getByRole("button", { name: "Ctrl" }).getAttribute("aria-pressed"),
+      sent: sentTexts(await log()),
+    };
+    await page.keyboard.up("Shift");
+    check(
+      "Shift keydown does not spend Ctrl",
+      afterShift.armed === "true" && afterShift.sent.length === 0,
+      JSON.stringify(afterShift),
+    );
+    // ...and the C that follows still becomes ^C.
+    await clear();
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("KeyC");
+    await page.keyboard.up("Shift");
+    await page.waitForTimeout(200);
+    const afterShiftC = sentTexts(await log());
+    check(
+      "Ctrl then Shift+C sends U+0003",
+      afterShiftC.join("") === "\u0003" &&
+        (await page.getByRole("button", { name: "Ctrl" }).getAttribute("aria-pressed")) === "false",
+      JSON.stringify(afterShiftC),
+    );
+
+    // Positive control for the non-ASCII rule: unsupported text goes out unchanged, once.
+    await clear();
+    await page.getByRole("button", { name: "Ctrl" }).click();
+    await page.evaluate(() => {
+      const ta = document.querySelector(".xterm-helper-textarea");
+      ta.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: "ß", bubbles: true, cancelable: true }));
+      ta.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: "ß", bubbles: true }));
+    });
+    await page.waitForTimeout(200);
+    const nonAscii = sentTexts(await log());
+    check(
+      "unsupported non-ASCII insertText is sent unchanged once and spends Ctrl",
+      JSON.stringify(nonAscii) === JSON.stringify(["ß"]) &&
+        (await page.getByRole("button", { name: "Ctrl" }).getAttribute("aria-pressed")) === "false",
+      JSON.stringify(nonAscii),
+    );
+
     // --- Arrows follow the terminal's cursor-key mode ---------------------------------------
     await clear();
     await page.getByRole("button", { name: "Arrow up" }).click();

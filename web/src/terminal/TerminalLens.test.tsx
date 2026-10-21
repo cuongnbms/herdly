@@ -131,6 +131,16 @@ async function typeChar(ch: string) {
   await settle();
 }
 
+
+/** A mobile keyboard that enters text through insertText only: no printable keydown reaches us. */
+async function insertText(data: string) {
+  await act(async () => {
+    textarea().dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data, bubbles: true, cancelable: true }));
+    textarea().dispatchEvent(new InputEvent("input", { inputType: "insertText", data, bubbles: true }));
+  });
+  await settle();
+}
+
 beforeEach(() => {
   useWeb.setState({ conn: "open", authLost: false, lost: false, machines: [machine()] as never, chats: {}, open: null });
 });
@@ -258,22 +268,33 @@ describe("TerminalLens Ctrl", () => {
     expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("keeps Ctrl armed through keyups but spends it on an action key", async () => {
+  it("keeps Ctrl armed through keyups and modifier keydowns", async () => {
     const r = await mounted();
     await act(async () => { r.last.attach(); });
     fireEvent.click(screen.getByRole("button", { name: "Ctrl" }));
-    // Ctrl is one-shot for the *next* key, not for the release of the Ctrl key itself.
+    // Ctrl is one-shot for the next *character*, not for the release of the Control key.
     await act(async () => {
       textarea().dispatchEvent(new KeyboardEvent("keyup", { key: "Control", keyCode: 17, bubbles: true }));
     });
     expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "true");
-    // Backspace is an action key, not an accelerator: it spends Ctrl and goes out unchanged.
+    // Shift is a modifier, not a character: typing C afterwards still has to become ^C.
     await act(async () => {
-      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", keyCode: 8, bubbles: true, cancelable: true }));
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", code: "ShiftLeft", keyCode: 16, shiftKey: true, bubbles: true, cancelable: true }));
     });
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "true");
+    expect(r.last.inputs).toEqual([]);
+    await typeChar("C");
+    expect(r.last.inputs).toEqual(["\x03"]);
     expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
-    await settle();
-    expect(r.last.inputs).toEqual(["\x7f"]);
+  });
+
+  it("spends Ctrl on a character even when it has no accelerator", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    fireEvent.click(screen.getByRole("button", { name: "Ctrl" }));
+    await typeChar("é");
+    expect(r.last.inputs).toEqual(["é"]);
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("does not send an unchanged grid again when the layout settles", async () => {
@@ -345,6 +366,92 @@ describe("TerminalLens Ctrl", () => {
     fireEvent.click(screen.getByRole("button", { name: "Esc" }));
     fireEvent.click(screen.getByRole("button", { name: "Tab" }));
     expect(r.last.inputs).toEqual(["\x1b", "\t"]);
+  });
+});
+
+describe("TerminalLens Ctrl at the real text-entry boundary", () => {
+  it("maps c to U+0003 once when the mobile keyboard only emits insertText", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    const ctrl = screen.getByRole("button", { name: "Ctrl" });
+    ctrl.click();
+    await insertText("c");
+    expect(r.last.inputs).toEqual(["\x03"]);
+    expect(ctrl).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("keeps a query reply byte-exact while Ctrl is armed", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    await act(async () => { r.last.out("\x1b[c"); await sleep(40); });
+    expect(r.last.log).toEqual([{ kind: "input", text: "\x1b[?1;2c" }]);
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "true");
+    // The modifier survived the reply: the next character still becomes ^C.
+    await insertText("c");
+    expect(r.last.inputs).toEqual(["\x1b[?1;2c", "\x03"]);
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("still maps Ctrl for a character that was typed once before", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    // A plain mobile "c" first: the same text must not be mistaken for a duplicate later.
+    await insertText("c");
+    expect(r.last.inputs).toEqual(["c"]);
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    await insertText("c");
+    expect(r.last.inputs).toEqual(["c", "\x03"]);
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("keeps accepting entry after a mapped insertText that has no keyup", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    await insertText("c");
+    expect(r.last.inputs).toEqual(["\x03"]);
+    // An insert-only path never emits the keyup that would end a swallowed key sequence.
+    await insertText("d");
+    expect(r.last.inputs).toEqual(["\x03", "d"]);
+  });
+
+  it("sends exactly once when a desktop keydown is followed by its insertion tail", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    await act(async () => {
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "c", code: "KeyC", keyCode: 67, bubbles: true, cancelable: true }));
+      // A real browser still reports the insertion for the key it just delivered.
+      textarea().dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: "c", bubbles: true, cancelable: true }));
+      textarea().dispatchEvent(new InputEvent("input", { inputType: "insertText", data: "c", bubbles: true }));
+      textarea().dispatchEvent(new KeyboardEvent("keyup", { key: "c", code: "KeyC", keyCode: 67, bubbles: true }));
+    });
+    await settle();
+    expect(r.last.inputs).toEqual(["\x03"]);
+  });
+
+  it("does not spend Ctrl on a modifier keydown before C", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    await act(async () => {
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", code: "ShiftLeft", keyCode: 16, shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "true");
+    expect(r.last.inputs).toEqual([]);
+  });
+
+  it("sends an unsupported non-ASCII insertText unchanged and clears Ctrl", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    await insertText("ß");
+    expect(r.last.inputs).toEqual(["ß"]);
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
+    // The spent modifier must not leak into the next character.
+    await insertText("c");
+    expect(r.last.inputs).toEqual(["ß", "c"]);
   });
 });
 

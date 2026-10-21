@@ -6,13 +6,21 @@
  * transforming a reply. The lens therefore maps only text it knows a human produced.
  */
 
-/** Ctrl accelerators: ASCII `@`..`_` (case-insensitive letters) and `?` for DEL. */
+/**
+ * Ctrl accelerators: ASCII `@`..`_` (case-insensitive letters) and `?` for DEL.
+ *
+ * The input range is checked before any case conversion: `toUpperCase()` is a Unicode case fold
+ * ("ß"→"SS", "ı"→"I", "ſ"→"S"), so folding first would turn non-ASCII text into a control
+ * byte. Only ASCII letters are folded, and only after they pass the range test.
+ */
 export function controlCharacter(text: string): string | null {
   if (text.length !== 1) return null;
   if (text === "?") return "\x7f";
-  const code = text.toUpperCase().charCodeAt(0);
-  if (code < 0x40 || code > 0x5f) return null;
-  return String.fromCharCode(code - 0x40);
+  const code = text.charCodeAt(0);
+  if (code < 0x20 || code > 0x7f) return null;
+  const ascii = code >= 0x61 && code <= 0x7a ? code - 0x20 : code; // a..z → A..Z
+  if (ascii < 0x40 || ascii > 0x5f) return null;
+  return String.fromCharCode(ascii - 0x40);
 }
 
 export type CursorDirection = "up" | "down" | "left" | "right";
