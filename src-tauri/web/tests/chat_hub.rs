@@ -252,3 +252,46 @@ async fn the_delayed_retry_does_nothing_when_the_entry_is_gone() {
     hub.on_status(&status("other")).await;
     assert_eq!(locates(&fake), 1);
 }
+
+#[tokio::test]
+async fn a_stale_waiter_never_closes_the_replacement_entry_mid_open() {
+    let (fake, hub) = hub();
+    *fake.open_delay.lock().unwrap() = Duration::from_millis(100);
+    let ms = |n| tokio::time::sleep(Duration::from_millis(n));
+    // Socket 1's open holds entry E1's gate.
+    let h = hub.clone();
+    let first = tokio::spawn(async move { h.subscribe(1, pane("s", "p1")).await });
+    ms(10).await;
+    // Queued behind it on E1's gate: finish A (socket 1 leaves) ...
+    let h = hub.clone();
+    let a = tokio::spawn(async move { h.drop_socket(1).await });
+    ms(10).await;
+    // ... then socket 3, which on waking finds E1 gone and, in the same poll,
+    // creates E2 with a slow open while socket 3 leaves again ...
+    let h = hub.clone();
+    let t = tokio::spawn(async move {
+        let _ = h.subscribe(3, pane("s", "p1")).await;
+        tokio::join!(h.subscribe(3, pane("s", "p1")), h.drop_socket(3));
+    });
+    ms(10).await;
+    // ... and finish B (socket 3 left), queued on E1's gate behind socket 3.
+    let h = hub.clone();
+    let b = tokio::spawn(async move { h.drop_socket(3).await });
+    first.await.unwrap();
+    for j in [a, t, b] {
+        j.await.unwrap();
+    }
+    ms(300).await;
+    let log = fake.log.lock().unwrap().clone();
+    assert_eq!(
+        log,
+        vec![
+            "open:p1:-",
+            "opened:p1",
+            "close:p1",
+            "open:p1:-",
+            "opened:p1",
+            "close:p1"
+        ]
+    );
+}

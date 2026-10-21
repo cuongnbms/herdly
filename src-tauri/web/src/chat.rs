@@ -64,7 +64,7 @@ impl ChatHub {
         let path = {
             let map = self.entries.lock().unwrap();
             match map.get(&pane) {
-                Some(e) if e.subs.contains(&sock) => {
+                Some(e) if Arc::ptr_eq(&e.gate, &gate) && e.subs.contains(&sock) => {
                     Some(e.located.as_ref().map(|l| l.path.clone()))
                 }
                 _ => None,
@@ -121,8 +121,8 @@ impl ChatHub {
         let _g = gate.lock().await;
         // Re-read under the gate: the entry may be gone or settled by now.
         let current = match self.entries.lock().unwrap().get(pane) {
-            Some(e) => e.located.clone(),
-            None => return false,
+            Some(e) if Arc::ptr_eq(&e.gate, &gate) => e.located.clone(),
+            _ => return false,
         };
         let Some(current) = current.filter(|l| l.pending) else {
             return false;
@@ -146,7 +146,10 @@ impl ChatHub {
         };
         let _g = gate.lock().await;
         let mut map = self.entries.lock().unwrap();
-        if map.get(pane).is_some_and(|e| e.subs.is_empty()) {
+        if map
+            .get(pane)
+            .is_some_and(|e| Arc::ptr_eq(&e.gate, &gate) && e.subs.is_empty())
+        {
             let e = map.remove(pane).unwrap();
             // Under the map lock so a fresh entry's open cannot slip in before this close.
             if e.opened {
