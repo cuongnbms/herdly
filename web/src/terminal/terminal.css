@@ -1,0 +1,66 @@
+/* Web-local terminal styles. xterm ships its own layout CSS; only the frame, banner and key
+   bar belong here. Do not import desktop styles. */
+
+.term-lens {
+  display: flex;
+  flex-direction: column;
+  /* Fill the viewport the mobile browser actually shows, minus the bottom safe area. */
+  height: 100dvh;
+  min-height: 0;
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--surface-0);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* The banner must never squeeze the grid to nothing. */
+.term-banner { flex: none; }
+
+.term-host {
+  flex: 1;
+  /* A flex child needs this to shrink below its content and let xterm measure the grid. */
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 4px 0;
+}
+
+/* xterm measures its own element; keep it filling the host. */
+.term-host .xterm { height: 100%; }
+.term-host .xterm-viewport {
+  /* Native scrolling stays out of the way: the lens scrolls scrollback by touch itself. */
+  scrollbar-width: none;
+}
+.term-host .xterm-viewport::-webkit-scrollbar { display: none; }
+
+.term-keys {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--surface-1);
+  border-top: 1px solid var(--line);
+  /* A swipe along the bar scrolls the bar, not the page. */
+  overscroll-behavior-x: contain;
+}
+
+.term-key {
+  flex: none;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg);
+  font-size: 14px;
+}
+.term-key:active { background: var(--surface-3); }
+.term-key:focus-visible { outline: none; box-shadow: var(--ring); }
+.term-key-ctrl[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--fg);
+}

@@ -1,4 +1,6 @@
-/* JetBrains Mono subsets from @fontsource/jetbrains-mono; vietnamese + latin-ext cover Vietnamese text. */
+/* JetBrains Mono subsets, byte-identical copies of @fontsource/jetbrains-mono 5.3.0 files
+   (verified with cmp). Kept local so each subset's unicode-range and font-display stay explicit:
+   vietnamese + latin-ext cover Vietnamese text. */
 @font-face {
   font-family: "JetBrains Mono";
   font-style: normal;

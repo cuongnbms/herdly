@@ -1,0 +1,317 @@
+/**
+ * Real-xterm DOM proof for the terminal lens.
+ *
+ * jsdom cannot prove what xterm does with a real textarea: composition, paste, cursor-key mode,
+ * mouse-reporting touch handling. This fixture builds the harness page with Vite, serves it from a
+ * temporary free loopback port, and drives Chromium (Playwright) through the required cases.
+ *
+ * Isolated by construction: it serves only `scripts/terminal-dom/dist` on 127.0.0.1, opens no Rust
+ * server, writes no state, and touches no user Session.
+ *
+ * Usage: node scripts/terminal-dom/run.mjs
+ * Exit code is non-zero when any assertion fails.
+ */
+
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { extname, join, resolve } from "node:path";
+import { chromium } from "playwright-core";
+import { build } from "vite";
+
+const HERE = import.meta.dirname;
+const DIST = resolve(HERE, "dist");
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2", ".map": "application/json" };
+
+/** The browser that CI/user machines have: the Playwright cache Chromium, or an explicit path. */
+function browserPath() {
+  if (process.env.CHROMIUM) return process.env.CHROMIUM;
+  const home = process.env.HOME ?? "";
+  for (const revision of ["chromium-1243", "chromium-1247", "chromium-1200"]) {
+    const candidate = join(home, ".cache/ms-playwright", revision, "chrome-linux64/chrome");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+const failures = [];
+/** Wire text the lens sent, ignoring acknowledgements (which the fixture records separately). */
+const sentTexts = (log) => log.filter((e) => e.kind === "input" || e.kind === "reply").map((e) => e.text);
+function check(name, condition, detail) {
+  if (condition) {
+    console.log(`  ok   ${name}`);
+    return;
+  }
+  failures.push(name);
+  console.log(`  FAIL ${name}${detail === undefined ? "" : ` — ${detail}`}`);
+}
+
+async function main() {
+  // Build only the harness page: the production bundle is Task 8's job.
+  await build({
+    root: HERE,
+    logLevel: "warn",
+    build: {
+      outDir: DIST,
+      emptyOutDir: true,
+      rollupOptions: { input: resolve(HERE, "index.html") },
+    },
+    resolve: { alias: { "@desktop": resolve(HERE, "../../../src") } },
+  });
+
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (url.pathname === "/favicon.ico") {
+      res.writeHead(204).end();
+      return;
+    }
+    const file = join(DIST, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
+    try {
+      const body = await readFile(file);
+      res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
+      res.end(body);
+    } catch {
+      res.writeHead(404).end("not found");
+    }
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  const executablePath = browserPath();
+  if (!executablePath) throw new Error("no Chromium build found; set CHROMIUM to a browser executable");
+  const browser = await chromium.launch({ executablePath, args: ["--no-sandbox"] });
+
+  try {
+    // A phone-sized viewport with a coarse pointer: touch is what the lens has to handle.
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+      deviceScaleFactor: 3,
+    });
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+    await page.goto(origin, { waitUntil: "networkidle" });
+    await page.waitForFunction(() => !!document.querySelector(".xterm-helper-textarea"));
+
+    const log = () => page.evaluate(() => window.wire.log.map((e) => ({ ...e })));
+    const clear = () => page.evaluate(() => (window.wire.log.length = 0));
+    const ta = ".xterm-helper-textarea";
+
+    console.log("terminal lens, real xterm DOM");
+    check("one xterm mounted", (await page.locator(".xterm").count()) === 1);
+    check("no autofocus on entry", await page.evaluate(() => document.activeElement === document.body));
+    const starts = await page.evaluate(() => window.wire.starts);
+    check(
+      "first attempt opened with a measured grid, normal takeover",
+      starts.length === 1 && starts[0].takeover === false && starts[0].cols > 0 && starts[0].rows > 0,
+      JSON.stringify(starts),
+    );
+    check("connecting banner visible", await page.getByText("Connecting…").isVisible());
+
+    // --- Settling: a real query is answered, while user entry is captured -------------------
+    await clear();
+    await page.evaluate(() => window.feed("\x1b[c"));
+    await page.waitForFunction(() => window.wire.log.some((e) => e.text.includes("[?1;2c")));
+    const reply = (await log()).find((e) => e.text.includes("[?1;2c"));
+    check("xterm answers DA before Attached", reply !== undefined, JSON.stringify(await log()));
+
+    await clear();
+    await page.locator(ta).focus();
+    await page.keyboard.type("x");
+    await page.waitForTimeout(150);
+    check("typing before Attached sends nothing", (await log()).length === 0, JSON.stringify(await log()));
+
+    // Real paste through the browser's clipboard path, still settling.
+    await page.evaluate(async () => {
+      const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: new DataTransfer() });
+      event.clipboardData.setData("text/plain", "pasted-before");
+      document.querySelector(".xterm-helper-textarea").dispatchEvent(event);
+    });
+    await page.waitForTimeout(100);
+    check("paste before Attached sends nothing", (await log()).length === 0, JSON.stringify(await log()));
+
+    // Real composition events (as a mobile IME produces) while settling.
+    await page.evaluate(() => {
+      const ta = document.querySelector(".xterm-helper-textarea");
+      ta.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
+      ta.value = "ướ";
+      ta.dispatchEvent(new CompositionEvent("compositionupdate", { data: "ướ" }));
+      ta.dispatchEvent(new CompositionEvent("compositionend", { data: "ướ" }));
+    });
+    await page.waitForTimeout(150);
+    check("composition before Attached sends nothing", (await log()).length === 0, JSON.stringify(await log()));
+
+    // --- Attached ---------------------------------------------------------------------------
+    await page.evaluate(() => window.attach());
+    await page.waitForTimeout(50);
+    check("banner clears once Attached", (await page.getByText("Connecting…").count()) === 0);
+
+    await clear();
+    await page.locator(ta).focus();
+    await page.keyboard.type("hi");
+    await page.waitForFunction(() => window.wire.log.filter((e) => e.kind === "input").length > 0);
+    const typed = (await log()).filter((e) => e.kind === "input").map((e) => e.text).join("");
+    check("typing after Attached goes out once", typed === "hi", JSON.stringify(typed));
+
+    await clear();
+    await page.evaluate(async () => {
+      const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: new DataTransfer() });
+      event.clipboardData.setData("text/plain", "echo hi\nthere");
+      document.querySelector(".xterm-helper-textarea").dispatchEvent(event);
+    });
+    await page.waitForTimeout(150);
+    const pasted = (await log()).filter((e) => e.kind === "input").map((e) => e.text);
+    check(
+      "paste after Attached arrives once with terminal line endings",
+      pasted.length === 1 && pasted[0] === "echo hi\rthere",
+      JSON.stringify(pasted),
+    );
+
+    await clear();
+    await page.evaluate(() => {
+      const ta = document.querySelector(".xterm-helper-textarea");
+      ta.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
+      ta.value = "ướ";
+      ta.dispatchEvent(new CompositionEvent("compositionupdate", { data: "ướ" }));
+      ta.dispatchEvent(new CompositionEvent("compositionend", { data: "ướ" }));
+    });
+    await page.waitForTimeout(200);
+    const composed = (await log()).filter((e) => e.kind === "input").map((e) => e.text);
+    check("IME composition after Attached arrives once", composed.length === 1 && composed[0] === "ướ", JSON.stringify(composed));
+
+    // --- Output still renders and ACKs once after parse -------------------------------------
+    await clear();
+    await page.evaluate(() => window.feed("MARKER-42\r\n"));
+    await page.waitForFunction(() => window.wire.log.some((e) => e.kind === "ack"));
+    await page.waitForTimeout(150);
+    const acked = (await log()).filter((e) => e.kind === "ack");
+    check("output is acknowledged once after parsing", acked.length === 1 && acked[0].text === "11", JSON.stringify(acked));
+    const text = await page.evaluate(() => document.querySelector(".xterm-rows")?.textContent ?? "");
+    check("output text is visible", text.includes("MARKER-42"), text.slice(-80));
+
+    // --- Ctrl must not consume, and must not rewrite, protocol replies -----------------------
+    await clear();
+    await page.getByRole("button", { name: "Ctrl" }).click();
+    await page.evaluate(() => window.feed("\x1b[c"));
+    await page.waitForFunction(() => window.wire.log.some((e) => e.text.includes("[?1;2c")));
+    const ctrlLog = await log();
+    check(
+      "query reply under armed Ctrl is untouched and Ctrl stays armed",
+      ctrlLog.filter((e) => e.kind === "input" || e.kind === "reply").map((e) => e.text).join("") === "\x1b[?1;2c" &&
+        (await page.getByRole("button", { name: "Ctrl" }).getAttribute("aria-pressed")) === "true",
+      JSON.stringify(ctrlLog),
+    );
+    await page.locator(ta).focus();
+    await page.keyboard.type("c");
+    await page.waitForTimeout(150);
+    const ctrlTyped = (await log()).filter((e) => e.kind !== "ack").map((e) => e.text);
+    check(
+      "Ctrl is spent on the next character",
+      ctrlTyped.join("").endsWith("\x03") && (await page.getByRole("button", { name: "Ctrl" }).getAttribute("aria-pressed")) === "false",
+      JSON.stringify(ctrlTyped),
+    );
+
+    // --- Arrows follow the terminal's cursor-key mode ---------------------------------------
+    await clear();
+    await page.getByRole("button", { name: "Arrow up" }).click();
+    await page.waitForTimeout(100);
+    check("arrow in normal mode", JSON.stringify(sentTexts(await log())) === JSON.stringify(["\x1b[A"]), JSON.stringify(await log()));
+    await clear();
+    await page.evaluate(() => window.feed("\x1b[?1h"));
+    await page.waitForTimeout(400);
+    await page.getByRole("button", { name: "Arrow left" }).click();
+    await page.waitForTimeout(100);
+    check("arrow in application mode", JSON.stringify(sentTexts(await log())) === JSON.stringify(["\x1bOD"]), JSON.stringify(await log()));
+
+    // --- Touch scrolling while the terminal has mouse reporting on --------------------------
+    // Fill scrollback so there is something to scroll, then turn on SGR mouse reporting.
+    await clear();
+    await page.evaluate(async () => {
+      const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\r\n") + "\r\n";
+      await window.feed(lines);
+      await window.feed("\x1b[?1000h\x1b[?1006h");
+    });
+    await page.waitForTimeout(400);
+    const before = await page.evaluate(() => {
+      const rows = document.querySelector(".xterm-rows");
+      return rows?.textContent ?? "";
+    });
+    const box = await page.locator(".xterm-screen").boundingBox();
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    // A real one-finger swipe on a touch-enabled Chromium context.
+    await page.touchscreen.tap(cx, cy).catch(() => {});
+    const client = await page.context().newCDPSession(page);
+    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy + 80 }] });
+    for (let step = 1; step <= 8; step++) {
+      await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy + 80 - step * 20 }] });
+    }
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await page.waitForTimeout(300);
+    const after = await page.evaluate(() => {
+      const rows = document.querySelector(".xterm-rows");
+      return rows?.textContent ?? "";
+    });
+    const touchLog = (await log()).filter((e) => e.kind === "input" || e.kind === "reply");
+    check("swipe scrolled scrollback", before !== after, `${JSON.stringify(before.slice(0, 40))} -> ${JSON.stringify(after.slice(0, 40))}`);
+    check("swipe sent no pointer reports", touchLog.length === 0, JSON.stringify(touchLog));
+
+    // A tap focuses without clicking a terminal target.
+    await clear();
+    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy }] });
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await page.waitForTimeout(200);
+    check(
+      "tap focuses and sends no click",
+      (await page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))) === true &&
+        (await log()).length === 0,
+      JSON.stringify(await log()),
+    );
+
+    // --- Layout: 320px and rotation ---------------------------------------------------------
+    for (const size of [{ width: 320, height: 568 }, { width: 568, height: 320 }]) {
+      await page.setViewportSize(size);
+      await page.waitForTimeout(400);
+      const dims = await page.evaluate(() => {
+        const host = document.querySelector(".term-host");
+        const screen = document.querySelector(".xterm-screen");
+        const keys = document.querySelector(".term-keys");
+        if (!host || !screen || !keys) return null;
+        const h = host.getBoundingClientRect();
+        const s = screen.getBoundingClientRect();
+        return {
+          hostWidth: Math.round(h.width),
+          screenWidth: Math.round(s.width),
+          screenHeight: Math.round(s.height),
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          keyHeight: [...keys.querySelectorAll("button")].map((b) => Math.round(b.getBoundingClientRect().height)),
+        };
+      });
+      check(`${size.width}x${size.height}: terminal fits the viewport`, !!dims && dims.screenWidth > 0 && dims.screenHeight > 0 && !dims.overflow, JSON.stringify(dims));
+      check(`${size.width}x${size.height}: key buttons are 44px targets`, !!dims && dims.keyHeight.every((h) => h >= 44), JSON.stringify(dims?.keyHeight));
+    }
+
+    // Each resize must not resend an identical grid.
+    const resizes = await page.evaluate(() => window.wire.log.filter((e) => e.kind === "resize").map((e) => e.text));
+    check("no duplicate resize is sent", new Set(resizes).size === resizes.length, JSON.stringify(resizes));
+
+    check("no page errors", errors.length === 0, JSON.stringify(errors.slice(0, 3)));
+  } finally {
+    await browser.close();
+    await new Promise((done) => server.close(done));
+  }
+
+  if (failures.length > 0) {
+    console.error(`\n${failures.length} failing check(s):\n- ${failures.join("\n- ")}`);
+    process.exit(1);
+  }
+  console.log("\nall browser checks passed");
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

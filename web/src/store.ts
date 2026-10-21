@@ -12,6 +12,8 @@ export interface ChatView {
 
 interface WebState {
   conn: Conn;
+  /** The device pairing was revoked: only a socket that opens again clears this. */
+  authLost: boolean;
   /** The connection was open and has been lost since: reconnect attempts show the bar. */
   lost: boolean;
   machines: MachineView[];
@@ -35,6 +37,7 @@ function withChat(chats: Record<string, ChatView>, pane: WebPane, patch: (v: Cha
 
 export const useWeb = create<WebState>()((set) => ({
   conn: "connecting",
+  authLost: false,
   lost: false,
   machines: [],
   open: null,
@@ -82,7 +85,18 @@ export const useWeb = create<WebState>()((set) => ({
       }
     }),
 
-  setConn: (conn) => set((s) => ({ conn, lost: conn === "open" ? false : s.lost || conn === "down" })),
+  setConn: (conn) =>
+    set((s) => {
+      // A revoked pairing is sticky, whichever socket noticed it: the Chat socket's frames and a
+      // live Machine view are not fresh authentication, so they cannot bring the paired UI back.
+      // Only a socket that opens again proves the device is paired.
+      if (conn === "unpaired") return { conn, authLost: true };
+      if (s.authLost) {
+        if (conn === "open") return { conn, lost: false, authLost: false };
+        return { lost: conn === "down" ? true : s.lost };
+      }
+      return { conn, lost: conn === "open" ? false : s.lost || conn === "down" };
+    }),
 
   prependOlder: (key, items, before) =>
     set((s) => {

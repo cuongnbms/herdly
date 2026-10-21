@@ -69,6 +69,27 @@ describe("store machines", () => {
   });
 });
 
+describe("store pairing loss", () => {
+  it("keeps Not paired when the healthy Chat socket reports afterwards", () => {
+    const { setConn, apply } = useWeb.getState();
+    setConn("open");
+    setConn("unpaired");
+    setConn("connecting");
+    setConn("down");
+    apply({ type: "machine", view: view("local") });
+    expect(useWeb.getState().conn).toBe("unpaired");
+  });
+
+  it("leaves Not paired for a fresh authenticated socket", () => {
+    const { setConn } = useWeb.getState();
+    setConn("open");
+    setConn("unpaired");
+    setConn("open");
+    expect(useWeb.getState().conn).toBe("open");
+    expect(useWeb.getState().authLost).toBe(false);
+  });
+});
+
 describe("store unknown frames", () => {
   it("ignores a frame type it does not know", () => {
     const { apply } = useWeb.getState();
