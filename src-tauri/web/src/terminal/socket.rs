@@ -136,7 +136,15 @@ where
         code,
         reason: "".into(),
     }));
-    let _ = tokio::time::timeout(CLOSE_GRACE, sink.send(close)).await;
+    let _ = tokio::time::timeout(CLOSE_GRACE, async {
+        if sink.send(close).await.is_err() {
+            // A reader-first peer Close makes tungstenite reject new writes, including a
+            // replacement Close. It already queued the handshake reply: flush that reply
+            // instead, still inside the same absolute network close grace.
+            let _ = sink.flush().await;
+        }
+    })
+    .await;
 }
 
 /// Asks the supervisor to stop this attempt even when the socket task is cancelled outright.
@@ -708,29 +716,17 @@ where
 {
     // The writer's own receiver: every publication after this point is versioned against it.
     let mut ending = ending_state.subscribe();
-    // The writer's own decisions (a sealed drain, an overflow, a send that ran out of time)
-    // need no notification: they are recorded here and merged with the shared ending.
-    let mut own = Ending::default();
     // Set when the ending's last sender is gone: the branch is then disabled rather than
     // polled against a closed channel, which would spin or read as a policy close.
     let mut ending_alive = true;
     let code = loop {
-        // One snapshot of the *shared* ending per decision, merged with what the writer itself
-        // decided. A failed open and its 1008 can therefore never be torn apart into
-        // "no error" plus "close 1008".
-        let remote = ending.borrow_and_update().clone();
+        // Every close proposal, including this writer's queue/deadline outcomes, is
+        // arbitrated atomically in the same shared state. Take one coherent snapshot so
+        // a failed open's error and its 1008 can never be torn apart.
+        let decided = ending.borrow_and_update().clone();
         // Test-only: a publication here lands after the snapshot and before the decision. The
         // loop re-decides from the next version, so nothing is lost; a torn read would break.
         ending_state.at_decision_boundary();
-        let decided = if remote.error.is_some() {
-            remote
-        } else {
-            let mut merged = own.clone();
-            if merged.code.is_none() {
-                merged.code = remote.code;
-            }
-            merged
-        };
         if let Some(frame) = decided.error {
             // The error frame always precedes its policy close, so the client sees why.
             let _ =
@@ -743,7 +739,8 @@ where
         let drain_by = DrainDeadline::from(queue.grace_deadline());
         // An already-expired drain must end the attempt now, not grant a fresh budget.
         if drain_by.is_expired_at(Instant::now()) {
-            break CLOSE_LAGGED;
+            ending_state.close(CLOSE_LAGGED);
+            continue;
         }
         tokio::select! {
             biased;
@@ -756,11 +753,11 @@ where
                     }
                     // Recorded rather than broken out of, so a pending open error still wins.
                     Err(Stop::Sealed) => {
-                        own.close(CLOSE_NORMAL);
+                        ending_state.close(CLOSE_NORMAL);
                         continue;
                     }
                     Err(Stop::Overflow) => {
-                        own.close(CLOSE_LAGGED);
+                        ending_state.close(CLOSE_LAGGED);
                         continue;
                     }
                 };
@@ -769,17 +766,22 @@ where
                     // Not `break`: the ending may carry an open error frame that must be sent
                     // before this code, so the top of the loop decides.
                     Outcome::Code(code) => {
-                        own.close(code);
+                        ending_state.close(code);
                         continue;
                     }
-                    Outcome::Gone => return CLOSE_NORMAL,
+                    Outcome::Gone => {
+                        // There is no usable transport left, but even this outcome must not
+                        // overwrite a revocation/protocol code already published.
+                        ending_state.close(CLOSE_NORMAL);
+                        return ending.borrow_and_update().code();
+                    }
                 }
             }
             // The absolute drain bound runs whether the writer is dequeuing or sending.
             _ = wait_drain(drain_by) => {
                 // A drain that cannot finish in its bound is lagged, not a good close; recorded
                 // so a pending open error can still be sent first.
-                own.close(CLOSE_LAGGED);
+                ending_state.close(CLOSE_LAGGED);
                 continue;
             }
             // Any ending, including a failed open whose frame is sent at the top of the loop.
@@ -1050,7 +1052,12 @@ mod tests {
         ) -> std::task::Poll<Result<(), Self::Error>> {
             // The interrupted frame never completes, the way a send racing a close does not.
             if self.published.load(Ordering::SeqCst) > 0
-                && self.frames.lock().unwrap().iter().any(|m| matches!(m, Message::Binary(_)))
+                && self
+                    .frames
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|m| matches!(m, Message::Binary(_)))
             {
                 return std::task::Poll::Pending;
             }
@@ -1062,6 +1069,55 @@ mod tests {
             _cx: &mut std::task::Context<'_>,
         ) -> std::task::Poll<Result<(), Self::Error>> {
             std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Gates the network's readiness before accepting a frame, without starting a close
+    /// handshake. The test can publish both endings while a real writer send is pending.
+    struct BoundaryGate {
+        sink: Slow,
+        entered: Option<tokio::sync::oneshot::Sender<()>>,
+        release: Option<tokio::sync::oneshot::Receiver<()>>,
+    }
+
+    impl futures_util::Sink<Message> for BoundaryGate {
+        type Error = axum::Error;
+
+        fn poll_ready(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            if let Some(entered) = self.entered.take() {
+                let _ = entered.send(());
+            }
+            if let Some(release) = self.release.as_mut() {
+                if std::pin::Pin::new(release).poll(cx).is_pending() {
+                    return std::task::Poll::Pending;
+                }
+                self.release = None;
+            }
+            std::pin::Pin::new(&mut self.sink).poll_ready(cx)
+        }
+
+        fn start_send(
+            mut self: std::pin::Pin<&mut Self>,
+            item: Message,
+        ) -> Result<(), Self::Error> {
+            std::pin::Pin::new(&mut self.sink).start_send(item)
+        }
+
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::pin::Pin::new(&mut self.sink).poll_flush(cx)
+        }
+
+        fn poll_close(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::pin::Pin::new(&mut self.sink).poll_close(cx)
         }
     }
 
@@ -1492,13 +1548,17 @@ mod tests {
             assert!(futures_util::FutureExt::now_or_never(armed.as_mut()).is_none());
             ending.close(CLOSE_NORMAL);
             let woke = futures_util::FutureExt::now_or_never(armed.as_mut());
-            assert!(matches!(woke, Some(Ok(()))), "an armed wait wakes: {woke:?}");
+            assert!(
+                matches!(woke, Some(Ok(()))),
+                "an armed wait wakes: {woke:?}"
+            );
         }
         assert_eq!(rx.borrow_and_update().code, Some(CLOSE_NORMAL));
     }
 
     #[tokio::test]
-    async fn an_open_error_published_while_the_writer_is_parked_reaches_the_peer_then_closes_1008() {
+    async fn an_open_error_published_while_the_writer_is_parked_reaches_the_peer_then_closes_1008()
+    {
         // The end-to-end version of the I1/N3 window. The queue is empty and the drain is
         // absent, so the writer parks in its select; the failure is published *then*. On the
         // default current-thread runtime a single yield takes the writer to its parked point,
@@ -1507,15 +1567,13 @@ mod tests {
         let ledger = Arc::new(AckLedger::default());
         let ending = EndingState::new();
         let sink = Slow::new(Duration::ZERO);
-        let writer = tokio::spawn(writer_loop(
-            sink.clone(),
-            queue,
-            ledger,
-            ending.clone(),
-        ));
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
         tokio::task::yield_now().await;
         assert!(!writer.is_finished(), "the writer is parked, not finished");
-        assert!(sink.frames().is_empty(), "nothing was sent before the failure");
+        assert!(
+            sink.frames().is_empty(),
+            "nothing was sent before the failure"
+        );
 
         // The read loop's own close first, then the failed open: exactly the ordering that
         // used to hide the error frame.
@@ -1567,17 +1625,16 @@ mod tests {
                 }
             })
         });
-        let writer = tokio::spawn(writer_loop(
-            sink.clone(),
-            queue,
-            ledger,
-            ending.clone(),
-        ));
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
         let code = tokio::time::timeout(Duration::from_secs(5), writer)
             .await
             .expect("the forced publication must not wedge the writer")
             .unwrap();
-        assert_eq!(publishes.load(Ordering::SeqCst), 1, "the seam published once");
+        assert_eq!(
+            publishes.load(Ordering::SeqCst),
+            1,
+            "the seam published once"
+        );
         assert!(
             boundary_hits.load(Ordering::SeqCst) >= 1,
             "the seam really ran at the writer's decision boundary"
@@ -1595,6 +1652,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_normal_ending_and_open_error_at_a_sink_gate_send_the_error_then_1008() {
+        let queue = Queue::new();
+        assert_eq!(queue.push_data(b"pending output".to_vec()), Push::Accepted);
+        let ending = EndingState::new();
+        let sink = Slow::new(Duration::ZERO);
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let writer = tokio::spawn(writer_loop(
+            BoundaryGate {
+                sink: sink.clone(),
+                entered: Some(entered_tx),
+                release: Some(release_rx),
+            },
+            queue,
+            Arc::new(AckLedger::default()),
+            ending.clone(),
+        ));
+        tokio::time::timeout(Duration::from_secs(5), entered_rx)
+            .await
+            .expect("the writer reaches the network boundary")
+            .unwrap();
+        assert!(sink.frames.lock().unwrap().is_empty(), "the sink is gated");
+        // No await between publications: both are pending before the writer can resume.
+        // This is an application ending, NOT an already-started WebSocket handshake.
+        ending.close(CLOSE_NORMAL);
+        ending.open_failed(json_error("io", "cannot open a pty"));
+        release_tx.send(()).unwrap();
+        let code = tokio::time::timeout(Duration::from_secs(5), writer)
+            .await
+            .expect("the gated writer completes")
+            .unwrap();
+        assert_eq!(code, 1008);
+        let frames = sink.frames.lock().unwrap();
+        let errors: Vec<_> = frames
+            .iter()
+            .filter_map(|frame| match frame {
+                Message::Text(text) => {
+                    Some(serde_json::from_str::<serde_json::Value>(text.as_str()).unwrap())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            errors,
+            vec![serde_json::json!({
+                "type": "error", "error": {"code": "io", "message": "cannot open a pty"}
+            })]
+        );
+        assert!(matches!(frames.last(), Some(Message::Close(Some(frame))) if frame.code == 1008));
+        assert!(
+            matches!(frames.get(frames.len() - 2), Some(Message::Text(_))),
+            "the error immediately precedes the close: {frames:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_revocation_after_the_snapshot_beats_a_ready_sealed_queue() {
+        let queue = Queue::new();
+        let ending = EndingState::new();
+        let sink = Slow::new(Duration::ZERO);
+        let publications = Arc::new(AtomicUsize::new(0));
+        *ending.interleave.lock().unwrap() = Some({
+            let ending = ending.clone();
+            let queue = queue.clone();
+            let publications = publications.clone();
+            Arc::new(move || {
+                if publications.fetch_add(1, Ordering::SeqCst) == 0 {
+                    // The writer has an empty snapshot. The reader publishes 4401 FIRST,
+                    // then the supervisor seals the drained queue. Both select arms are
+                    // ready, and biased queue dequeue wins: its 1000 must not replace 4401.
+                    ending.close(crate::config::CLOSE_REVOKED);
+                    queue.seal();
+                }
+            })
+        });
+        let code = tokio::time::timeout(
+            Duration::from_secs(5),
+            writer_loop(
+                sink.clone(),
+                queue.clone(),
+                Arc::new(AckLedger::default()),
+                ending.clone(),
+            ),
+        )
+        .await
+        .expect("the ready queue and revocation must end the writer");
+        assert!(
+            queue.is_sealed(),
+            "the competing queue stop really was ready"
+        );
+        assert_eq!(
+            code, 4401,
+            "the earlier shared revocation wins over the queue's 1000"
+        );
+        let frames = sink.frames.lock().unwrap();
+        assert_eq!(frames.len(), 1, "only the close is sent: {frames:?}");
+        assert!(matches!(&frames[0], Message::Close(Some(frame)) if frame.code == 4401));
+        ending.interleave.lock().unwrap().take();
+    }
+
+    #[tokio::test]
     async fn a_normal_close_published_while_the_writer_is_parked_is_not_lost() {
         // The same wakeup, with no error at all: an empty queue and an absent drain leave
         // nothing else to wake the writer, so a lost publication would park it until the
@@ -1603,14 +1761,12 @@ mod tests {
         let ledger = Arc::new(AckLedger::default());
         let ending = EndingState::new();
         let sink = Slow::new(Duration::ZERO);
-        let writer = tokio::spawn(writer_loop(
-            sink.clone(),
-            queue,
-            ledger,
-            ending.clone(),
-        ));
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
         tokio::task::yield_now().await;
-        assert!(!writer.is_finished(), "the writer is parked on an empty queue");
+        assert!(
+            !writer.is_finished(),
+            "the writer is parked on an empty queue"
+        );
 
         ending.close(CLOSE_NORMAL);
         let code = tokio::time::timeout(Duration::from_secs(5), writer)
@@ -1618,7 +1774,10 @@ mod tests {
             .expect("the parked writer must observe the normal close")
             .unwrap();
         assert_eq!(code, CLOSE_NORMAL);
-        assert!(sink.frames().is_empty(), "a normal close sends no data frame");
+        assert!(
+            sink.frames().is_empty(),
+            "a normal close sends no data frame"
+        );
     }
 
     #[tokio::test]
@@ -1635,17 +1794,16 @@ mod tests {
             ending: ending.clone(),
             published: Arc::new(AtomicUsize::new(0)),
         };
-        let writer = tokio::spawn(writer_loop(
-            sink.clone(),
-            queue,
-            ledger,
-            ending.clone(),
-        ));
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
         let code = tokio::time::timeout(Duration::from_secs(5), writer)
             .await
             .expect("a publication during a send must interrupt it")
             .unwrap();
-        assert_eq!(sink.published.load(Ordering::SeqCst), 1, "published once, mid-send");
+        assert_eq!(
+            sink.published.load(Ordering::SeqCst),
+            1,
+            "published once, mid-send"
+        );
         assert_eq!(
             code, CLOSE_POLICY,
             "the open error decides the close, not the interrupted frame"

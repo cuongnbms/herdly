@@ -1384,39 +1384,60 @@ async fn a_failed_open_whose_spawn_fails_after_a_client_disconnect_is_closed_exa
 }
 
 #[tokio::test]
-async fn a_failed_open_with_a_pending_client_close_delivers_the_error_then_1008() {
-    // The client's own close frame and the failed spawn land in the same instant. The peer is
-    // still reading a live socket, so what it receives is observable: the error frame first,
-    // then close 1008 - never a bare 1000.
+async fn a_client_close_during_a_failing_open_completes_the_handshake_and_cleans_up() {
+    // Once the server has read WS Close, application data is no longer legal. Hold open
+    // completion until the reply arrives to force that reader-first schedule.
     let server = Server::start(Duration::from_secs(15)).await;
-    let (attempt, open_gate) = FakeTerminal::gated();
-    server.fake.script_terminal(attempt.clone());
-    let mut first = server.connect().await;
-    first
-        .send(open_frame("s", "p1", 80, 24, false))
-        .await
-        .unwrap();
-    wait_until("the pending open", || attempt.sizes().len() == 1).await;
-    drop(open_gate);
-
     let (failing, gate) = FakeTerminal::gated();
     *failing.pending_open_failure().lock().unwrap() =
         Some(herdly_core::error::AppError::new("io", "cannot open a pty"));
     server.fake.script_terminal(failing.clone());
     let mut ws = server.connect().await;
     ws.send(open_frame("s", "p2", 80, 24, false)).await.unwrap();
-    wait_until("the second pending open", || failing.sizes().len() == 1).await;
-    // The client asks to close, then the spawn fails: the error still has to reach it.
+    wait_until("the pending open", || failing.sizes().len() == 1).await;
     ws.send(Message::Close(None)).await.unwrap();
+    assert!(
+        matches!(next_msg(&mut ws).await, Message::Close(None)),
+        "the server echoes the client's close, not a new application close code"
+    );
+    assert_eq!(
+        server.st.terminals.len(),
+        1,
+        "the pending open remains owned"
+    );
+    assert!(!failing.is_closed(), "cleanup must await the pending open");
     drop(gate);
+    wait_until("the failed attempt to be closed", || failing.is_closed()).await;
+    assert_eq!(failing.close_count(), 1);
+    wait_until("the registration to clear after cleanup", || {
+        server.st.terminals.is_empty()
+    })
+    .await;
+}
 
-    // The error frame arrives before the connection ends...
-    let error = next_event(&mut ws).await;
-    assert_eq!(error["type"], "error", "{error}");
-    assert_eq!(error["error"]["code"], "io");
-    assert_eq!(error["error"]["message"], "cannot open a pty");
-    // ...and the close is the policy close, not a normal one.
+#[tokio::test]
+async fn a_failed_gated_open_delivers_the_error_then_1008_to_a_live_peer() {
+    let server = Server::start(Duration::from_secs(15)).await;
+    let (failing, gate) = FakeTerminal::gated();
+    *failing.pending_open_failure().lock().unwrap() =
+        Some(herdly_core::error::AppError::new("io", "cannot open a pty"));
+    server.fake.script_terminal(failing.clone());
+    let mut ws = server.connect().await;
+    ws.send(open_frame("s", "p2", 80, 24, false)).await.unwrap();
+    wait_until("the pending open", || failing.sizes().len() == 1).await;
+    // Keep the transport Active: only now is error-frame delivery a valid requirement.
+    drop(gate);
+    assert_eq!(
+        next_event(&mut ws).await,
+        json!({
+            "type": "error", "error": {"code": "io", "message": "cannot open a pty"}
+        })
+    );
     assert_eq!(close_code(&mut ws).await, 1008);
     wait_until("the failed attempt to be closed", || failing.is_closed()).await;
     assert_eq!(failing.close_count(), 1);
+    wait_until("the registration to clear after cleanup", || {
+        server.st.terminals.is_empty()
+    })
+    .await;
 }
