@@ -101,11 +101,18 @@ export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack():
     if (el.scrollTop > 0 || before <= 0 || asked.current === before) return;
     const at = before;
     asked.current = at;
-    anchorHeight.current = el.scrollHeight;
     chatPage(pane, at, CHAT_PAGE).then(
-      (older) => prependOlder(key, older, at),
+      (older) => {
+        asked.current = null;
+        const el2 = box.current;
+        const itemsOf = () => useWeb.getState().chats[key]?.chat.items;
+        const was = itemsOf();
+        anchorHeight.current = el2 ? el2.scrollHeight : null;
+        prependOlder(key, older, at);
+        // A stale page changes nothing: no render follows, so drop the anchor.
+        if (itemsOf() === was) anchorHeight.current = null;
+      },
       () => {
-        anchorHeight.current = null;
         asked.current = null;
       },
     );

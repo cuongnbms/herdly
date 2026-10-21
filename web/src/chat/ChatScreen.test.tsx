@@ -42,6 +42,37 @@ describe("ChatScreen", () => {
     expect(api.chatPage).toHaveBeenCalledWith(pane, 500, 200);
   });
 
+  it("pages again after a Reset brings the same offset back", async () => {
+    vi.mocked(api.chatPage).mockReset().mockResolvedValue([{ kind: "system", text: "older" }] as never);
+    open([{ kind: "system", text: "newest" }], 501);
+    const { container } = render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    const top = () => fireEvent.scroll(container.querySelector("[data-transcript]")!, { target: { scrollTop: 0 } });
+    top();
+    await waitFor(() => expect(screen.getByText("older")).toBeInTheDocument());
+    act(() => useWeb.getState().apply({ type: "chat", pane, event: { type: "reset", items: [{ kind: "system", text: "newest" }], total: 501 } as never }));
+    expect(screen.queryByText("older")).not.toBeInTheDocument();
+    top();
+    await waitFor(() => expect(api.chatPage).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.chatPage).mock.calls[1]).toEqual([pane, 500, 200]);
+  });
+
+  it("a page dropped as stale after a Reset does not block the next page", async () => {
+    let resolve!: (v: never) => void;
+    vi.mocked(api.chatPage).mockReset().mockImplementationOnce(() => new Promise((r) => (resolve = r as never))).mockResolvedValue([{ kind: "system", text: "older" }] as never);
+    open([{ kind: "system", text: "newest" }], 501);
+    const { container } = render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    const top = () => fireEvent.scroll(container.querySelector("[data-transcript]")!, { target: { scrollTop: 0 } });
+    top();
+    const reset = (items: unknown[]) => act(() => useWeb.getState().apply({ type: "chat", pane, event: { type: "reset", items, total: 501 } as never }));
+    reset([{ kind: "system", text: "a" }, { kind: "system", text: "b" }]);
+    await act(async () => resolve([{ kind: "system", text: "late" }] as never));
+    expect(screen.queryByText("late")).not.toBeInTheDocument();
+    reset([{ kind: "system", text: "newest" }]);
+    top();
+    await waitFor(() => expect(screen.getByText("older")).toBeInTheDocument());
+    expect(api.chatPage).toHaveBeenCalledTimes(2);
+  });
+
   it("sends a message, shows it pending, and settles it on the append", async () => {
     vi.mocked(api.panePrompt).mockResolvedValue(undefined as never);
     open([]);
