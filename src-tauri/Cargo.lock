@@ -1620,6 +1620,7 @@ dependencies = [
  "chrono",
  "core-foundation",
  "core-text",
+ "herdly-core",
  "libc",
  "notify",
  "objc2",
@@ -1643,6 +1644,27 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "herdly-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "libc",
+ "notify",
+ "portable-pty",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

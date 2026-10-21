@@ -5,6 +5,10 @@ description = "Herdly desktop app"
 authors = ["Cuong Nguyen"]
 edition = "2021"
 
+[workspace]
+members = ["core"]
+default-members = [".", "core"]
+
 [lib]
 # The `_lib` suffix is necessary to keep the lib name unique from the bin name.
 name = "herdly_lib"
@@ -14,6 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+herdly-core = { path = "core" }
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-notification = "2"

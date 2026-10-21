@@ -1,9 +1,9 @@
 //! Needs a real herdr (`/opt/homebrew/bin/herdr`). Run with
-//! `cargo test --test attach_herdr -- --ignored --test-threads=1`.
-use herdly_lib::attach::{attach_argv, AttachEvent, AttachKey, AttachManager, Sink};
-use herdly_lib::herdr::rpc;
-use herdly_lib::transport::local::LocalTransport;
-use herdly_lib::transport::{parse_session_list, MachineInfo, Transport};
+//! `cargo test -p herdly-core --test attach_herdr -- --ignored --test-threads=1`.
+use herdly_core::attach::{attach_argv, AttachEvent, AttachKey, AttachManager, Sink};
+use herdly_core::herdr::rpc;
+use herdly_core::transport::local::LocalTransport;
+use herdly_core::transport::{parse_session_list, MachineInfo, Transport};
 use serde_json::json;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};

@@ -1,23 +1,17 @@
-pub mod attach;
 pub mod commands;
-pub mod complete;
-pub mod error;
-pub mod files;
 pub mod fonts;
-pub mod git;
-pub mod herdr;
 pub mod html;
 pub mod layout;
-pub mod machines;
 pub mod mouse;
 pub mod notify;
-pub mod pi;
-pub mod quota;
-pub mod sshconfig;
 pub mod synthetic_keys;
-pub mod transcript;
-pub mod transport;
-pub mod view;
+
+// The Tauri-free backend lives in `herdly-core`; re-exported so `crate::machines::…` and the
+// other app paths keep resolving.
+pub use herdly_core::{
+    attach, complete, error, files, git, herdr, machines, pi, quota, sshconfig, transcript,
+    transport, view,
+};
 
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, MenuItemKind};
