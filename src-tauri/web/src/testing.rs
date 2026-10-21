@@ -7,6 +7,7 @@ use crate::config::{now_secs, REVOKE_CHECK};
 use crate::hub::Hub;
 use crate::store::Store;
 use crate::terminal::backend::{TerminalHandle, TerminalSize};
+use crate::terminal::registry::TerminalRegistry;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -19,6 +20,7 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -100,6 +102,17 @@ pub struct FakeTerminal {
     open_gate: Mutex<Option<oneshot::Receiver<()>>>,
     /// Held until a test releases it, to model a write stuck behind a wedged PTY.
     write_gate: Mutex<Option<oneshot::Receiver<()>>>,
+    /// Inputs the PTY is still stuck behind, oldest first: the first receives the next
+    /// [`FakeTerminal::release_write`].
+    waiting_writes: Mutex<VecDeque<oneshot::Sender<()>>>,
+    /// When set, every write parks until a test releases it, the way a wedged PTY holds each
+    /// write in turn.
+    park_writes: Mutex<bool>,
+    /// Writes currently inside `write`: 0 means the input worker is not stuck in one.
+    writes_in_flight: AtomicUsize,
+    /// The in-flight write count observed at `close`, so a test can show cleanup arrived while
+    /// a write was still stuck, i.e. before anything waited for the worker.
+    closed_with_writes_in_flight: AtomicUsize,
     open_fails: Mutex<Option<AppError>>,
 }
 
@@ -123,6 +136,14 @@ impl FakeTerminal {
             ..Default::default()
         });
         (terminal, tx)
+    }
+
+    /// A Terminal whose every `write` parks until [`FakeTerminal::release_write`], so a test
+    /// can hold the input worker while more frames arrive.
+    pub fn parking_writes() -> Arc<FakeTerminal> {
+        let terminal = FakeTerminal::default();
+        *terminal.park_writes.lock().unwrap() = true;
+        Arc::new(terminal)
     }
 
     /// A Terminal whose `open` fails with `e`.
@@ -151,8 +172,22 @@ impl FakeTerminal {
     pub fn is_closed(&self) -> bool {
         *self.closed.lock().unwrap()
     }
+
+    /// Releases the oldest parked write, the way a wedged PTY finally accepting bytes would.
+    /// `false` when nothing is waiting.
+    pub fn release_write(&self) -> bool {
+        let next = self.waiting_writes.lock().unwrap().pop_front();
+        match next {
+            Some(tx) => tx.send(()).is_ok(),
+            None => false,
+        }
+    }
     pub fn close_count(&self) -> usize {
         *self.closes.lock().unwrap()
+    }
+    /// How many writes were still inside `write` when `close` ran.
+    pub fn closed_with_writes_in_flight(&self) -> usize {
+        self.closed_with_writes_in_flight.load(Ordering::SeqCst)
     }
 
     /// Delivers output through the real sink, as the PTY reader would.
@@ -194,10 +229,21 @@ impl TerminalHandle for FakeTerminal {
         }
         // Recorded before any wait, so a test can assert what was attempted while it is stuck.
         self.inputs.lock().unwrap().push(data);
+        self.writes_in_flight.fetch_add(1, Ordering::SeqCst);
         let gate = self.write_gate.lock().unwrap().take();
         if let Some(gate) = gate {
             let _ = gate.await;
+            self.writes_in_flight.fetch_sub(1, Ordering::SeqCst);
+            return Ok(());
         }
+        // A parking terminal holds each write until the test releases it, so a socket's input
+        // worker really wedges; otherwise a write returns as soon as it is recorded.
+        if *self.park_writes.lock().unwrap() {
+            let (tx, rx) = oneshot::channel();
+            self.waiting_writes.lock().unwrap().push_back(tx);
+            let _ = rx.await;
+        }
+        self.writes_in_flight.fetch_sub(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -214,6 +260,10 @@ impl TerminalHandle for FakeTerminal {
     }
 
     async fn close(&self) {
+        self.closed_with_writes_in_flight.store(
+            self.writes_in_flight.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        );
         *self.closes.lock().unwrap() += 1;
         *self.closed.lock().unwrap() = true;
     }
@@ -327,6 +377,11 @@ pub fn state(backend: Arc<FakeBackend>, dir: &Path) -> Arc<AppState> {
 
 /// Like `state`, with the interval at which an open socket re-checks its device.
 pub fn state_with(backend: Arc<FakeBackend>, dir: &Path, revoke_check: Duration) -> Arc<AppState> {
+    state_for(backend, dir, revoke_check)
+}
+
+/// An `AppState` over any backend: the real-PTY tests need one that is not the fake.
+pub fn state_for(backend: Arc<dyn Backend>, dir: &Path, revoke_check: Duration) -> Arc<AppState> {
     let dist = dir.join("dist");
     std::fs::create_dir_all(dist.join("assets")).unwrap();
     std::fs::write(
@@ -348,6 +403,7 @@ pub fn state_with(backend: Arc<FakeBackend>, dir: &Path, revoke_check: Duration)
             revoke_check,
         },
         hub,
+        terminals: TerminalRegistry::new(),
     })
 }
 

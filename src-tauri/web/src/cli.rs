@@ -6,11 +6,13 @@ use crate::chat::ChatHub;
 use crate::config::{now_secs, REVOKE_CHECK};
 use crate::hub::{forward_statuses, Hub};
 use crate::store::Store;
+use crate::terminal::registry::TerminalRegistry;
 use clap::{Args, Parser, Subcommand};
 use herdly_core::machines::MachineManager;
 use herdly_core::transcript::ChatManager;
 use qrcode::render::unicode;
 use qrcode::QrCode;
+use std::future::IntoFuture;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -114,6 +116,7 @@ pub async fn build_serve(args: &ServeArgs) -> Result<(TcpListener, Arc<AppState>
         },
         hub,
         chats: chat_hub,
+        terminals: TerminalRegistry::new(),
     });
     Ok((listener, st))
 }
@@ -132,10 +135,47 @@ fn serve(args: ServeArgs) -> Result<(), String> {
     rt.block_on(async {
         let (listener, st) = build_serve(&args).await?;
         tracing::info!("herdly-web listening on {}", args.bind);
-        axum::serve(listener, router(st))
-            .await
-            .map_err(|e| e.to_string())
+        serve_until_signalled(listener, st).await
     })
+}
+
+/// Serves until SIGINT or SIGTERM, then ends every live Terminal attempt before the runtime
+/// exits, so no Attach child outlives the server. A forced kill cannot promise this.
+async fn serve_until_signalled(listener: TcpListener, st: Arc<AppState>) -> Result<(), String> {
+    // A failed handler (a bind/accept error) ends the server like a signal does.
+    let server = axum::serve(listener, router(st.clone())).into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        res = &mut server => res.map_err(|e| e.to_string()),
+        signal = shutdown_signal() => {
+            if let Err(e) = signal {
+                tracing::warn!("could not install a shutdown signal: {e}");
+                // With no signal to wait for, stay up rather than exiting silently.
+                return server.await.map_err(|e| e.to_string());
+            }
+            tracing::info!("shutting down: closing live terminal attempts");
+            st.terminals.shutdown().await;
+            // The listener stops with this future; no new upgrade is accepted.
+            Ok(())
+        }
+    }
+}
+
+/// Resolves on SIGINT, or on SIGTERM on unix.
+async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate())?;
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => r,
+            _ = term.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
 }
 
 fn open_store(state: Option<PathBuf>) -> Result<Store, String> {

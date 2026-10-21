@@ -263,9 +263,38 @@ async fn static_files_carry_cache_and_security_headers() {
     assert!(body.contains("<title>Herdly</title>"));
     assert_eq!(h["cache-control"], "no-cache");
     assert_eq!(h["x-content-type-options"], "nosniff");
+    // The approved CSP change adds inline styles for xterm and nothing else: the exact string
+    // replaces the pre-lens one, and the directives below it are asserted one by one.
     assert_eq!(
         h["content-security-policy"],
-        "default-src 'self'; connect-src 'self' ws://192.0.2.10:7380; img-src 'self' data:; object-src 'none'; base-uri 'none'"
+        "default-src 'self'; connect-src 'self' ws://192.0.2.10:7380; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"
+    );
+    let csp = h["content-security-policy"].to_str().unwrap();
+    let directives: Vec<&str> = csp.split(';').map(|d| d.trim()).collect();
+    let directive = |name: &str| {
+        directives
+            .iter()
+            .find(|d| d.split_whitespace().next() == Some(name))
+            .unwrap_or_else(|| panic!("{name} is missing from {csp}"))
+    };
+    assert_eq!(*directive("style-src"), "style-src 'self' 'unsafe-inline'");
+    assert_eq!(*directive("default-src"), "default-src 'self'");
+    assert_eq!(*directive("img-src"), "img-src 'self' data:");
+    assert_eq!(*directive("object-src"), "object-src 'none'");
+    assert_eq!(*directive("base-uri"), "base-uri 'none'");
+    assert_eq!(
+        *directive("connect-src"),
+        "connect-src 'self' ws://192.0.2.10:7380"
+    );
+    // No script or eval relaxation, whatever the style directive allows.
+    assert!(!csp.contains("script-src"), "{csp}");
+    assert!(!csp.contains("unsafe-eval"), "{csp}");
+    assert!(!csp.contains("'unsafe-inline' 'unsafe-inline'"), "{csp}");
+    // Inline styles are only allowed for styles: the default source stays 'self'.
+    assert!(
+        !csp.split(';')
+            .any(|d| d.contains("default-src") && d.contains("unsafe-inline")),
+        "{csp}"
     );
     let (s, h, _) = send(&app, get("/assets/app-1a2b.js", None)).await;
     assert_eq!(s, StatusCode::OK);
