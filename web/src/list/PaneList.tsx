@@ -1,9 +1,27 @@
 import { useState } from "react";
 import { canChat } from "../config";
 import { useWeb } from "../store";
-import { webKey, type WebPane } from "../types";
-import { groupSession, orderSessions, type PaneRow } from "./order";
+import { webKey, type PaneView, type SessionView, type WebPane } from "../types";
+import { orderSessions } from "./order";
 import { markSeen, shownStatus } from "./seen";
+
+interface PaneRow { pane: PaneView; workspace: string }
+
+// Private copy of the old per-Session grouping until Task 4 rewrites this list.
+function groupSession(s: SessionView): { waiting: PaneRow[]; workspaces: { workspace_id: string; label: string; panes: PaneRow[] }[] } {
+  const waiting: PaneRow[] = [];
+  const workspaces: { workspace_id: string; label: string; panes: PaneRow[] }[] = [];
+  for (const w of s.workspaces) {
+    const panes: PaneRow[] = [];
+    for (const t of w.tabs) {
+      for (const pane of t.panes) {
+        (pane.status === "blocked" ? waiting : panes).push({ pane, workspace: w.label });
+      }
+    }
+    if (panes.length > 0) workspaces.push({ workspace_id: w.workspace_id, label: w.label, panes });
+  }
+  return { waiting, workspaces };
+}
 
 const BADGE: Record<string, string> = { blocked: "#c0392b", working: "#2e7d32", done: "#1565c0", idle: "#757575", unknown: "#757575" };
 
