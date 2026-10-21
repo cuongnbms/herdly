@@ -183,8 +183,17 @@ impl Auth {
                     None => Ok(false), // revoked meanwhile: never re-add
                 }
             });
-            if let (Ok(true), Some(d)) = (written, c.by_hash.get_mut(&hash)) {
-                d.last_seen = now; // no second write inside the hour; the mtime change reloads
+            match written {
+                Ok(true) => {
+                    if let Some(d) = c.by_hash.get_mut(&hash) {
+                        d.last_seen = now; // no second write inside the hour; the mtime change reloads
+                    }
+                }
+                Ok(false) => {
+                    c.by_hash.remove(&hash); // revoked behind the cache's back
+                    return None;
+                }
+                Err(_) => {}
             }
         }
         Some(DeviceInfo {

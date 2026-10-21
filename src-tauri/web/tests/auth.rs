@@ -98,3 +98,22 @@ fn last_seen_is_written_at_most_hourly_and_never_resurrects_a_revoked_device() {
     auth.check(&cookie, 4600 + 3600);
     assert!(list_devices(&s).unwrap().is_empty());
 }
+
+#[test]
+fn a_revoke_the_cache_missed_is_caught_by_the_hourly_write() {
+    let (_d, s) = store();
+    let t = start_pairing(&s, 1000).unwrap();
+    let (dev, cookie) = complete_pairing(&s, &t, "phone", 1000).unwrap();
+    let auth = Auth::new(s.clone());
+    assert!(auth.check(&cookie, 1001).is_some()); // loads the cache
+    let path = s.dir.join("devices.json");
+    let seen = std::fs::metadata(&path).unwrap().modified().unwrap();
+    revoke(&s, &dev.id).unwrap();
+    // Put the old mtime back so the cache cannot tell the file changed.
+    let f = std::fs::File::options().write(true).open(&path).unwrap();
+    f.set_modified(seen).unwrap();
+    drop(f);
+    assert_eq!(auth.check(&cookie, 1000 + 3600), None);
+    assert_eq!(auth.check(&cookie, 1000 + 3601), None);
+    assert!(list_devices(&s).unwrap().is_empty());
+}
