@@ -1,7 +1,7 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
-import { assetsInline } from "./src/config";
+import { assetsInline } from "./src/config.ts";
 
 export default defineConfig({
   plugins: [react()],
