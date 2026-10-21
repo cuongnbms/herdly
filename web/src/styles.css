@@ -291,3 +291,88 @@ button:disabled { opacity: 0.45; cursor: default; }
   font-size: 13px;
   background: color-mix(in srgb, var(--amber) 16%, var(--surface-0));
 }
+
+/* ---------- Chat header ---------- */
+.chat-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: calc(env(safe-area-inset-top) + 4px) 4px 4px;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--line);
+}
+.chat-title {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--r-md);
+  text-align: left;
+  color: var(--fg);
+}
+.chat-title:active { background: var(--active); }
+.chat-title-main {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-title-sub {
+  grid-column: 1;
+  font-size: 12px;
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-title .status { grid-column: 2; grid-row: 1; font-size: 0; }
+/* The 32px pill sits inside a transparent 6px border, so the tap area is 44px. */
+.need-chip {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border: 6px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  background-clip: padding-box;
+  color: var(--amber);
+  font-size: 13px;
+  font-weight: 600;
+}
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  background: transparent;
+}
+.menu {
+  position: absolute;
+  top: 100%;
+  right: 8px;
+  z-index: 26;
+  min-width: 220px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+}
+.menu [role="menuitem"] {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  text-align: left;
+  border-radius: var(--r-sm);
+  color: var(--fg);
+}
+.menu [role="menuitem"]:active { background: var(--active); }
+.menu [role="menuitem"].armed { color: var(--err-fg); }
+.menu-error { font-size: 13px; color: var(--err-fg); padding: 6px 12px; }

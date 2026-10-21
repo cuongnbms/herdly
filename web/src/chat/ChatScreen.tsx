@@ -5,11 +5,10 @@ import { useWeb } from "../store";
 import { webKey, type ChatItem, type PaneView, type WebPane } from "../types";
 import { ItemView, userBubble } from "./ItemView";
 import { isStale, settle, type Pending } from "./pending";
-import { StopBar } from "./StopBar";
+import { ChatHeader } from "./ChatHeader";
 import { PromptCard } from "../prompt/PromptCard";
 import { usePrompt } from "../prompt/usePrompt";
 
-const BADGE: Record<string, string> = { blocked: "#c0392b", working: "#2e7d32", done: "#1565c0", idle: "#757575", unknown: "#757575" };
 const AT_BOTTOM_PX = 40;
 
 function errorText(e: unknown): string {
@@ -31,7 +30,7 @@ function Composer({ draft, setDraft, onSend }: { draft: Draft; setDraft(d: Draft
   );
 }
 
-/** Esc and Ctrl+C always; the prompt card instead of the Composer while the Pane is blocked. */
+/** The prompt card instead of the Composer while the Pane is blocked. */
 function BottomBar({ pane, view, onSent, onFailed }: { pane: WebPane; view: PaneView | undefined; onSent(text: string): number; onFailed(id: number): void }) {
   const blocked = view?.status === "blocked";
   // The draft lives here, not in Composer, so a prompt that hides Composer does not lose it.
@@ -51,7 +50,6 @@ function BottomBar({ pane, view, onSent, onFailed }: { pane: WebPane; view: Pane
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {blocked ? <BlockedPrompt pane={pane} view={view} /> : <Composer draft={draft} setDraft={setDraft} onSend={send} />}
-      <StopBar pane={pane} />
     </div>
   );
 }
@@ -76,7 +74,7 @@ function BlockedPrompt({ pane, view }: { pane: WebPane; view: PaneView }) {
   return prompt ? <PromptCard key={prompt.id} prompt={prompt} busy={busy} error={error} onAnswer={(a) => void answer(a)} /> : null;
 }
 
-export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack(): void; onRetry(): void }) {
+export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane; onBack(): void; onRetry(): void; onSwitch?(p: WebPane): void }) {
   const key = webKey(pane);
   const view = useWeb((s) => s.chats[key]);
   const paneView = useWeb((s) =>
@@ -152,14 +150,9 @@ export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack():
   };
   const onFailed = (id: number) => setPending((ps) => ps.filter((p) => p.id !== id));
 
-  const status = paneView?.status ?? "unknown";
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100dvh", maxWidth: 720, margin: "0 auto" }}>
-      <header style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #8884" }}>
-        <button type="button" aria-label="Back" onClick={onBack} style={{ minHeight: 44, minWidth: 44 }}>←</button>
-        <strong style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{paneView?.title ?? pane.pane_id}</strong>
-        <span data-status={status} style={{ background: BADGE[status] ?? BADGE.unknown, color: "#fff", borderRadius: 10, padding: "2px 8px", fontSize: 12 }}>{status}</span>
-      </header>
+      <ChatHeader pane={pane} onBack={onBack} onSwitch={onSwitch} />
       {view?.located?.ambiguous && <div style={{ padding: "4px 12px", fontSize: 13 }}>Several transcripts match; showing the newest</div>}
       {error && (
         <div role="alert" style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", background: "#c0392b", color: "#fff" }}>

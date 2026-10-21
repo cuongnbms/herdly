@@ -36,11 +36,18 @@ export function App({ socket }: { socket?: Socket }) {
     clearChat(webKey(p));
     closeChat();
   };
+  const switchTo = (next: WebPane) => {
+    if (open) {
+      socket?.unsubscribe(open);
+      clearChat(webKey(open));
+    }
+    openChat(next);
+  };
   if (conn === "unpaired") return <NotPaired />;
   return (
     <>
       {(conn === "down" || (conn === "connecting" && lost)) && <div role="status" className="banner banner-warn reconnect">Disconnected, reconnecting…</div>}
-      {open ? <ChatScreen pane={open} onBack={() => back(open)} onRetry={() => socket?.subscribe(open)} /> : <PaneList onOpen={openChat} />}
+      {open ? <ChatScreen key={openKey} pane={open} onBack={() => back(open)} onRetry={() => socket?.subscribe(open)} onSwitch={switchTo} /> : <PaneList onOpen={openChat} />}
     </>
   );
 }
