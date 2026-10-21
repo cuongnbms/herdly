@@ -106,6 +106,15 @@ pub enum Push {
     Overflow,
 }
 
+/// Why a dequeue stopped returning frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    /// The attempt is sealed and everything it accepted has drained.
+    Sealed,
+    /// A callback outgrew the queue's bounds: the socket must close lagged.
+    Overflow,
+}
+
 pub struct Queue {
     state: std::sync::Mutex<State>,
     notify: tokio::sync::Notify,
@@ -168,6 +177,11 @@ impl Queue {
         if st.frames.len() >= MAX_QUEUED_FRAMES || st.bytes.saturating_add(bytes) > MAX_QUEUED_BYTES
         {
             st.overflowed = true;
+            drop(st);
+            // A frame this large can overflow an *empty* queue, so nothing is queued to wake a
+            // writer that is already parked in `next()`. The notification, not an enqueued
+            // frame, is what ends that wait.
+            self.notify.notify_one();
             return Push::Overflow;
         }
         st.bytes += bytes;
@@ -184,8 +198,9 @@ impl Queue {
 
     /// Whether this attempt has outgrown its bounds.
     ///
-    /// The socket asks after every frame it drains: a queue only overflows while it holds
-    /// frames, so a single writer polling between frames cannot miss it.
+    /// A convenience for callers that have not observed [`Stop::Overflow`]: the dequeue path
+    /// reports the overflow itself, so a writer waiting in `next()` learns about it directly
+    /// even when the offending frame was never queued (an oversized frame on an empty queue).
     pub fn overflowed(&self) -> bool {
         self.state.lock().unwrap().overflowed
     }
@@ -248,17 +263,21 @@ impl Queue {
     /// Credit is reserved *here*, before the caller hands the bytes to the socket: the peer
     /// is about to be exposed to them, so an ACK may never wait for that send to finish, and
     /// frames still sitting in this queue are never counted as credit the peer could spend.
-    /// `None` once the queue is sealed and drained.
-    pub async fn next_for_send(&self, ledger: &AckLedger) -> Option<Frame> {
-        let frame = self.next().await;
-        if let Some(Frame::Binary(bytes)) = &frame {
+    /// Returns [`Stop`] once the attempt is sealed and drained, or once an overflow ended it.
+    pub async fn next_for_send(&self, ledger: &AckLedger) -> Result<Frame, Stop> {
+        let frame = self.next().await?;
+        if let Frame::Binary(bytes) = &frame {
             ledger.sent(bytes.len());
         }
-        frame
+        Ok(frame)
     }
 
-    /// The next frame in queue order, or `None` once the queue is sealed and drained.
-    pub async fn next(&self) -> Option<Frame> {
+    /// The next frame in queue order, or why the attempt stopped.
+    ///
+    /// Accepted frames drain first, in order. Once the queue is empty the attempt stops, and
+    /// a waiting caller is woken to learn it: an overflow wins over a seal, because lost bytes
+    /// must close the socket lagged rather than as a normal close.
+    pub async fn next(&self) -> Result<Frame, Stop> {
         loop {
             let notified = self.notify.notified();
             {
@@ -267,10 +286,13 @@ impl Queue {
                     if let Frame::Binary(bytes) = &frame {
                         st.bytes = st.bytes.saturating_sub(bytes.len());
                     }
-                    return Some(frame);
+                    return Ok(frame);
+                }
+                if st.overflowed {
+                    return Err(Stop::Overflow);
                 }
                 if st.sealed {
-                    return None;
+                    return Err(Stop::Sealed);
                 }
             }
             notified.await;
@@ -347,7 +369,7 @@ mod tests {
         assert_eq!(q.push_data(b"out-2".to_vec()), Push::Accepted);
         q.seal();
         let mut frames = Vec::new();
-        while let Some(frame) = q.next().await {
+        while let Ok(frame) = q.next().await {
             frames.push(frame);
         }
         assert_eq!(
@@ -370,7 +392,9 @@ mod tests {
         // One more byte is not.
         assert_eq!(q.push_data(vec![b'x'; 1]), Push::Overflow);
         q.seal();
-        while q.next().await.is_some() {}
+        while q.next().await.is_ok() {}
+        // The refused callback is remembered as the reason the drain stopped.
+        assert_eq!(q.next().await, Err(Stop::Overflow));
 
         let q = Queue::new();
         for _ in 0..MAX_QUEUED_FRAMES {
@@ -379,7 +403,7 @@ mod tests {
         // State frames share the frame bound: 256 frames is the limit, whatever their kind.
         assert_eq!(q.push_event(TerminalEvent::Attached), Push::Overflow);
         q.seal();
-        while q.next().await.is_some() {}
+        while q.next().await.is_ok() {}
     }
 
     #[tokio::test]
@@ -392,8 +416,8 @@ mod tests {
         assert_eq!(q.push_event(TerminalEvent::Detached), Push::Sealed);
         assert!(q.is_sealed());
         // Output accepted before the seal is not thrown away by it.
-        assert_eq!(q.next().await, Some(Frame::Binary(b"before".to_vec())));
-        assert_eq!(q.next().await, None);
+        assert_eq!(q.next().await, Ok(Frame::Binary(b"before".to_vec())));
+        assert_eq!(q.next().await, Err(Stop::Sealed));
     }
 
     #[test]
@@ -448,17 +472,64 @@ mod tests {
         assert_eq!(q.push_data(b"one too many".to_vec()), Push::Overflow);
         // Sticky: draining frames must not hide a failed callback afterwards.
         assert!(q.overflowed());
-        assert!(q.next().await.is_some());
+        assert!(q.next().await.is_ok());
         assert!(q.overflowed());
         q.seal();
-        while q.next().await.is_some() {}
+        while q.next().await.is_ok() {}
         assert!(q.overflowed());
     }
 
     #[tokio::test]
-    async fn sealing_while_output_is_delivered_loses_and_duplicates_nothing() {
-        // Far under both bounds, so the only thing under test is the seal: nothing here can
-        // overflow. Both sides hand off through channels instead of racing on timing.
+    async fn an_oversized_callback_on_an_empty_queue_wakes_a_waiting_consumer() {
+        let q = Queue::new();
+        // Start the consumer first, so it is parked in `next()` on an empty queue.
+        let consumer = {
+            let q = q.clone();
+            std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(q.next())
+            })
+        };
+        // Give the consumer time to park; the queue is empty, so nothing else can wake it.
+        std::thread::sleep(Duration::from_millis(50));
+
+        // One frame larger than the whole byte bound: the queue is empty, so there is nothing
+        // to drain first and the bound fails on this first frame alone. The Sink callback runs
+        // on a core thread and must return immediately, never waiting for the consumer.
+        let sink = q.sink();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            sink.data(vec![0u8; MAX_QUEUED_BYTES + 1]);
+            let _ = tx.send(());
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "the oversized callback must not block"
+        );
+
+        // The parked consumer must observe the overflow, not wait for a frame that never comes.
+        let (tx, done) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(consumer.join().unwrap());
+        });
+        let stop = done
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the consumer must be woken by the overflow, not left waiting");
+        // The consumer was waiting for a frame and instead learned why none will come.
+        assert_eq!(stop.unwrap_err(), Stop::Overflow);
+        // Nothing was queued by the refused callback, and the failure is still visible.
+        assert_eq!(q.next().await, Err(Stop::Overflow));
+        assert!(q.overflowed());
+    }
+
+    #[tokio::test]
+    async fn accepted_frames_drain_once_and_a_callback_after_the_seal_is_refused() {
+        // Sequential by design: the seal lands after the producer finished and the drain
+        // emptied the queue, so this pins the ordered case only. Contention is covered by
+        // `a_push_released_with_a_seal_loses_nothing_either_way`.
         const FRAMES: u32 = 50;
         let q = Queue::new();
         let (pushed, wait_pushed) = std::sync::mpsc::channel::<()>();
@@ -481,7 +552,7 @@ mod tests {
         let mut drained = Vec::new();
         for _ in 0..FRAMES {
             match q.next().await {
-                Some(Frame::Binary(bytes)) => {
+                Ok(Frame::Binary(bytes)) => {
                     drained.push(u32::from_le_bytes(bytes.as_slice().try_into().unwrap()))
                 }
                 other => panic!("the producer queued {FRAMES} frames, got {other:?}"),
@@ -494,8 +565,99 @@ mod tests {
         sealed.send(()).unwrap();
         assert_eq!(producer.join().unwrap(), Push::Sealed);
         // Accepted output is not thrown away by the seal, and the refused frame is not sent.
-        assert_eq!(q.next().await, None);
+        assert_eq!(q.next().await, Err(Stop::Sealed));
         assert_eq!(drained.len(), FRAMES as usize);
+    }
+
+    #[tokio::test]
+    async fn a_push_released_with_a_seal_loses_nothing_either_way() {
+        // A barrier releases the terminal callback and the seal at the same instant, so the
+        // mutex decides the winner and the test never assumes which one. Every round also
+        // pre-seeds a frame and re-pushes after the seal, so the accepted-and-drained path and
+        // the refused path are both checked every round. Nothing here sleeps, waits on timing,
+        // or can overflow: the queue is far under both bounds by construction.
+        const ROUNDS: usize = 200;
+        let (mut raced_accepted, mut raced_refused) = (0usize, 0usize);
+        for round in 0..ROUNDS {
+            let q = Queue::new();
+            // Pre-seeded, so it is always Accepted regardless of the race below.
+            assert_eq!(q.push_data(b"before".to_vec()), Push::Accepted);
+
+            // Symmetric release: neither contender is this thread, so the two worker threads
+            // race on the same futex wake and the mutex really decides the winner.
+            let barrier = Arc::new(std::sync::Barrier::new(2));
+            let (tx, rx) = std::sync::mpsc::channel();
+            let callback = {
+                let (q, barrier) = (q.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    // Released together with the seal: this push is the one under contention.
+                    barrier.wait();
+                    let pushed = q.push_data(b"raced".to_vec());
+                    tx.send(pushed).unwrap();
+                })
+            };
+            let sealer = {
+                let (q, barrier) = (q.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    q.seal();
+                })
+            };
+
+            let pushed = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            callback.join().unwrap();
+            sealer.join().unwrap();
+
+            // Cancellation can win the race above, but a later callback must always be refused.
+            assert_eq!(
+                q.push_data(b"after".to_vec()),
+                Push::Sealed,
+                "round {round}: a callback after the seal is refused"
+            );
+
+            // Drain to the end: the stop is always the seal, never an overflow.
+            let mut drained = Vec::new();
+            loop {
+                match q.next().await {
+                    Ok(Frame::Binary(bytes)) => drained.push(bytes),
+                    Ok(other) => panic!("round {round}: unexpected state frame {other:?}"),
+                    Err(stop) => {
+                        assert_eq!(stop, Stop::Sealed, "round {round}");
+                        break;
+                    }
+                }
+            }
+
+            // The pre-seeded frame is accepted, so it must drain exactly once, first, and the
+            // frame refused after the seal must never appear.
+            assert_eq!(drained.first(), Some(&b"before".to_vec()), "round {round}");
+            assert!(
+                !drained.contains(&b"after".to_vec()),
+                "round {round}: a refused frame must not be delivered"
+            );
+            match pushed {
+                // Accepted before the seal won: the frame is delivered exactly once, in order.
+                Push::Accepted => {
+                    raced_accepted += 1;
+                    assert_eq!(
+                        drained,
+                        vec![b"before".to_vec(), b"raced".to_vec()],
+                        "round {round}"
+                    );
+                }
+                // The seal won: the callback is refused and its frame never appears.
+                Push::Sealed => {
+                    raced_refused += 1;
+                    assert_eq!(drained, vec![b"before".to_vec()], "round {round}");
+                }
+                Push::Overflow => panic!("round {round}: the queue is far under its bounds"),
+            }
+        }
+        // Every round produced exactly one of the two valid outcomes.
+        assert_eq!(raced_accepted + raced_refused, ROUNDS);
+        eprintln!(
+            "seal race over {ROUNDS} rounds: {raced_accepted} accepted, {raced_refused} refused"
+        );
     }
 
     #[test]
@@ -557,7 +719,7 @@ mod tests {
 
         q.seal();
         let mut frames = Vec::new();
-        while let Some(frame) = q.next().await {
+        while let Ok(frame) = q.next().await {
             frames.push(frame);
         }
         assert_eq!(
@@ -584,7 +746,7 @@ mod tests {
         // The writer takes the frame. Its credit exists now, *before* any socket send, so the
         // ACK arriving while that send is still pending is honoured instead of blocking.
         let frame = q.next_for_send(&ledger).await;
-        assert_eq!(frame, Some(Frame::Binary(b"12345".to_vec())));
+        assert_eq!(frame, Ok(Frame::Binary(b"12345".to_vec())));
         assert_eq!(ledger.outstanding(), 5);
         assert_eq!(ledger.ack(5), Ok(()));
         assert_eq!(ledger.outstanding(), 0);
@@ -595,7 +757,7 @@ mod tests {
         assert_eq!(q.push_event(TerminalEvent::Attached), Push::Accepted);
         assert_eq!(
             q.next_for_send(&ledger).await,
-            Some(Frame::Event(TerminalEvent::Attached))
+            Ok(Frame::Event(TerminalEvent::Attached))
         );
         assert_eq!(ledger.outstanding(), 0);
     }
