@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the launcher icon to reach the pairing dialog again. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="pair"
+        android:shortcutShortLabel="@string/shortcut_pair">
+        <intent
+            android:action="dev.cuongnb.herdly.android.PAIR"
+            android:targetClass="dev.cuongnb.herdly.android.MainActivity"
+            android:targetPackage="dev.cuongnb.herdly.android" />
+    </shortcut>
+</shortcuts>

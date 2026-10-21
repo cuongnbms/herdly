@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The web UI's theme-color, so no white flash before the page paints. -->
+    <color name="background">#1a1b1f</color>
+
+    <style name="Theme.Herdly" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:colorBackground">@color/background</item>
+    </style>
+</resources>
