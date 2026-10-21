@@ -111,6 +111,37 @@ describe("ChatScreen", () => {
     await waitFor(() => expect(screen.getByText("Do you want to proceed?")).toBeInTheDocument());
   });
 
+  it("keeps the typed draft while a prompt is on screen", async () => {
+    open([]);
+    render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "half a thought" } });
+    const blocked = structuredClone(machine);
+    blocked.sessions[0].workspaces[0].tabs[0].panes[0].status = "blocked";
+    act(() => useWeb.setState({ machines: [blocked] as never }));
+    await waitFor(() => expect(screen.getByText("Do you want to proceed?")).toBeInTheDocument());
+    expect(screen.queryByLabelText("Message")).toBeNull();
+    act(() => useWeb.setState({ machines: [machine] as never }));
+    expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("half a thought");
+  });
+
+  it("keeps the text and the error of a send that fails while a prompt is on screen", async () => {
+    let reject!: (e: unknown) => void;
+    vi.mocked(api.panePrompt).mockImplementation(() => new Promise((_, rj) => (reject = rj)));
+    open([]);
+    render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "hello" } });
+    fireEvent.click(screen.getByText("Send"));
+    await waitFor(() => expect(api.panePrompt).toHaveBeenCalledWith(pane, "hello"));
+    const blocked = structuredClone(machine);
+    blocked.sessions[0].workspaces[0].tabs[0].panes[0].status = "blocked";
+    act(() => useWeb.setState({ machines: [blocked] as never }));
+    await waitFor(() => expect(screen.getByText("Do you want to proceed?")).toBeInTheDocument());
+    await act(async () => reject(new api.ApiError(502, "herdr_error", "pane gone")));
+    act(() => useWeb.setState({ machines: [machine] as never }));
+    expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("hello");
+    expect(screen.getByText("pane gone")).toBeInTheDocument();
+  });
+
   it("starts the prompt card blank when the prompt changes", async () => {
     open([]);
     const blocked = structuredClone(machine);

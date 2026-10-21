@@ -16,30 +16,16 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+interface Draft { text: string; error: string | null }
+
 /** The text field and Send: not shown while the Pane is blocked, where typed text would land in the Agent's menu. */
-function Composer({ pane, onSent, onFailed }: { pane: WebPane; onSent(text: string): number; onFailed(id: number): void }) {
-  const [text, setText] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const send = async () => {
-    const t = text;
-    if (!t.trim()) return;
-    setText("");
-    setError(null);
-    const id = onSent(t);
-    try {
-      await panePrompt(pane, t);
-    } catch (e) {
-      setText((cur) => (cur ? `${t}\n${cur}` : t));
-      setError(errorText(e));
-      onFailed(id);
-    }
-  };
+function Composer({ draft, setDraft, onSend }: { draft: Draft; setDraft(d: Draft): void; onSend(): void }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {error && <div role="alert" style={{ color: "#c0392b", fontSize: 13 }}>{error}</div>}
+      {draft.error && <div role="alert" style={{ color: "#c0392b", fontSize: 13 }}>{draft.error}</div>}
       <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-        <textarea aria-label="Message" rows={2} value={text} onChange={(e) => setText(e.target.value)} style={{ flex: 1, font: "inherit", minHeight: 44 }} />
-        <button type="button" onClick={send} style={{ minHeight: 44, minWidth: 64 }}>Send</button>
+        <textarea aria-label="Message" rows={2} value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} style={{ flex: 1, font: "inherit", minHeight: 44 }} />
+        <button type="button" onClick={onSend} style={{ minHeight: 44, minWidth: 64 }}>Send</button>
       </div>
     </div>
   );
@@ -48,9 +34,23 @@ function Composer({ pane, onSent, onFailed }: { pane: WebPane; onSent(text: stri
 /** Esc and Ctrl+C always; the prompt card instead of the Composer while the Pane is blocked. */
 function BottomBar({ pane, view, onSent, onFailed }: { pane: WebPane; view: PaneView | undefined; onSent(text: string): number; onFailed(id: number): void }) {
   const blocked = view?.status === "blocked";
+  // The draft lives here, not in Composer, so a prompt that hides Composer does not lose it.
+  const [draft, setDraft] = useState<Draft>({ text: "", error: null });
+  const send = async () => {
+    const t = draft.text;
+    if (!t.trim()) return;
+    setDraft({ text: "", error: null });
+    const id = onSent(t);
+    try {
+      await panePrompt(pane, t);
+    } catch (e) {
+      setDraft((cur) => ({ text: cur.text ? `${t}\n${cur.text}` : t, error: errorText(e) }));
+      onFailed(id);
+    }
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {blocked ? <BlockedPrompt pane={pane} view={view} /> : <Composer pane={pane} onSent={onSent} onFailed={onFailed} />}
+      {blocked ? <BlockedPrompt pane={pane} view={view} /> : <Composer draft={draft} setDraft={setDraft} onSend={send} />}
       <StopBar pane={pane} />
     </div>
   );
