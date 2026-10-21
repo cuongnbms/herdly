@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { emptyChat, prepend, reduce, type ChatState } from "@desktop/chat/chatStore";
 import type { Conn } from "./socket";
+import { clearSeen } from "./list/seen";
 import { webKey, type AppError, type ChatItem, type Frame, type Located, type MachineView, type WebPane } from "./types";
 
 export interface ChatView {
@@ -14,7 +15,11 @@ interface WebState {
   /** The connection was open and has been lost since: reconnect attempts show the bar. */
   lost: boolean;
   machines: MachineView[];
+  /** The Pane whose Chat is shown, or null for the list. */
+  open: WebPane | null;
   chats: Record<string, ChatView>;
+  openChat(p: WebPane): void;
+  closeChat(): void;
   apply(f: Frame): void;
   setConn(c: Conn): void;
   prependOlder(key: string, items: ChatItem[], before: number): void;
@@ -32,7 +37,11 @@ export const useWeb = create<WebState>()((set) => ({
   conn: "connecting",
   lost: false,
   machines: [],
+  open: null,
   chats: {},
+
+  openChat: (p) => set({ open: p }),
+  closeChat: () => set({ open: null }),
 
   apply: (f) =>
     set((s) => {
@@ -45,6 +54,7 @@ export const useWeb = create<WebState>()((set) => ({
         }
         case "pane_status": {
           const { pane, status, title } = f.ev;
+          clearSeen(webKey({ session: pane.session, pane_id: pane.pane_id }));
           return {
             machines: s.machines.map((m) => ({
               ...m,

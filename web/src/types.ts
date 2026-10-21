@@ -7,6 +7,8 @@ export type {
   ChatItem,
   Located,
   MachineView,
+  PaneView,
+  SessionView,
   PaneStatusEvent,
 } from "@desktop/lib/types";
 

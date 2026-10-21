@@ -1,4 +1,5 @@
 import type { Socket } from "./socket";
+import { PaneList } from "./list/PaneList";
 import { useWeb } from "./store";
 
 function NotPaired() {
@@ -15,11 +16,13 @@ function NotPaired() {
 export function App(_props: { socket?: Socket }) {
   const conn = useWeb((s) => s.conn);
   const lost = useWeb((s) => s.lost);
+  const open = useWeb((s) => s.open);
+  const openChat = useWeb((s) => s.openChat);
   if (conn === "unpaired") return <NotPaired />;
   return (
     <>
       {(conn === "down" || (conn === "connecting" && lost)) && <div role="status">Disconnected, reconnecting…</div>}
-      <main />
+      {open ? <main /> : <PaneList onOpen={openChat} />}
     </>
   );
 }
