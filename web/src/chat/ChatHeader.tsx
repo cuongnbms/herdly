@@ -4,10 +4,10 @@ import { CTRL_C_CONFIRM_MS, canChat } from "../config";
 import { findRow, groupByStatus, rowPane } from "../list/order";
 import { useWeb } from "../store";
 import { webKey, type WebPane } from "../types";
-import { BackIcon, MoreIcon } from "../ui/icons";
+import { BackIcon, MenuIcon, MoreIcon } from "../ui/icons";
 import { PaneSheet } from "./PaneSheet";
 
-export function ChatHeader({ pane, onBack, onSwitch }: { pane: WebPane; onBack(): void; onSwitch?(p: WebPane): void }) {
+export function ChatHeader({ pane, onBack, onSwitch, onMenu }: { pane: WebPane; onBack(): void; onSwitch?(p: WebPane): void; onMenu?(): void }) {
   const machines = useWeb((s) => s.machines);
   const sessions = useMemo(() => machines.flatMap((m) => m.sessions), [machines]);
   const row = useMemo(() => findRow(sessions, pane), [sessions, pane]);
@@ -55,6 +55,7 @@ export function ChatHeader({ pane, onBack, onSwitch }: { pane: WebPane; onBack()
 
   return (
     <header className="chat-header">
+      {onMenu && <button type="button" className="icon-btn" aria-label="Open sidebar" aria-haspopup="dialog" onClick={onMenu}><MenuIcon /></button>}
       <button type="button" className="icon-btn" aria-label="Back" onClick={onBack}><BackIcon /></button>
       <button type="button" className="chat-title" aria-haspopup="dialog" onClick={() => setSheetOpen(true)}>
         <span className="chat-title-main">{row?.pane.title ?? pane.pane_id}</span>

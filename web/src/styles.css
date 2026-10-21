@@ -600,3 +600,55 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 .transcript { flex: 1; overflow-y: auto; }
 .banner-err span { flex: 1; }
+
+/* ---------- Mobile sidebar ---------- */
+.sidebar-root { position: fixed; inset: 0; z-index: 40; }
+.sidebar-scrim { position: absolute; inset: 0; background: var(--scrim); }
+.mobile-sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(360px, 88vw);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--surface-1);
+  border-right: 1px solid var(--line-2);
+  box-shadow: var(--shadow-panel);
+  animation: sidebar-in var(--t) var(--ease);
+}
+.sidebar-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.sidebar-header h2 { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 600; }
+.sidebar-header .icon-btn, .chat-header .icon-btn { flex-shrink: 0; }
+.sidebar-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
+.sidebar-branch-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  text-align: left;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 600;
+}
+.sidebar-branch-toggle span { min-width: 0; overflow-wrap: anywhere; }
+.sidebar-children { padding-left: 12px; border-left: 1px solid var(--line); margin-left: 14px; }
+.sidebar-pane {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  text-align: left;
+  border-radius: var(--r-sm);
+}
+.sidebar-pane-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.sidebar-pane .status { flex: none; font-size: 0; }
+.sidebar-pane[aria-current="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.sidebar-pane:active, .sidebar-branch-toggle:active { background: var(--active); }
+.sidebar-empty, .sidebar-session-note { padding: 8px; margin: 0; font-size: 13px; color: var(--fg-2); overflow-wrap: anywhere; }
+@keyframes sidebar-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .mobile-sidebar { animation: none; } }

@@ -1,13 +1,15 @@
+import { MenuIcon } from "../ui/icons";
 import { useWeb } from "../store";
 import type { WebPane } from "../types";
 import { PaneGroups } from "./PaneGroups";
 
-export function PaneList({ onOpen }: { onOpen(p: WebPane): void }) {
+export function PaneList({ onOpen, onMenu }: { onOpen(p: WebPane): void; onMenu?(): void }) {
   const machine = useWeb((s) => s.machines[0]);
   const empty = machine !== undefined && machine.sessions.every((s) => s.workspaces.every((w) => w.tabs.every((t) => t.panes.length === 0)));
   return (
     <main className="pane-list">
       <header className="list-header">
+        {onMenu && <button type="button" className="icon-btn" aria-label="Open sidebar" aria-haspopup="dialog" onClick={onMenu}><MenuIcon /></button>}
         <h1 className="list-title">Herdly</h1>
         {machine && (
           <>

@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Sidebar } from "./nav/Sidebar";
 import type { Socket } from "./socket";
 import { ChatScreen } from "./chat/ChatScreen";
 import { PaneList } from "./list/PaneList";
@@ -20,6 +21,8 @@ function NotPaired() {
 /** `socket` is main.tsx's one connection; the screens built on this shell subscribe through it. */
 export function App({ socket }: { socket?: Socket }) {
   useAttention();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const conn = useWeb((s) => s.conn);
   const lost = useWeb((s) => s.lost);
   const open = useWeb((s) => s.open);
@@ -46,8 +49,11 @@ export function App({ socket }: { socket?: Socket }) {
   if (conn === "unpaired") return <NotPaired />;
   return (
     <>
+      <div className="app-content" inert={sidebarOpen}>
       {(conn === "down" || (conn === "connecting" && lost)) && <div role="status" className="banner banner-warn reconnect">Disconnected, reconnecting…</div>}
-      {open ? <ChatScreen key={openKey} pane={open} onBack={() => back(open)} onRetry={() => socket?.subscribe(open)} onSwitch={switchTo} /> : <PaneList onOpen={openChat} />}
+      {open ? <ChatScreen key={openKey} pane={open} onBack={() => back(open)} onRetry={() => socket?.subscribe(open)} onMenu={() => setSidebarOpen(true)} onSwitch={switchTo} /> : <PaneList onOpen={openChat} onMenu={() => setSidebarOpen(true)} />}
+      </div>
+      {sidebarOpen && <Sidebar current={open} onClose={closeSidebar} onOpen={(p) => { closeSidebar(); if (!open || webKey(p) !== openKey) switchTo(p); }} />}
     </>
   );
 }
