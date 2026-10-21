@@ -12,6 +12,10 @@ const base: SVGProps<SVGSVGElement> = {
   "aria-hidden": "true",
 };
 
+export const MenuIcon = (props: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...props}><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+);
+
 export const BackIcon = (props: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...props}>
     <path d="M15 5l-7 7 7 7" />
