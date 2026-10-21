@@ -2,9 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { chatPage, panePrompt } from "../api";
 import { CHAT_PAGE } from "../config";
 import { useWeb } from "../store";
-import { webKey, type ChatItem, type WebPane } from "../types";
+import { webKey, type ChatItem, type PaneView, type WebPane } from "../types";
 import { ItemView, userBubble } from "./ItemView";
 import { isStale, settle, type Pending } from "./pending";
+import { StopBar } from "./StopBar";
+import { PromptCard } from "../prompt/PromptCard";
+import { usePrompt } from "../prompt/usePrompt";
 
 const BADGE: Record<string, string> = { blocked: "#c0392b", working: "#2e7d32", done: "#1565c0", idle: "#757575", unknown: "#757575" };
 const AT_BOTTOM_PX = 40;
@@ -13,7 +16,7 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** What the bottom bar holds; Task 11 swaps the Composer for the prompt card while blocked. */
+/** The text field and Send: not shown while the Pane is blocked, where typed text would land in the Agent's menu. */
 function Composer({ pane, onSent, onFailed }: { pane: WebPane; onSent(text: string): number; onFailed(id: number): void }) {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +43,22 @@ function Composer({ pane, onSent, onFailed }: { pane: WebPane; onSent(text: stri
       </div>
     </div>
   );
+}
+
+/** Esc and Ctrl+C always; the prompt card instead of the Composer while the Pane is blocked. */
+function BottomBar({ pane, view, onSent, onFailed }: { pane: WebPane; view: PaneView | undefined; onSent(text: string): number; onFailed(id: number): void }) {
+  const blocked = view?.status === "blocked";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {blocked ? <BlockedPrompt pane={pane} view={view} /> : <Composer pane={pane} onSent={onSent} onFailed={onFailed} />}
+      <StopBar pane={pane} />
+    </div>
+  );
+}
+
+function BlockedPrompt({ pane, view }: { pane: WebPane; view: PaneView }) {
+  const { prompt, answer, busy, error } = usePrompt(pane, view);
+  return prompt ? <PromptCard prompt={prompt} busy={busy} error={error} onAnswer={(a) => void answer(a)} /> : null;
 }
 
 export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack(): void; onRetry(): void }) {
@@ -151,7 +170,7 @@ export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack():
         ))}
       </div>
       <footer style={{ padding: "8px 12px", borderTop: "1px solid #8884" }}>
-        <Composer pane={pane} onSent={onSent} onFailed={onFailed} />
+        <BottomBar pane={pane} view={paneView} onSent={onSent} onFailed={onFailed} />
       </footer>
     </div>
   );

@@ -1,10 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import { useWeb } from "../store";
 import { ChatScreen } from "./ChatScreen";
 
-vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), chatPage: vi.fn(), panePrompt: vi.fn() }));
+vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), chatPage: vi.fn(), panePrompt: vi.fn(), paneRead: vi.fn().mockResolvedValue("Do you want to proceed?\n❯ 1. Yes\n  2. No\n") }));
 
 const pane = { session: "s", pane_id: "p1" };
 const located = { agent: "claude", path: "/t/a.jsonl", ambiguous: false, candidates: [], pending: false };
@@ -93,6 +93,22 @@ describe("ChatScreen", () => {
     fireEvent.click(screen.getByText("Send"));
     await waitFor(() => expect(screen.getByText("pane gone")).toBeInTheDocument());
     expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("hello");
+  });
+
+  it("replaces the Composer with the prompt card while blocked and keeps Esc and Ctrl+C", async () => {
+    open([]);
+    expect(render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />).container).toBeTruthy();
+    expect(screen.getByLabelText("Message")).toBeInTheDocument();
+    cleanup();
+    const blocked = structuredClone(machine);
+    blocked.sessions[0].workspaces[0].tabs[0].panes[0].status = "blocked";
+    act(() => useWeb.setState({ machines: [blocked] as never }));
+    render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    expect(screen.queryByLabelText("Message")).toBeNull();
+    expect(screen.queryByText("Send")).toBeNull();
+    expect(screen.getByText("Esc")).toBeInTheDocument();
+    expect(screen.getByText("Ctrl+C")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Do you want to proceed?")).toBeInTheDocument());
   });
 
   it("shows the ambiguity note, and Retry for both error shapes", () => {
