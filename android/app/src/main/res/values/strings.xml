@@ -3,7 +3,7 @@
     <string name="app_name">Herdly</string>
     <string name="pair_title">Pair with Herdly Web</string>
     <string name="pair_message">Paste the link printed by herdly-web pair (or the server address).</string>
-    <string name="pair_hint">http://192.0.2.10:7380/pair?t=…</string>
+    <string name="pair_hint">Pairing link or server address</string>
     <string name="pair_open">Open</string>
     <string name="pair_invalid">Not an http(s) link</string>
     <string name="shortcut_pair">Pair or change server</string>
