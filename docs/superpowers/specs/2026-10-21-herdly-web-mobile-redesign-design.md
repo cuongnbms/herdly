@@ -48,9 +48,21 @@ switcher, and a few client-side conveniences.
 - `src/chat/workBlocks.ts` imports only `../lib/types` and `./checklist`
   (`src/chat/workBlocks.ts:7-8`), so the import guard (`web/src/importGuard.test.ts`) accepts it
   once `chat/workBlocks` is added to `ALLOWED` (`web/src/importGuard.test.ts:7`). It exports
-  `buildRows`, `groupCalls`, `workSummary`, `formatWorkDuration` and the `ChatRow`,
-  `WorkBlock`, `ToolCall`, `ToolResult` types. This extends the list of reused modules that
-  the earlier spec gave as exact.
+  `buildRows` (returns `{ rows, results }`, both new objects on every call), `groupCalls`
+  (returns `WorkSegment[]`), `workSummary`, `formatWorkDuration` and the `ChatRow`,
+  `WorkBlock`, `WorkSegment`, `ToolCall`, `ToolResult` types. This extends the list of reused
+  modules that the earlier spec gave as exact.
+- A block's id changes when a prepend loads its turn's opener (`src/chat/workBlocks.ts:65`):
+  the top block then remounts and loses its open state. Accepted.
+- `web/src/App.tsx:39` renders `ChatScreen` without a `key`, so switching Panes in one handler
+  would reuse its state (pending bubbles, refs, `usePrompt`'s card, the draft).
+- The server's CSP has no `font-src`, so fonts fall under `default-src 'self'`, which refuses
+  `data:` (`src-tauri/web/src/app.rs:137-139`). Vite inlines assets under 4096 bytes as
+  `data:` URLs; the two Vietnamese woff2 subsets are 3924 and 3992 bytes.
+- jsdom (30.x) has no `document.execCommand`, `navigator.vibrate`, `Element.scrollTo` or
+  `scrollIntoView`, and reports `scrollHeight`/`clientHeight` as 0.
+- A Session also has no Workspaces when it is running but its view is missing (not loaded yet,
+  or failed), and then carries `error` (`machines.rs:273-286`).
 - `src/chat/toolIcon.ts` and `src/ui/icons.tsx` import `react`, so they are not reused; the few
   icons needed are written in `web/`.
 - The desktop marks a work block live when the Pane is `working` or `blocked` and the block is
@@ -70,7 +82,7 @@ switcher, and a few client-side conveniences.
 - **Tokens** (`:root`), copied from `src/styles.css:1-80` and trimmed to what `web/` uses:
   `--surface-0..3`, `--surface-code`, `--hover`, `--active`, `--fg`, `--fg-2`, `--fg-3`,
   `--line`, `--line-2`, `--line-3`, `--accent`, `--accent-fg`, `--accent-soft`, `--ring`,
-  `--amber`, `--blue`, `--green`, `--grey`, `--err`, `--err-fg`, `--link`, `--code-head`,
+  `--amber`, `--blue`, `--green`, `--grey`, `--err`, `--err-fg`, `--scrim`, `--link`, `--code-head`,
   `--code-inline`, `--hl-*`, `--r-sm`, `--r-md`, `--r-lg`, `--shadow-*`, `--ease`, `--t-fast`,
   `--t`, `--mono`. A comment names the source lines so a later sync knows where to look.
 - **Status colours**: blocked `--amber`, working `--blue`, done `--green`, idle and unknown
@@ -78,7 +90,10 @@ switcher, and a few client-side conveniences.
 - **Type**: body is the system stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
   sans-serif`) at 15px, line-height 1.5; code is `var(--mono)`. JetBrains Mono woff2 files and
   `fonts.css` are copied from `src/fonts/` into `web/src/fonts/` (the Vietnamese and latin-ext
-  subsets cover Vietnamese text).
+  subsets cover Vietnamese text). `web/vite.config.ts` sets `build.assetsInlineLimit` to a
+  function returning `false` for `.woff2` files (else `undefined`), so every font is emitted as
+  a file the CSP allows; a test of the built CSS is not needed, the visual check below looks
+  for `data:font` in `web/dist/assets/*.css` (`grep -c 'data:font' …` prints 0).
 - **Base**: `html, body, #root` take `background: var(--surface-0)`, `color: var(--fg)`,
   `color-scheme: dark`; `-webkit-tap-highlight-color: transparent`; buttons reset to the
   surface style, at least 44×44 px, with `:active` and `:focus-visible` (`--ring`) states.
@@ -99,18 +114,25 @@ modules.
 - Reconnect bar: a slim amber strip at the top, same text and same show/hide rule as today.
 - `switchTo(next)`: unsubscribe and clear the open Pane exactly as Back does, then
   `openChat(next)`; the existing subscribe effect subscribes the new one. `ChatScreen` gets an
-  `onSwitch(p: WebPane)` prop wired to it.
+  optional `onSwitch?(p: WebPane)` prop wired to it (optional, so existing renders type-check).
+- `ChatScreen` is rendered with `key={openKey}`, so a switch mounts a fresh screen: no pending
+  bubble, block state, scroll ref, prompt card or draft carries over from the previous Pane.
 - Calls `useAttention()` (below).
 
 ### Pane list (`web/src/list/`)
 
 - `order.ts`: `groupSession` is replaced by
   `groupByStatus(sessions: SessionView[], shown: (key: string, s: AgentStatus) => AgentStatus)
-  → { needs: PaneRow[]; working: PaneRow[]; done: PaneRow[]; idle: PaneRow[]; stopped: string[] }`
+  → { needs: PaneRow[]; working: PaneRow[]; done: PaneRow[]; idle: PaneRow[]; stopped: string[];
+  failed: { name: string; message: string }[] }`
   where `PaneRow = { session: string; workspace: string; workspace_id: string; pane: PaneView;
   status: AgentStatus }` (`status` is the shown status). Order inside each group: running
   Sessions first, then herdr's order of Workspaces, Tabs and Panes. `orderSessions` stays.
-  `PaneList` passes `shownStatus` from `seen.ts`.
+  `stopped` holds the names of Sessions with `running == false`; `failed` holds running
+  Sessions with a non-null `error` and no Workspaces. `PaneGroups` calls it with `shownStatus`
+  from `seen.ts`.
+- `CHAT_AGENTS` (`["claude", "pi"]`) moves from `PaneList.tsx` to `web/src/config.ts` with a
+  `canChat(pane)` helper, used by the cards, the sheet and the need-you chip.
 - `PaneCard.tsx`: one `<button data-pane={key}>` with an agent mark, the title (one line,
   ellipsis), a sub-line `session › workspace`, and a status dot with its label in a
   `<span data-status={status}>`. Blocked cards get an amber border and tint; the card of the
@@ -119,23 +141,25 @@ modules.
   only" under it, as today.
 - Agent mark: a 28 px rounded square: Claude `✳` on `#d97757`, pi `π` on `--accent`, anything
   else `>_` on `--surface-3`.
-- `PaneGroups.tsx`: renders the four groups, each with an uppercase heading and a count
-  ("NEEDS YOU 2", heading text "Needs you"); empty groups are not shown; then the "Stopped: …"
-  line when `stopped` is non-empty. Props: `machine`, `current: string | null`, `onOpen`.
-  Owns the unsupported-hint state and the seen-mark bump that `PaneList` owns today.
+- `PaneGroups.tsx`: renders the four groups, each with a heading whose text is "Needs you",
+  "Working", "Done" or "Idle" (shown uppercase by CSS `text-transform`) and the count in its
+  own `<span>` beside it; empty groups are not shown; then one line per `failed` Session
+  ("<name>: <message>", `--err-fg`) and the "Stopped: …" line when `stopped` is non-empty.
+  Props: `machine`, `current: string | null`, `onOpen`. Owns the unsupported-hint state and
+  the seen-mark bump that `PaneList` owns today.
 - `PaneList.tsx`: header "Herdly" with a connection dot (`--green` when the machine is
   `connected`, `--amber` otherwise) and the machine label; the machine error banner as today
-  (state in bold, message after); `PaneGroups`; an empty state "No Panes" when every group is
-  empty.
+  (state in bold, message after); `PaneGroups`; an empty state "No Panes" when a machine view
+  exists and every group is empty (nothing before the first `machines` frame).
 
 ### Chat header (`web/src/chat/ChatHeader.tsx`)
 
 - `‹` Back (`aria-label="Back"`).
 - A title button: the Pane title (ellipsis) over `session › workspace`, with the status dot
   (`data-status`). Tapping it opens the Pane sheet.
-- **Need-you chip**, shown when another Pane is blocked: "● N" with `aria-label="N need you"`
-  (N = blocked Panes other than this one). Tapping it calls `onSwitch` with the first of them
-  in `groupByStatus` order.
+- **Need-you chip**, shown when another chat-capable Pane is blocked: "● N" with
+  `aria-label="N need you"` (N = blocked Panes other than this one that pass `canChat`).
+  Tapping it calls `onSwitch` with the first of them in `groupByStatus` order.
 - **⋯ menu** (`aria-label="More"`): a small popover with **Send Esc** and **Send Ctrl+C**.
   Ctrl+C asks twice: the first tap turns the item into "Tap again to send Ctrl+C" for 3 s; the
   second sends. Both call `paneKeys` with `["esc"]` / `["ctrl+c"]`; a failure shows its message
@@ -154,9 +178,15 @@ modules.
 
 ### Transcript (`web/src/chat/ChatScreen.tsx`, `WorkBlock.tsx`, `ItemView.tsx`, `Markdown.tsx`)
 
-- Rows come from `buildRows(items, before)` (memoised on `items` and `before`); each row's
-  `key` is the row's `key` from `buildRows`, so keys survive prepends.
+- `const { rows, results } = buildRows(items, before)`, memoised on `items` and `before`;
+  each row renders with the row's `key` from `buildRows`, so item-row keys survive prepends.
 - `item` rows render with `ItemView`; `work` rows with `WorkBlock`.
+- **No Markdown re-parse on Append** (keeps commit 659249a's guarantee): `buildRows` returns
+  new `block` and `results` objects every run, so `WorkBlock` re-renders on each Append; every
+  item inside it (narration, thinking, call rows) renders through the memoised `ItemView`,
+  which receives only that item and, for a call, its own `ToolResult` object (stable across
+  runs, it is the store's item), never the `results` Map. Call groups get stable keys from
+  their first call's id; single items from their item (call id, or the absolute index).
 - **`WorkBlock`**: a header button (`aria-expanded`) with a chevron, the title ("Working…"
   when live, else "Worked for <duration>", else "Worked") and `workSummary` after " · ".
   Open, it lists `groupCalls(block.items, live)`: narration as Markdown, thinking as a
@@ -181,23 +211,29 @@ modules.
 - **Copy** (`web/src/ui/copy.ts`): `copyText(text): boolean` puts the text in an off-screen
   read-only textarea, selects it, runs `document.execCommand("copy")`, removes it, and returns
   whether it worked. The button shows "Copied" for 1.5 s on success, "Copy failed" otherwise.
-  The same button sits at the end of every `assistant_text` item.
+  The same button sits at the end of every `assistant_text` item and copies its raw
+  `markdown`.
 - **System**, **shell command** and **shell output** items: muted small text, mono for the
   shell ones, as today but on the tokens.
 - **Pending bubble**: the user bubble at 55% opacity with "sending…" under it, then "not seen
   yet" once stale (`data-pending` kept).
 - **Scroll-to-bottom**: when not stuck to the bottom, a round ↓ button floats above the bottom
   bar (`aria-label="Scroll to bottom"`); it shows "N new" when items arrived since the user left
-  the bottom (counted from `chat.total` at the moment of leaving). Tapping scrolls to the
-  bottom and sticks again. The `stick`, `anchorHeight` and `asked` logic is otherwise kept as
-  it is. Toggling a block does not move the scroll position.
+  the bottom: N = `chat.total` now minus `chat.total` at the moment of leaving, clamped at 0;
+  a Reset sets the baseline to the new `total`. Tapping sets `el.scrollTop = el.scrollHeight`
+  (not `scrollTo`, which jsdom lacks) and sticks again. The `stick`, `anchorHeight` and
+  `asked` logic is otherwise kept as it is. Toggling a block does not move the scroll
+  position.
 
 ### Bottom bar (`web/src/chat/Composer.tsx`, `web/src/chat/drafts.ts`)
 
 - Not blocked: the `Composer`. Blocked: the prompt area (below). `StopBar` and its test are
   removed; Esc and Ctrl+C move to the header menu.
+- `BottomBar` stays in `ChatScreen.tsx`; `Composer` moves to `Composer.tsx`.
 - **Composer**: a textarea (`aria-label="Message"`), one row high, growing with its content up
-  to 6 rows, then scrolling; Enter inserts a newline. The round button on its right:
+  to 6 rows, then scrolling: on every change, set `style.height = "auto"` then
+  `style.height = min(scrollHeight, 6 rows) + "px"` (no `field-sizing`); Enter inserts a
+  newline. The round button on its right:
   - **Stop** (`aria-label="Stop"`, square icon) when the Pane is `working` and the field is
     blank: sends `["esc"]`; a failure shows under the field with `role="alert"`;
   - **Send** (`aria-label="Send"`, arrow icon) otherwise, disabled while the field is blank.
@@ -206,7 +242,8 @@ modules.
 - **Drafts** (`drafts.ts`): `loadDraft(key)`, `saveDraft(key, text)` (blank removes),
   under `herdly-web:draft:<session>/<pane_id>`; every storage call in try/catch. `BottomBar`
   starts from `loadDraft(key)` and saves on every change; a sent message clears it; a failed
-  send restores it as today. The draft and its error stay in `BottomBar`, so a prompt that hides
+  send restores it as today and also writes the restored text with `saveDraft`, so it survives
+  when the user has left the Chat before the failure lands. The draft and its error stay in `BottomBar`, so a prompt that hides
   the Composer keeps them, as today.
 
 ### Prompt area (`web/src/prompt/PromptCard.tsx`, `BlockedPrompt` in `ChatScreen.tsx`)
@@ -215,14 +252,16 @@ modules.
 - **PromptCard** (`data-prompt` kept): amber border and tint, a header with an amber dot and
   the title, the question, the body in mono when present. Each option is a row button with a
   number badge (1, 2, …), the label and the description under it in `--fg-2`. Multi-select
-  rows are labels wrapping a checkbox (accessible name = option label, as today) and end with
+  rows are labels wrapping a checkbox and the option text only, with no number badge, so the
+  accessible name stays the option label (`PromptCard.test.tsx:31-32`); they end with
   **Submit**. The custom answer is a field ("Or type your own answer", `aria-label="Answer"`)
   with an **Answer** button. Busy disables everything; the error shows with `role="alert"`.
   The card scrolls inside max 60dvh.
 
 ### Attention (`web/src/attention.ts`)
 
-- `blockedPanes(machines): string[]`: the `webKey`s of every blocked Pane.
+- `blockedPanes(machines): string[]`: the `webKey`s of every blocked Pane, whatever its
+  agent (an unsupported Agent waiting still needs the user, at the desktop).
 - `useAttention()`, called once from `App`:
   - sets `document.title` to `(N) Herdly` when N > 0 blocked Panes, else `Herdly`;
   - keeps the previous status per Pane key in a ref; when a Pane known before turns `blocked`
@@ -263,9 +302,17 @@ Tests changed on purpose:
 - `order.test.ts`: `groupSession` tests become `groupByStatus` tests.
 - `StopBar.test.tsx` is deleted; its two cases move to `ChatHeader.test.tsx` (menu) and
   `Composer.test.tsx` (Stop).
-- `ChatScreen.test.tsx`: `getByText("Send")` becomes `getByRole("button", { name: "Send" })`;
-  the blocked test finds Esc and Ctrl+C through the ⋯ menu instead of on the bar.
+- `ChatScreen.test.tsx`: `getByText("Send")` becomes `getByRole("button", { name: "Send" })`
+  and `queryByText("Send")` becomes `queryByRole("button", { name: "Send" })`; the blocked
+  test finds Esc and Ctrl+C through the ⋯ menu instead of on the bar; `beforeEach` gains
+  `localStorage.clear()`, since drafts now persist under the shared Pane `s/p1`.
 - `importGuard.test.ts`: `chat/workBlocks` joins `ALLOWED`.
+
+Browser APIs jsdom lacks are stubbed per test: `Object.defineProperty(document,
+"execCommand", { value: vi.fn(() => true), configurable: true })`,
+`Object.defineProperty(navigator, "vibrate", { value: vi.fn(), configurable: true })`, and for
+scrolling `Object.defineProperty` of `scrollHeight` and `clientHeight` on the
+`[data-transcript]` element plus setting `scrollTop` before `fireEvent.scroll`.
 
 New tests:
 
@@ -277,10 +324,14 @@ New tests:
   the chip counts other blocked Panes and switches to the first one.
 - `PaneSheet`: opens from the title, switching calls `onSwitch` and closes, the current Pane
   only closes.
-- `App`: `onSwitch` unsubscribes and clears the old Pane and subscribes the new one.
-- Transcript: a turn with calls renders one collapsed "Worked" header with the summary; tapping
-  it shows the calls; a call shows its result inside; the live block is open; open state
-  survives an Append; item keys survive a page prepend (existing paging tests still pass).
+- `App`: `onSwitch` unsubscribes and clears the old Pane and subscribes the new one; a draft
+  typed in Pane A is not in Pane B's field after the switch, and A's pending bubble is gone.
+- Transcript (with the Pane `idle`, or with an older block, so the block under test is not
+  live): a turn with calls renders one collapsed "Worked" header with the summary; tapping it
+  shows the calls; a call shows its result inside; with the Pane `working` the newest block is
+  open and titled "Working…"; open state survives an Append; item keys survive a page prepend
+  (existing paging tests still pass); narration inside an open live block is not parsed again
+  when an item is appended (extends the existing Markdown spy test).
 - `CodeBlock`: language label; Copy calls `copyText` with the code text and shows "Copied".
 - `copyText`: uses `execCommand("copy")` and returns its result; false when it throws.
 - `Composer`: Stop when working and blank, Send otherwise; Stop sends `["esc"]`; Send disabled
@@ -295,7 +346,8 @@ New tests:
 second instance that leaves the real service and its Paired devices alone:
 
 ```sh
-(cd web && pnpm build)
+(cd web && pnpm install && pnpm build)
+grep -c 'data:font' web/dist/assets/*.css        # 0: no inlined font
 STATE=$(mktemp -d)
 herdly-web pair  --state "$STATE" --bind 127.0.0.1:7381            # prints the pairing link
 herdly-web serve --state "$STATE" --bind 127.0.0.1:7381 --static "$PWD/web/dist"
@@ -305,8 +357,9 @@ Open the link with Playwright at 412×915 (GPU flags from the user's CLAUDE.md, 
 time) and screenshot the list, a Chat with a folded work block opened, the ⋯ menu, the Pane
 sheet and, if a Pane is blocked, the prompt card. Stop the instance and delete `$STATE`
 afterwards. Whether a second `herdly-web` instance runs side by side with the service is
-**unverified**. Keyboard overlap, vibration and Copy are checked by the user on the phone after
-landing.
+**unverified**. `127.0.0.1` is a secure context, unlike the phone's WireGuard origin, so Copy
+passing there proves nothing about the phone. Keyboard overlap, vibration and Copy are checked
+by the user on the phone after landing.
 
 ## Non-goals
 
@@ -347,6 +400,11 @@ none
   on a small screen — cost if wrong: replace with a dialog.
 - Ruling: Copy also sits on every assistant answer, not only code blocks — answers are what
   gets pasted elsewhere — cost if wrong: remove one button.
+- Ruling: the tab-title count and the vibration count every blocked Pane, the need-you chip
+  only chat-capable ones — the title says something needs the user; the chip must open a Chat
+  — cost if wrong: one filter in `blockedPanes`.
+- Ruling: a running Session that failed to load shows as one error line under the groups —
+  it would otherwise vanish, as it has no Panes — cost if wrong: drop the line.
 - Ruling: Stop shows only while `working` with a blank field; while `blocked` Esc is in the ⋯
   menu — while blocked, the prompt card replaces the Composer — cost if wrong: show Stop on the
   prompt card too.
