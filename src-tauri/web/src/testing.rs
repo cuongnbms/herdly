@@ -36,10 +36,22 @@ pub struct FakeBackend {
     pub sinks: Mutex<HashMap<WebPane, ChatSink>>,
     pub page_result: Mutex<Option<Vec<ChatItem>>>,
     pub pages: Mutex<Vec<(WebPane, usize, usize)>>,
-    /// One `FakeTerminal` per `terminal` call, in order.
+    /// Handles a test scripted in advance; each allocation consumes one, once.
+    pub scripted_terminals: Mutex<VecDeque<Arc<FakeTerminal>>>,
+    /// Every allocated attempt, in order and append-only: one per `terminal` call.
     pub terminal_attempts: Mutex<Vec<Arc<FakeTerminal>>>,
+    /// Every `terminal` call's full arguments, in order.
+    pub terminal_calls: Mutex<Vec<(WebPane, bool)>>,
     /// When set, `terminal` fails with it (a resolution failure).
     pub terminal_error: Mutex<Option<AppError>>,
+}
+
+impl FakeBackend {
+    /// Scripts the handle the next `terminal` call hands out; each scripted handle is consumed
+    /// once, so later calls get fresh ones.
+    pub fn script_terminal(&self, terminal: Arc<FakeTerminal>) {
+        self.scripted_terminals.lock().unwrap().push_back(terminal);
+    }
 }
 
 pub fn located(path: &str) -> Located {
@@ -85,16 +97,29 @@ pub struct FakeTerminal {
     /// The sink `open` captured, so the test can deliver as the PTY would.
     sink: Mutex<Option<Arc<dyn Sink>>>,
     /// Held until a test releases it, to model a spawn that blocks.
-    gate: Mutex<Option<oneshot::Receiver<()>>>,
+    open_gate: Mutex<Option<oneshot::Receiver<()>>>,
+    /// Held until a test releases it, to model a write stuck behind a wedged PTY.
+    write_gate: Mutex<Option<oneshot::Receiver<()>>>,
     open_fails: Mutex<Option<AppError>>,
 }
 
 impl FakeTerminal {
-    /// A Terminal whose `open` blocks until `release_open` is called.
+    /// A Terminal whose `open` blocks until the returned sender is dropped.
     pub fn gated() -> (Arc<FakeTerminal>, oneshot::Sender<()>) {
         let (tx, rx) = oneshot::channel();
         let terminal = Arc::new(FakeTerminal {
-            gate: Mutex::new(Some(rx)),
+            open_gate: Mutex::new(Some(rx)),
+            ..Default::default()
+        });
+        (terminal, tx)
+    }
+
+    /// A Terminal whose `write` records its input and then waits until the returned sender is
+    /// dropped, the way a PTY write blocks behind a wedged terminal. Only the first write waits.
+    pub fn gated_write() -> (Arc<FakeTerminal>, oneshot::Sender<()>) {
+        let (tx, rx) = oneshot::channel();
+        let terminal = Arc::new(FakeTerminal {
+            write_gate: Mutex::new(Some(rx)),
             ..Default::default()
         });
         (terminal, tx)
@@ -152,7 +177,7 @@ impl TerminalHandle for FakeTerminal {
     async fn open(&self, size: TerminalSize, sink: Arc<dyn Sink>) -> AppResult<()> {
         self.sizes.lock().unwrap().push(size);
         *self.sink.lock().unwrap() = Some(sink);
-        let gate = self.gate.lock().unwrap().take();
+        let gate = self.open_gate.lock().unwrap().take();
         if let Some(gate) = gate {
             let _ = gate.await;
         }
@@ -167,7 +192,12 @@ impl TerminalHandle for FakeTerminal {
         if self.is_closed() {
             return Err(AppError::new("not_found", "terminal is closed"));
         }
+        // Recorded before any wait, so a test can assert what was attempted while it is stuck.
         self.inputs.lock().unwrap().push(data);
+        let gate = self.write_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         Ok(())
     }
 
@@ -268,15 +298,24 @@ impl Backend for FakeBackend {
             .lock()
             .unwrap()
             .push(format!("terminal:{}:{takeover}", pane.pane_id));
+        self.terminal_calls
+            .lock()
+            .unwrap()
+            .push((pane.clone(), takeover));
         // A scripted attempt can refuse the allocation, as resolution does.
         if let Some(e) = self.terminal_error.lock().unwrap().clone() {
             return Err(e);
         }
-        let terminal = match self.terminal_attempts.lock().unwrap().pop() {
+        // One call is one attempt: a scripted handle is consumed once, otherwise this is a
+        // fresh one. Both are appended to the history, which is never popped.
+        let terminal = match self.scripted_terminals.lock().unwrap().pop_front() {
             Some(t) => t,
             None => Arc::new(FakeTerminal::default()),
         };
-        self.terminal_attempts.lock().unwrap().push(terminal.clone());
+        self.terminal_attempts
+            .lock()
+            .unwrap()
+            .push(terminal.clone());
         Ok(terminal)
     }
 }
