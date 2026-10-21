@@ -154,6 +154,14 @@ One rolling or calendar period of a Quota (`5h`, `week`, `month`) with a used pe
 **Reset**:
 The moment a Window's used percent goes back to zero.
 
+**Herdly Web**:
+A separate process on a Machine that serves a phone-sized web UI for that Machine's own herdr: the Pane list with agent statuses and the Chat lens. It is not the desktop app and reaches no other Machine.
+_Avoid_: web server, server, mobile app
+
+**Paired device**:
+A browser that Herdly Web accepted through a one-time pairing link and keeps accepting until it is revoked.
+_Avoid_: client, session (a Session is herdr's), login
+
 ## Relationships
 
 - A **Machine** has zero or more **Sessions**
