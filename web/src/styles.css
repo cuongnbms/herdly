@@ -584,6 +584,8 @@ button:disabled { opacity: 0.45; cursor: default; }
   background: var(--surface-0);
   border: 1px solid var(--line-2);
   border-radius: var(--r-md);
+  font: inherit;
+  color: var(--fg);
 }
 .prompt-custom input:focus { border-color: var(--accent); }
 .prompt-error { font-size: 13px; color: var(--err-fg); }
