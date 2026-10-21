@@ -175,7 +175,7 @@ subscribed, the current `Located`, and an async mutex.
   major versions as the root `package.json`.
 - Vite and `tsconfig` alias `@desktop` → `../src`. The reused modules are exactly
   `lib/types.ts`, `chat/chatStore.ts`, `chat/checklist.ts`, `chat/prompt/screenPrompt.ts`,
-  `chat/prompt/sendAnswer.ts`, `chat/prompt/askedPreviews.ts`: each imports only relative
+  `chat/prompt/sendAnswer.ts`: each imports only relative
   paths within this set (or nothing). A module with a bare import (`react`, `@tauri-apps/*`,
   …) would resolve from the repo root's `node_modules`, which the devbox does not have, or
   load a second React, so none is reused; `src/chat/outgoing.ts` (imports `react`) and
