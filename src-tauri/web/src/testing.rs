@@ -2,7 +2,9 @@
 use crate::app::{AppState, Config};
 use crate::auth::{complete_pairing, start_pairing, Auth};
 use crate::backend::{Backend, ChatSink, WebPane};
-use crate::config::now_secs;
+use crate::chat::ChatHub;
+use crate::config::{now_secs, REVOKE_CHECK};
+use crate::hub::Hub;
 use crate::store::Store;
 use async_trait::async_trait;
 use axum::body::Body;
@@ -138,6 +140,11 @@ impl Backend for FakeBackend {
 
 /// An `AppState` over `backend` with a static bundle and a state dir under `dir`.
 pub fn state(backend: Arc<FakeBackend>, dir: &Path) -> Arc<AppState> {
+    state_with(backend, dir, REVOKE_CHECK)
+}
+
+/// Like `state`, with the interval at which an open socket re-checks its device.
+pub fn state_with(backend: Arc<FakeBackend>, dir: &Path, revoke_check: Duration) -> Arc<AppState> {
     let dist = dir.join("dist");
     std::fs::create_dir_all(dist.join("assets")).unwrap();
     std::fs::write(
@@ -147,13 +154,18 @@ pub fn state(backend: Arc<FakeBackend>, dir: &Path) -> Arc<AppState> {
     .unwrap();
     std::fs::write(dist.join("assets/app-1a2b.js"), "console.log(1)").unwrap();
     let store = Store::open(&dir.join("state")).unwrap();
+    // The status receiver is dropped: tests that need statuses build their own `Hub`.
+    let (hub, _statuses) = Hub::new();
     Arc::new(AppState {
+        chats: ChatHub::new(backend.clone()),
         backend,
         auth: Arc::new(Auth::new(store)),
         cfg: Config {
             origin: "http://192.0.2.10:7380".into(),
             static_dir: dist,
+            revoke_check,
         },
+        hub,
     })
 }
 

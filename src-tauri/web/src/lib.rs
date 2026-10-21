@@ -6,6 +6,8 @@ pub mod backend;
 pub mod chat;
 pub mod config;
 pub mod error;
+pub mod hub;
 pub mod static_files;
 pub mod store;
 pub mod testing;
+pub mod ws;

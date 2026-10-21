@@ -2,9 +2,12 @@
 use crate::api;
 use crate::auth::{complete_pairing, Auth, DeviceInfo};
 use crate::backend::Backend;
+use crate::chat::ChatHub;
 use crate::config::{now_secs, BODY_LIMIT, COOKIE_MAX_AGE, COOKIE_NAME};
 use crate::error::{forbidden, unauthorized, ApiError};
+use crate::hub::Hub;
 use crate::static_files;
+use crate::ws;
 use axum::extract::{DefaultBodyLimit, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
@@ -14,17 +17,22 @@ use axum::Router;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub struct Config {
     /// The one Origin allowed on POST and `/ws`, e.g. `http://192.0.2.10:7380`.
     pub origin: String,
     pub static_dir: PathBuf,
+    /// How often an open `/ws` checks that its device is still paired.
+    pub revoke_check: Duration,
 }
 
 pub struct AppState {
     pub backend: Arc<dyn Backend>,
     pub auth: Arc<Auth>,
     pub cfg: Config,
+    pub hub: Arc<Hub>,
+    pub chats: Arc<ChatHub>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -38,6 +46,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/pane/prompt", post(api::pane_prompt))
         .route("/api/pane/keys", post(api::pane_keys))
         .route("/api/pane/text", post(api::pane_text))
+        .route("/ws", get(ws::ws_handler))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
