@@ -240,6 +240,9 @@ struct Tails {
     frozen: VecDeque<(PaneRef, Frozen)>,
 }
 
+/// A Machine's tails, taken out under the lock and ended after it: open, parked, frozen.
+type MachineTails = (Vec<Entry>, VecDeque<(PaneRef, Entry)>, VecDeque<(PaneRef, Frozen)>);
+
 /// One live transcript tail per open Pane, plus up to 3 parked and 8 frozen ones.
 #[derive(Default)]
 pub struct ChatManager {
@@ -449,7 +452,7 @@ impl ChatManager {
 
     /// End every tail of the Machine, open, parked or frozen (it was disconnected or removed).
     pub fn close_machine(&self, machine_id: &str) {
-        let (open, parked, frozen): (Vec<Entry>, VecDeque<(PaneRef, Entry)>, VecDeque<(PaneRef, Frozen)>) = {
+        let (open, parked, frozen): MachineTails = {
             let mut t = self.tails.lock().unwrap();
             let t = &mut *t;
             let keys: Vec<PaneRef> = t

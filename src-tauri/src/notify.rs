@@ -12,6 +12,7 @@ use crate::{error::AppError, view::PaneRef};
 pub const ACTIVATE_EVENT: &str = "notify://activate";
 
 /// Bring the main window forward and tell the frontend to select `pane`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn activate<R: Runtime>(app: &AppHandle<R>, pane: PaneRef) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();

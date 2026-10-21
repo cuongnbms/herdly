@@ -6,6 +6,7 @@ use tauri::AppHandle;
 pub const NAV_EVENT: &str = "mouse://nav";
 
 /// The direction of an `otherMouseDown` button, if it is Back (3) or Forward (4).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn direction(button: isize) -> Option<&'static str> {
     match button {
         3 => Some("back"),

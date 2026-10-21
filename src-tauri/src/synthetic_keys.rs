@@ -37,11 +37,14 @@ pub fn should_bypass(f: &KeyFacts) -> bool {
 }
 
 /// True only while the monitor re-dispatches a bypassed key.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static BYPASS: AtomicBool = AtomicBool::new(false);
 
 /// Clears `BYPASS` even if dispatching unwinds, so the input method is never left off.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct Bypassing;
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl Bypassing {
     fn start() -> Self {
         BYPASS.store(true, Ordering::Relaxed);
