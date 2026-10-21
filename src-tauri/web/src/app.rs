@@ -26,6 +26,10 @@ pub struct Config {
     pub static_dir: PathBuf,
     /// How often an open `/ws` checks that its device is still paired.
     pub revoke_check: Duration,
+    /// How long a Terminal socket may take to send its initial open frame. Production uses
+    /// [`crate::terminal::socket::OPEN_TIMEOUT`]; tests shorten it so the route's deadline is
+    /// exercised without waiting in real time.
+    pub open_timeout: Duration,
 }
 
 pub struct AppState {

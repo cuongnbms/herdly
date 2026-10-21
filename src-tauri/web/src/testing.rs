@@ -380,8 +380,32 @@ pub fn state_with(backend: Arc<FakeBackend>, dir: &Path, revoke_check: Duration)
     state_for(backend, dir, revoke_check)
 }
 
+/// Like `state_with`, with a shortened initial-open deadline for the route's own deadline test.
+pub fn state_with_open_timeout(
+    backend: Arc<FakeBackend>,
+    dir: &Path,
+    revoke_check: Duration,
+    open_timeout: Duration,
+) -> Arc<AppState> {
+    state_tuned(backend, dir, revoke_check, open_timeout)
+}
+
 /// An `AppState` over any backend: the real-PTY tests need one that is not the fake.
 pub fn state_for(backend: Arc<dyn Backend>, dir: &Path, revoke_check: Duration) -> Arc<AppState> {
+    state_tuned(
+        backend,
+        dir,
+        revoke_check,
+        crate::terminal::socket::OPEN_TIMEOUT,
+    )
+}
+
+fn state_tuned(
+    backend: Arc<dyn Backend>,
+    dir: &Path,
+    revoke_check: Duration,
+    open_timeout: Duration,
+) -> Arc<AppState> {
     let dist = dir.join("dist");
     std::fs::create_dir_all(dist.join("assets")).unwrap();
     std::fs::write(
@@ -401,6 +425,7 @@ pub fn state_for(backend: Arc<dyn Backend>, dir: &Path, revoke_check: Duration) 
             origin: "http://192.0.2.10:7380".into(),
             static_dir: dist,
             revoke_check,
+            open_timeout,
         },
         hub,
         terminals: TerminalRegistry::new(),

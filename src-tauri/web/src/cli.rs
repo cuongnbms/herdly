@@ -113,6 +113,7 @@ pub async fn build_serve(args: &ServeArgs) -> Result<(TcpListener, Arc<AppState>
             origin: origin_for(&args.bind, args.origin.clone()),
             static_dir: dir,
             revoke_check: REVOKE_CHECK,
+            open_timeout: crate::terminal::socket::OPEN_TIMEOUT,
         },
         hub,
         chats: chat_hub,
@@ -132,49 +133,83 @@ pub fn run(cli: Cli) -> Result<(), String> {
 
 fn serve(args: ServeArgs) -> Result<(), String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    // The signal handler is installed *before* the listener is bound and before anything is
+    // logged: a SIGTERM that arrived while the server was still starting would otherwise take
+    // the default action and kill the process without any cleanup.
+    let signals = rt
+        .block_on(ShutdownSignals::install())
+        .map_err(|e| e.to_string())?;
     rt.block_on(async {
         let (listener, st) = build_serve(&args).await?;
         tracing::info!("herdly-web listening on {}", args.bind);
-        serve_until_signalled(listener, st).await
+        serve_until_signalled(listener, st, signals).await
     })
+}
+
+/// SIGINT and (on unix) SIGTERM, registered when this value is built rather than when it is
+/// first awaited, so no shutdown signal can be missed in the gap before serving.
+pub struct ShutdownSignals {
+    #[cfg(unix)]
+    interrupt: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    terminate: tokio::signal::unix::Signal,
+}
+
+impl ShutdownSignals {
+    pub async fn install() -> std::io::Result<ShutdownSignals> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            Ok(ShutdownSignals {
+                interrupt: signal(SignalKind::interrupt())?,
+                terminate: signal(SignalKind::terminate())?,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(ShutdownSignals {})
+        }
+    }
+
+    /// Resolves on the first SIGINT or SIGTERM.
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        {
+            tokio::select! {
+                _ = self.interrupt.recv() => {}
+                _ = self.terminate.recv() => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
 }
 
 /// Serves until SIGINT or SIGTERM, then ends every live Terminal attempt before the runtime
 /// exits, so no Attach child outlives the server. A forced kill cannot promise this.
-async fn serve_until_signalled(listener: TcpListener, st: Arc<AppState>) -> Result<(), String> {
+///
+/// Public so a test can run the real signal path in a real child process, which is the only
+/// way to prove the signal really reaches this select.
+pub async fn serve_until_signalled(
+    listener: TcpListener,
+    st: Arc<AppState>,
+    mut signals: ShutdownSignals,
+) -> Result<(), String> {
     // A failed handler (a bind/accept error) ends the server like a signal does.
     let server = axum::serve(listener, router(st.clone())).into_future();
     tokio::pin!(server);
     tokio::select! {
         res = &mut server => res.map_err(|e| e.to_string()),
-        signal = shutdown_signal() => {
-            if let Err(e) = signal {
-                tracing::warn!("could not install a shutdown signal: {e}");
-                // With no signal to wait for, stay up rather than exiting silently.
-                return server.await.map_err(|e| e.to_string());
-            }
+        _ = signals.recv() => {
             tracing::info!("shutting down: closing live terminal attempts");
+            // Stop accepting new upgrades first, then end what is running.
+            st.terminals.begin_shutdown();
             st.terminals.shutdown().await;
             // The listener stops with this future; no new upgrade is accepted.
             Ok(())
         }
-    }
-}
-
-/// Resolves on SIGINT, or on SIGTERM on unix.
-async fn shutdown_signal() -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut term = signal(SignalKind::terminate())?;
-        tokio::select! {
-            r = tokio::signal::ctrl_c() => r,
-            _ = term.recv() => Ok(()),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c().await
     }
 }
 

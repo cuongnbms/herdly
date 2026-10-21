@@ -114,9 +114,19 @@ impl Drop for Server {
 
 impl Server {
     async fn start(revoke_check: Duration) -> Server {
+        Server::start_with_timeout(revoke_check, Duration::from_secs(10)).await
+    }
+
+    /// The same server with a shortened initial-open deadline.
+    async fn start_with_timeout(revoke_check: Duration, open_timeout: Duration) -> Server {
         let dir = tempfile::tempdir().unwrap();
         let fake = Arc::new(FakeBackend::default());
-        let st = state_with(fake.clone(), dir.path(), revoke_check);
+        let st = herdly_web::testing::state_with_open_timeout(
+            fake.clone(),
+            dir.path(),
+            revoke_check,
+            open_timeout,
+        );
         let cookie = paired_cookie(&st);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("ws://{}/ws/terminal", listener.local_addr().unwrap());
@@ -448,31 +458,49 @@ async fn early_input_is_forwarded_and_bad_frames_close_with_their_codes() {
 }
 
 #[tokio::test]
-async fn an_idle_socket_is_closed_ten_seconds_after_the_upgrade() {
-    // The runtime clock is the seam: the test's own clock is not faked, so the assertion is on
-    // one value measured from the upgrade, and a wrong deadline (1 s or 30 s) fails it.
-    let server = Server::start(Duration::from_secs(15)).await;
+async fn an_idle_socket_is_closed_at_its_deadline_after_the_upgrade() {
+    // The real route on a shortened bound: the deadline itself is pinned exactly, under a
+    // controlled clock, by the socket module's `OpenDeadline` test; this proves the route
+    // applies the bound it was given rather than an unrelated one.
+    let server =
+        Server::start_with_timeout(Duration::from_secs(15), Duration::from_millis(400)).await;
     let mut ws = server.connect().await;
-    let started = std::time::Instant::now();
     // No open frame is ever sent.
-    let closed = loop {
-        let frame = tokio::time::timeout(Duration::from_secs(30), ws.next())
-            .await
-            .expect("the attempt must expire")
-            .expect("the stream stays open")
-            .expect("a valid frame");
-        if let Message::Close(Some(frame)) = frame {
-            break u16::from(frame.code);
-        }
-    };
+    let started = std::time::Instant::now();
+    assert_eq!(close_code(&mut ws).await, 1008);
     let waited = started.elapsed();
-    assert_eq!(closed, 1008);
     assert!(
-        waited >= Duration::from_secs(10) && waited < Duration::from_millis(11_500),
-        "the open deadline is 10 s, waited {waited:?}"
+        waited >= Duration::from_millis(400) && waited < Duration::from_millis(2_400),
+        "the socket closes at its configured open deadline, waited {waited:?}"
     );
     assert_eq!(server.attempt_calls(), 0);
     assert!(server.st.terminals.is_empty());
+}
+
+#[tokio::test]
+async fn an_open_frame_is_accepted_just_before_the_deadline_and_refused_past_it() {
+    // The same seam, on a real clock but a short bound: one attempt arrives in time, one does
+    // not, so the deadline is exercised without a ten-second wait.
+    let server =
+        Server::start_with_timeout(Duration::from_secs(15), Duration::from_millis(400)).await;
+    let mut in_time = server.connect().await;
+    in_time
+        .send(open_frame("s", "p1", 80, 24, false))
+        .await
+        .unwrap();
+    let attempt = server.opened_attempt(0).await;
+    attached(&mut in_time, &attempt).await;
+
+    let mut too_late = server.connect().await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    too_late
+        .send(open_frame("s", "p2", 80, 24, false))
+        .await
+        .unwrap();
+    assert_eq!(close_code(&mut too_late).await, 1008);
+    // The late socket never allocated an attempt.
+    assert_eq!(server.attempt_calls(), 1);
+    drop(in_time);
 }
 
 #[tokio::test]
@@ -1064,4 +1092,209 @@ async fn a_message_over_the_transport_bound_closes_1009() {
     ws.send(Message::Text(huge.into())).await.unwrap();
     assert_eq!(close_code(&mut ws).await, 1009);
     assert_eq!(server.attempt_calls(), 0);
+}
+
+#[tokio::test]
+async fn a_failed_open_reports_the_error_then_closes_1008() {
+    let server = Server::start(Duration::from_secs(15)).await;
+    // The attempt is allocated, but its PTY spawn fails: the socket must not sit waiting for
+    // output a terminal that never started cannot produce.
+    server
+        .fake
+        .script_terminal(FakeTerminal::failing(herdly_core::error::AppError::new(
+            "io",
+            "cannot open a pty",
+        )));
+    let mut ws = server.connect().await;
+    ws.send(open_frame("s", "p1", 80, 24, false)).await.unwrap();
+    let error = next_event(&mut ws).await;
+    assert_eq!(error["type"], "error");
+    assert_eq!(error["error"]["code"], "io");
+    assert_eq!(error["error"]["message"], "cannot open a pty");
+    assert_eq!(close_code(&mut ws).await, 1008);
+    // The allocated attempt was closed, and its registration was released.
+    let attempt = server.fake.terminal_attempts.lock().unwrap()[0].clone();
+    assert!(attempt.is_closed());
+    wait_until("the registration to clear", || {
+        server.st.terminals.is_empty()
+    })
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_slow_open_keeps_its_owner_until_the_late_completion_is_closed() {
+    let server = Server::start(Duration::from_secs(15)).await;
+    let (attempt, open_gate) = FakeTerminal::gated();
+    server.fake.script_terminal(attempt.clone());
+    let mut ws = server.connect().await;
+    ws.send(open_frame("s", "p1", 80, 24, false)).await.unwrap();
+    wait_until("the pending open", || attempt.sizes().len() == 1).await;
+    // The client goes away while the spawn is still in flight.
+    drop(ws);
+    wait_until("the registration to be owned", || {
+        server.st.terminals.len() == 1
+    })
+    .await;
+    // Advance the clock far past every cleanup bound the old code applied (the 10 s open
+    // timeout and the 2 s close grace): the registration must survive, because nothing may
+    // report this attempt clean while its open can still create an Attach. With a paused clock
+    // this costs no wall-clock time.
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    assert_eq!(
+        server.st.terminals.len(),
+        1,
+        "the owner must outlive a slow open, not a timeout"
+    );
+    assert!(!attempt.is_closed());
+    // Only when the spawn completes is it closed - once - and the entry released behind it.
+    drop(open_gate);
+    wait_until("the late open to be closed", || attempt.is_closed()).await;
+    assert_eq!(attempt.close_count(), 1);
+    wait_until("the registration to clear after cleanup", || {
+        server.st.terminals.is_empty()
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_resize_burst_through_the_socket_stays_bounded_and_applies_the_newest() {
+    let server = Server::start(Duration::from_secs(15)).await;
+    let (mut ws, attempt) = opened(&server).await;
+    attached(&mut ws, &attempt).await;
+    // A burst of 60 sizes, each a legal control frame.
+    for cols in 11..=70u16 {
+        ws.send(Message::Text(
+            json!({"type": "resize", "cols": cols, "rows": 20})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    }
+    // The newest size wins, and it is the last one sent.
+    wait_until("the last size to be applied", || {
+        attempt
+            .resizes()
+            .last()
+            .is_some_and(|s| *s == TerminalSize { cols: 70, rows: 20 })
+    })
+    .await;
+    // The worker applied fewer resizes than frames arrived: the burst coalesced rather than
+    // queueing one blocking job per frame.
+    assert!(
+        attempt.resizes().len() < 60,
+        "a burst must coalesce, applied {}",
+        attempt.resizes().len()
+    );
+    // Closing still ends the attempt, burst or not.
+    ws.send(Message::Close(None)).await.unwrap();
+    wait_until("the attempt to close", || attempt.is_closed()).await;
+    assert_eq!(server.st.terminals.len(), 0);
+}
+
+#[tokio::test]
+async fn a_revoked_device_is_closed_4401_during_a_gated_open_and_the_late_open_is_cleaned() {
+    let server = Server::start(Duration::from_millis(50)).await;
+    let (attempt, open_gate) = FakeTerminal::gated();
+    server.fake.script_terminal(attempt.clone());
+    let mut ws = server.connect().await;
+    ws.send(open_frame("s", "p1", 80, 24, false)).await.unwrap();
+    wait_until("the pending open", || attempt.sizes().len() == 1).await;
+    assert!(!attempt.is_open());
+    // Revoke while the PTY spawn is still in flight: 4401 must arrive before the gate opens.
+    let id = herdly_web::auth::list_devices(server.st.auth.store()).unwrap()[0]
+        .id
+        .clone();
+    herdly_web::auth::revoke(server.st.auth.store(), &id).unwrap();
+    assert_eq!(close_code(&mut ws).await, 4401);
+    assert!(
+        !attempt.is_closed(),
+        "the socket ended while its open was still pending; cleanup owns it now"
+    );
+    // The registration is still held while the spawn is in flight: the socket's read loop is
+    // gone, so only the supervisor can still own this attempt.
+    assert_eq!(
+        server.st.terminals.len(),
+        1,
+        "revocation must leave the attempt to its supervisor, not drop it"
+    );
+    // Releasing the gate completes the open after the socket is gone: it is closed exactly once
+    // by the retained owner, and only then is the registration released.
+    drop(open_gate);
+    wait_until("the late open to be closed", || attempt.is_closed()).await;
+    assert_eq!(attempt.close_count(), 1);
+    wait_until("the registration to clear after cleanup", || {
+        server.st.terminals.is_empty()
+    })
+    .await;
+}
+
+/// The real `serve` path in a real child process: only that proves SIGTERM reaches the
+/// signal branch and the runtime exits cleanly, rather than only that `shutdown()` works when
+/// a test calls it.
+///
+/// This deliberately serves no Terminal attempt. Attaching one would require the real local
+/// herdr to list a Session, i.e. it would touch the user's own Sessions; the "signal closes a
+/// live Attach" case is left to Task 8's real serving smoke, and the ordering it depends on
+/// (close the Attach before joining workers) is covered by the real-PTY shutdown test above.
+#[tokio::test]
+async fn sigterm_through_the_real_serve_path_exits_cleanly() {
+    use tokio::io::AsyncReadExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("index.html"),
+        "<!doctype html><title>Herdly</title>",
+    )
+    .unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_herdly-web"))
+        .arg("serve")
+        .arg("--bind")
+        .arg("127.0.0.1:0")
+        .arg("--static")
+        .arg(dir.path())
+        .arg("--state")
+        .arg(dir.path().join("state"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the server binary runs");
+
+    // The listening line is a tracing event, so it arrives on stderr. Waiting for it means the
+    // signal lands on a server that really started serving.
+    let mut stdout = child.stderr.take().unwrap();
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        match tokio::time::timeout(Duration::from_secs(30), stdout.read(&mut buf)).await {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => panic!(
+                "no listening line from the real server: {:?}",
+                String::from_utf8_lossy(&seen)
+            ),
+            Ok(Ok(n)) => {
+                seen.extend_from_slice(&buf[..n]);
+                if String::from_utf8_lossy(&seen)
+                    .lines()
+                    .any(|l| l.contains("herdly-web listening on"))
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    let pid = child.id().expect("a child pid");
+    // SAFETY: `pid` is this test's own freshly spawned child, and SIGTERM is the signal under
+    // test. Nothing else in the process tree is signalled.
+    let sent = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    assert_eq!(sent, 0, "the signal was delivered");
+    let status = tokio::time::timeout(Duration::from_secs(60), child.wait())
+        .await
+        .expect("a signalled server exits rather than hanging")
+        .unwrap();
+    assert!(
+        status.success(),
+        "a graceful shutdown exits cleanly, not by the default handler: {status:?}"
+    );
 }
