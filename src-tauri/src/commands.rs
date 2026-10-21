@@ -7,21 +7,20 @@ use crate::{
         all::{self, FileList},
         edit,
         list::{self, Entry},
-        paths::{check_rel, resolve_root},
+        paths::check_rel,
         read::{self, FileContent, FileVersion},
         transfer,
         watch::{watch_refusal, WatchEvent},
         watch_manager::{FilesWatch, WatchSink},
     },
     git::{self, DiffScope, FileDiff, GitCommit, GitCommitFile, GitRepo, GitStatus},
-    herdr::rpc,
     html::HtmlPages,
     layout::LayoutStore,
     machines::{self, MachineManager},
     sshconfig,
     transcript::{self, ChatEvent, ChatItem, ChatManager, Located},
     transport::{self, ssh::master_argv},
-    view::{MachineView, PaneRef, PaneView},
+    view::{MachineView, PaneRef},
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -354,88 +353,6 @@ type Chats<'a> = State<'a, Arc<ChatManager>>;
 
 const CHAT_PAGE: usize = 200;
 
-fn find_pane(mgr: &MachineManager, r: &PaneRef) -> Result<PaneView, AppError> {
-    mgr.pane_view(r)
-}
-
-/// How long to wait for herdr to report a just-started Claude agent's session.
-const SESSION_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// The directory the agent in a Pane runs from, which may differ from the shell's cwd (best-effort).
-async fn foreground_cwd(mgr: &MachineManager, pane_ref: &PaneRef) -> Option<String> {
-    let PaneRef {
-        machine_id,
-        session,
-        pane_id,
-    } = pane_ref;
-    let transport = mgr.transport(machine_id).ok()?;
-    let entry = mgr.session(machine_id, session).ok()?;
-    let socket = transport.local_socket(&entry).await.ok()?;
-    rpc::snapshot(&socket)
-        .await
-        .ok()
-        .and_then(|s| s.panes.into_iter().find(|p| p.pane_id == *pane_id))
-        .and_then(|p| p.foreground_cwd)
-}
-
-/// The transcript of the agent in a Pane: `path` when given (the user's choice), else located.
-async fn locate_pane(
-    mgr: &MachineManager,
-    pane_ref: &PaneRef,
-    path: Option<String>,
-) -> Result<Located, AppError> {
-    let PaneRef {
-        machine_id,
-        session,
-        pane_id,
-    } = pane_ref;
-    let pane = find_pane(mgr, pane_ref)?;
-    let transport = mgr.transport(machine_id)?;
-    let fetch_agent = || {
-        mgr.call(
-            machine_id,
-            session,
-            "agent.get",
-            serde_json::json!({ "target": pane_id }),
-        )
-    };
-    let mut agent_get = match fetch_agent().await {
-        Ok(v) => v,
-        Err(_) if path.is_some() => Value::Null,
-        Err(e) => return Err(e),
-    };
-    // Without its session, a just-started Claude would get another pane's transcript.
-    if path.is_none() {
-        let deadline = tokio::time::Instant::now() + SESSION_WAIT;
-        while transcript::locate::awaiting_session(&agent_get)
-            && tokio::time::Instant::now() < deadline
-        {
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            agent_get = fetch_agent().await?;
-        }
-    }
-    Ok(match path {
-        Some(p) => Located {
-            agent: agent_get["agent"]["agent"]
-                .as_str()
-                .map(str::to_string)
-                .or_else(|| pane.agent.clone())
-                .unwrap_or_default(),
-            path: p,
-            ambiguous: false,
-            candidates: Vec::new(),
-            pending: false,
-            cached: false,
-        },
-        None => {
-            let info = mgr.info(machine_id)?;
-            let fg = foreground_cwd(mgr, pane_ref).await;
-            transcript::locate::locate_in(&*transport, &info, &agent_get, &pane, fg.as_deref())
-                .await?
-        }
-    })
-}
-
 /// Locates a Pane's transcript without opening it (the Terminal fallback probes with this).
 #[tauri::command]
 pub async fn chat_locate(
@@ -449,7 +366,7 @@ pub async fn chat_locate(
         session,
         pane_id,
     };
-    locate_pane(&mgr, &pane_ref, None).await
+    mgr.locate_pane(&pane_ref, None).await
 }
 
 /// Forks a Transcript from before a user message, or from its newest entry on when `entry_id`
@@ -539,14 +456,14 @@ pub async fn complete_commands(
         session,
         pane_id,
     };
-    let pane = find_pane(&mgr, &pane_ref)?;
+    let pane = mgr.pane_view(&pane_ref)?;
     let agent = pane.agent.clone().unwrap_or_default();
     if agent.is_empty() {
         return Ok(Vec::new());
     }
     let info = mgr.info(&pane_ref.machine_id)?;
     let transport = mgr.transport(&pane_ref.machine_id)?;
-    let cwd = foreground_cwd(&mgr, &pane_ref).await.or(pane.cwd);
+    let cwd = mgr.foreground_cwd(&pane_ref).await.or(pane.cwd);
     complete::list_commands(&*transport, &agent, &info.home, cwd.as_deref()).await
 }
 
@@ -563,8 +480,8 @@ pub async fn complete_files(
         session,
         pane_id,
     };
-    let pane = find_pane(&mgr, &pane_ref)?;
-    let Some(cwd) = foreground_cwd(&mgr, &pane_ref).await.or(pane.cwd) else {
+    let pane = mgr.pane_view(&pane_ref)?;
+    let Some(cwd) = mgr.foreground_cwd(&pane_ref).await.or(pane.cwd) else {
         return Ok(Vec::new());
     };
     let info = mgr.info(&pane_ref.machine_id)?;
@@ -586,8 +503,8 @@ pub async fn complete_entries(
         session,
         pane_id,
     };
-    let pane = find_pane(&mgr, &pane_ref)?;
-    let Some(cwd) = foreground_cwd(&mgr, &pane_ref).await.or(pane.cwd) else {
+    let pane = mgr.pane_view(&pane_ref)?;
+    let Some(cwd) = mgr.foreground_cwd(&pane_ref).await.or(pane.cwd) else {
         return Ok(Vec::new());
     };
     let transport = mgr.transport(&pane_ref.machine_id)?;
@@ -619,8 +536,8 @@ pub async fn chat_git_status(
         session,
         pane_id,
     };
-    let pane = find_pane(&mgr, &pane_ref)?;
-    let Some(cwd) = foreground_cwd(&mgr, &pane_ref).await.or(pane.cwd) else {
+    let pane = mgr.pane_view(&pane_ref)?;
+    let Some(cwd) = mgr.foreground_cwd(&pane_ref).await.or(pane.cwd) else {
         return Ok(None);
     };
     let transport = mgr.transport(&pane_ref.machine_id)?;
@@ -653,7 +570,7 @@ pub async fn chat_open(
     }
     let (located, frozen) = match chats.frozen_located(&pane_ref, path.as_deref()) {
         Some(l) => (l, true),
-        None => (locate_pane(&mgr, &pane_ref, path).await?, false),
+        None => (mgr.locate_pane(&pane_ref, path).await?, false),
     };
     let transport = mgr.transport(&machine_id)?;
     let parser = transcript::parser_for(&located.agent).ok_or_else(|| {
@@ -794,11 +711,6 @@ pub async fn layout_save(
         .map_err(|e| AppError::new("io", e.to_string()))?
 }
 
-/// Resolves `root` on a Machine; every `files_*` command goes through it.
-fn files_root(mgr: &MachineManager, machine_id: &str, root: &str) -> Result<String, AppError> {
-    resolve_root(&mgr.info(machine_id)?.home, root)
-}
-
 /// The git repository of a Files root, with every changed entry; None outside a repository.
 #[tauri::command]
 pub async fn git_repo(
@@ -806,7 +718,7 @@ pub async fn git_repo(
     machine_id: String,
     dir: String,
 ) -> Result<Option<GitRepo>, AppError> {
-    let dir = files_root(&mgr, &machine_id, &dir)?;
+    let dir = mgr.files_root(&machine_id, &dir)?;
     let t = mgr.transport(&machine_id)?;
     git::git_repo(&*t, &dir).await
 }
@@ -820,7 +732,7 @@ pub async fn git_log(
     skip: u32,
     limit: u32,
 ) -> Result<Vec<GitCommit>, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     git::git_log(&*t, &root, skip, limit).await
 }
@@ -833,7 +745,7 @@ pub async fn git_commit_files(
     root: String,
     sha: String,
 ) -> Result<Vec<GitCommitFile>, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     git::git_commit_files(&*t, &root, &sha).await
 }
@@ -849,7 +761,7 @@ pub async fn git_diff(
     scope: DiffScope,
     untracked: bool,
 ) -> Result<FileDiff, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     git::git_diff(&*t, &root, &path, orig_path.as_deref(), &scope, untracked).await
 }
@@ -862,7 +774,7 @@ pub async fn files_list_dir(
     rel: String,
     hidden: Option<Vec<String>>,
 ) -> Result<Vec<Entry>, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     list::list_dir(&*t, &root, &rel, &hidden.unwrap_or_default()).await
 }
@@ -875,7 +787,7 @@ pub async fn files_list_all(
     hidden: Option<Vec<String>>,
 ) -> Result<FileList, AppError> {
     let home = mgr.info(&machine_id)?.home;
-    let root = resolve_root(&home, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     all::list_all(&*t, &home, &root, &hidden.unwrap_or_default()).await
 }
@@ -887,7 +799,7 @@ pub async fn files_read(
     root: String,
     rel: String,
 ) -> Result<FileContent, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     read::read_file(&*t, &root, &rel).await
 }
@@ -899,7 +811,7 @@ pub async fn files_image(
     root: String,
     rel: String,
 ) -> Result<tauri::ipc::Response, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     read::read_image(&*t, &root, &rel)
         .await
@@ -915,7 +827,7 @@ pub async fn files_watch(
     events: Channel<WatchEvent>,
 ) -> Result<u64, AppError> {
     let info = mgr.info(&machine_id)?;
-    let root = resolve_root(&info.home, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     if let Some(why) = watch_refusal(&info.home, &root) {
         return Err(AppError::new("invalid", why));
     }
@@ -956,7 +868,7 @@ pub async fn files_upload(
     dest_rel: String,
     sources: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     check_rel(&dest_rel)?;
     let sources = transfer::check_sources(&sources)?;
     let dest = transfer::join_abs(&root, &dest_rel);
@@ -979,7 +891,7 @@ pub async fn files_create(
     rel: String,
     is_dir: bool,
 ) -> Result<(), AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     edit::create(&*t, &root, &rel, is_dir).await
 }
@@ -992,7 +904,7 @@ pub async fn files_rename(
     rel: String,
     name: String,
 ) -> Result<String, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     edit::rename(&*t, &root, &rel, &name).await
 }
@@ -1005,7 +917,7 @@ pub async fn files_move(
     rel: String,
     to_dir: String,
 ) -> Result<String, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     edit::move_to(&*t, &root, &rel, &to_dir).await
 }
@@ -1017,7 +929,7 @@ pub async fn files_delete(
     root: String,
     rel: String,
 ) -> Result<(), AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     tokio::task::spawn_blocking(move || edit::delete(&*t, &root, &rel))
         .await
@@ -1033,7 +945,7 @@ pub async fn files_write(
     text: String,
     expected: Option<FileVersion>,
 ) -> Result<FileVersion, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let t = mgr.transport(&machine_id)?;
     edit::write(&*t, &root, &rel, &text, expected).await
 }
@@ -1045,7 +957,7 @@ pub async fn files_download(
     root: String,
     rel: String,
 ) -> Result<String, AppError> {
-    let root = files_root(&mgr, &machine_id, &root)?;
+    let root = mgr.files_root(&machine_id, &root)?;
     let (parent, name) = transfer::download_target(&root, &rel)?;
     let downloads = transfer::downloads_dir()?;
     if machine_id == crate::machines::LOCAL {

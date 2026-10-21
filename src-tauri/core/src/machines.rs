@@ -2,13 +2,14 @@
 use crate::{
     attach::AttachManager,
     error::{AppError, AppResult},
+    files::paths::resolve_root,
     herdr::{
         background::{PiProbe, Probe},
         rpc,
         types::AgentStatus,
         watcher::{spawn_watcher, SharedMarks, WatchEvent},
     },
-    transcript::ChatManager,
+    transcript::{self, ChatManager, Located},
     transport::{
         drop_client_only, exec, herdr_argv,
         local::LocalTransport,
@@ -57,6 +58,8 @@ const START_WAIT: Duration = Duration::from_secs(10);
 const START_POLL: Duration = Duration::from_millis(200);
 /// How often a connected ssh Machine's master is checked.
 const HEALTH_EVERY: Duration = Duration::from_secs(15);
+/// How long to wait for herdr to report a just-started Claude agent's session.
+const SESSION_WAIT: Duration = Duration::from_secs(3);
 pub const LOCAL: &str = "local";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -555,6 +558,88 @@ impl MachineManager {
                 .map(|s| s.entry.clone())
         })?
         .ok_or_else(|| not_found(format!("unknown session {id}/{name}")))
+    }
+
+    /// The directory the agent in a Pane runs from, which may differ from the shell's cwd (best-effort).
+    pub async fn foreground_cwd(&self, pane: &PaneRef) -> Option<String> {
+        let PaneRef {
+            machine_id,
+            session,
+            pane_id,
+        } = pane;
+        let transport = self.transport(machine_id).ok()?;
+        let entry = self.session(machine_id, session).ok()?;
+        let socket = transport.local_socket(&entry).await.ok()?;
+        rpc::snapshot(&socket)
+            .await
+            .ok()
+            .and_then(|s| s.panes.into_iter().find(|p| p.pane_id == *pane_id))
+            .and_then(|p| p.foreground_cwd)
+    }
+
+    /// Resolves a Files root on Machine `id` against its home; every `files_*` command goes through it.
+    pub fn files_root(&self, id: &str, root: &str) -> AppResult<String> {
+        resolve_root(&self.info(id)?.home, root)
+    }
+
+    /// The transcript of the agent in a Pane: `path` when given (the user's choice), else located.
+    pub async fn locate_pane(&self, pane: &PaneRef, path: Option<String>) -> AppResult<Located> {
+        let PaneRef {
+            machine_id,
+            session,
+            pane_id,
+        } = pane;
+        let pane_view = self.pane_view(pane)?;
+        let transport = self.transport(machine_id)?;
+        let fetch_agent = || {
+            self.call(
+                machine_id,
+                session,
+                "agent.get",
+                serde_json::json!({ "target": pane_id }),
+            )
+        };
+        let mut agent_get = match fetch_agent().await {
+            Ok(v) => v,
+            Err(_) if path.is_some() => Value::Null,
+            Err(e) => return Err(e),
+        };
+        // Without its session, a just-started Claude would get another pane's transcript.
+        if path.is_none() {
+            let deadline = tokio::time::Instant::now() + SESSION_WAIT;
+            while transcript::locate::awaiting_session(&agent_get)
+                && tokio::time::Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                agent_get = fetch_agent().await?;
+            }
+        }
+        Ok(match path {
+            Some(p) => Located {
+                agent: agent_get["agent"]["agent"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| pane_view.agent.clone())
+                    .unwrap_or_default(),
+                path: p,
+                ambiguous: false,
+                candidates: Vec::new(),
+                pending: false,
+                cached: false,
+            },
+            None => {
+                let info = self.info(machine_id)?;
+                let fg = self.foreground_cwd(pane).await;
+                transcript::locate::locate_in(
+                    &*transport,
+                    &info,
+                    &agent_get,
+                    &pane_view,
+                    fg.as_deref(),
+                )
+                .await?
+            }
+        })
     }
 
     // ---- events --------------------------------------------------------
@@ -3019,6 +3104,183 @@ mod tests {
         assert!(chats.page(&pane, 0, 1).is_some());
         mgr.disconnect("local").await;
         assert!(chats.page(&pane, 0, 1).is_none());
+    }
+
+    /// Runs the transcript tail script on this machine: a tail's one transport call is its
+    /// `herdr-tail` script (transcript/tail.rs `read`). The probe and session list stay
+    /// scripted by `FakeT`.
+    struct TailT(FakeT);
+    #[async_trait::async_trait]
+    impl Transport for TailT {
+        fn wrap(&self, argv: &[String], tty: bool) -> Vec<String> {
+            if argv.join(" ").contains("herdr-tail") {
+                argv.to_vec()
+            } else {
+                self.0.wrap(argv, tty)
+            }
+        }
+        async fn local_socket(&self, s: &SessionEntry) -> AppResult<PathBuf> {
+            self.0.local_socket(s).await
+        }
+        async fn release_socket(&self, s: &SessionEntry) -> AppResult<()> {
+            self.0.release_socket(s).await
+        }
+    }
+
+    type AgentGet = Arc<dyn Fn() -> Result<Value, (String, String)> + Send + Sync>;
+
+    fn pane_ref(id: &str) -> PaneRef {
+        PaneRef {
+            machine_id: "local".into(),
+            session: "default".into(),
+            pane_id: id.into(),
+        }
+    }
+
+    fn fixture_snap() -> Value {
+        serde_json::from_str(include_str!("../tests/fixtures/snapshot.json")).unwrap()
+    }
+
+    struct PaneMgr {
+        mgr: Arc<MachineManager>,
+        asked: Arc<std::sync::atomic::AtomicU32>,
+        _herdr: FakeHerdr,
+        _dir: tempfile::TempDir,
+    }
+    impl PaneMgr {
+        /// `agent.get` calls for Pane w1:p1; the pi probe asks about other panes.
+        fn asked(&self) -> u32 {
+            self.asked.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// The `local` Machine connected to a herdr serving `snap` and answering `agent.get` for
+    /// Pane w1:p1 with `agent_get`, once that Pane is in its view.
+    async fn pane_mgr(snap: Value, agent_get: AgentGet) -> PaneMgr {
+        let asked: Arc<std::sync::atomic::AtomicU32> = Arc::default();
+        let count = asked.clone();
+        let herdr = FakeHerdr::start(Arc::new(move |m, p| match m {
+            "session.snapshot" => Ok(json!({"type":"session_snapshot","snapshot": snap.clone()})),
+            "agent.get" if p["target"] == "w1:p1" => {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                agent_get()
+            }
+            "agent.get" => Ok(json!({"agent": null})),
+            _ => Ok(json!({"type":"ok"})),
+        }));
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = MachineManager::new(dir.path().join("m.json"), Arc::new(|_| {}));
+        let sock = herdr.path.to_string_lossy().to_string();
+        mgr.with_transport_factory(Arc::new(move |_| {
+            Arc::new(TailT(FakeT { sock: sock.clone() })) as Arc<dyn Transport>
+        }));
+        mgr.connect("local").await.unwrap();
+        assert!(wait_for(|| mgr.pane_view(&pane_ref("w1:p1")).is_ok()).await);
+        PaneMgr {
+            mgr,
+            asked,
+            _herdr: herdr,
+            _dir: dir,
+        }
+    }
+
+    #[tokio::test]
+    async fn foreground_cwd_reads_the_panes_live_snapshot() {
+        let mut snap = fixture_snap();
+        snap["panes"][0]["foreground_cwd"] = json!("/work/sub");
+        let p = pane_mgr(snap, Arc::new(|| Ok(json!({})))).await;
+        let mgr = &p.mgr;
+        assert_eq!(
+            mgr.foreground_cwd(&pane_ref("w1:p1")).await.as_deref(),
+            Some("/work/sub")
+        );
+        assert_eq!(mgr.foreground_cwd(&pane_ref("w1:p2")).await, None);
+        let ghost = PaneRef {
+            machine_id: "ghost".into(),
+            ..pane_ref("w1:p1")
+        };
+        assert_eq!(mgr.foreground_cwd(&ghost).await, None);
+    }
+
+    #[tokio::test]
+    async fn files_root_resolves_against_the_machines_home() {
+        let p = pane_mgr(fixture_snap(), Arc::new(|| Ok(json!({})))).await;
+        let mgr = &p.mgr;
+        assert_eq!(mgr.files_root("local", "~/proj/").unwrap(), "/h/proj");
+        assert_eq!(mgr.files_root("local", "/srv").unwrap(), "/srv");
+        assert_eq!(mgr.files_root("local", "rel").unwrap_err().code, "invalid");
+        assert_eq!(mgr.files_root("ghost", "~").unwrap_err().code, "not_found");
+    }
+
+    #[tokio::test]
+    async fn locate_pane_keeps_a_chosen_path() {
+        let p = pane_mgr(
+            fixture_snap(),
+            Arc::new(|| Ok(json!({"agent": {"agent": "pi"}}))),
+        )
+        .await;
+        let mgr = &p.mgr;
+        let l = mgr
+            .locate_pane(&pane_ref("w1:p1"), Some("/t/a.jsonl".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            l,
+            Located {
+                agent: "pi".into(),
+                path: "/t/a.jsonl".into(),
+                ambiguous: false,
+                candidates: vec![],
+                pending: false,
+                cached: false,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_chosen_path_survives_a_failed_agent_get() {
+        let p = pane_mgr(
+            fixture_snap(),
+            Arc::new(|| Err(("not_found".into(), "no agent".into()))),
+        )
+        .await;
+        let mgr = &p.mgr;
+        let l = mgr
+            .locate_pane(&pane_ref("w1:p1"), Some("/t/a.jsonl".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            l.agent, "claude",
+            "the pane's own agent: the fixture's w1:p1 runs claude"
+        );
+        assert_eq!(l.path, "/t/a.jsonl");
+        assert!(mgr.locate_pane(&pane_ref("w1:p1"), None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn locate_pane_waits_for_a_just_started_claudes_session() {
+        let seen: Arc<std::sync::atomic::AtomicU32> = Arc::default();
+        let p = pane_mgr(
+            fixture_snap(),
+            Arc::new(move || {
+                Ok(
+                    if seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                        json!({"agent": {"agent": "claude", "agent_session": null}})
+                    } else {
+                        json!({"agent": {"agent": "claude",
+                        "agent_session": {"kind": "path", "value": "/t/s1.jsonl"}}})
+                    },
+                )
+            }),
+        )
+        .await;
+        let l = p.mgr.locate_pane(&pane_ref("w1:p1"), None).await.unwrap();
+        assert_eq!(
+            l.path, "/t/s1.jsonl",
+            "the session herdr reported, not a guess"
+        );
+        assert!(!l.ambiguous);
+        assert_eq!(p.asked(), 2);
     }
 
     #[tokio::test]
