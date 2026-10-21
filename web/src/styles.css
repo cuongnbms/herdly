@@ -136,3 +136,57 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 .banner-err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err-fg); }
 .banner-warn { background: color-mix(in srgb, var(--amber) 16%, transparent); color: var(--amber); }
+
+/* ---------- Copy button ---------- */
+.copy-btn {
+  min-height: 32px;
+  padding: 6px 12px;
+  margin: -6px 0; /* 32px visible, 44px tap area */
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: 12px;
+}
+
+/* ---------- Sheet ---------- */
+.sheet-root {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+}
+.sheet {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: 80dvh;
+  overflow-y: auto;
+  background: var(--surface-1);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  box-shadow: var(--shadow-dialog);
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: sheet-up var(--t) var(--ease);
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.sheet-grab {
+  width: 36px;
+  height: 4px;
+  margin: 8px auto;
+  border-radius: 2px;
+  background: var(--line-3);
+}
+.sheet-title {
+  padding: 4px 16px 8px;
+  font-size: 13px;
+  color: var(--fg-2);
+  text-transform: uppercase;
+}
