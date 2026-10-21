@@ -4,7 +4,7 @@ import { useWeb } from "./store";
 const pane = { session: "s", pane_id: "p1" };
 const located = { agent: "claude", path: "/t/a.jsonl", ambiguous: false, candidates: [], pending: false };
 
-beforeEach(() => useWeb.setState({ conn: "connecting", machines: [], chats: {} }));
+beforeEach(() => useWeb.setState({ conn: "connecting", lost: false, machines: [], chats: {} }));
 
 describe("store", () => {
   it("applies chat frames in either order and replaces on every reset", () => {
@@ -66,5 +66,17 @@ describe("store machines", () => {
     expect(useWeb.getState().chats["s/p1"].chat.items.map((i) => (i as { text: string }).text)).toEqual(["a", "b"]);
     clearChat("s/p1");
     expect(useWeb.getState().chats["s/p1"]).toBeUndefined();
+  });
+});
+
+describe("store unknown frames", () => {
+  it("ignores a frame type it does not know", () => {
+    const { apply } = useWeb.getState();
+    apply({ type: "machines", views: [view("local")] });
+    apply({ type: "from_the_future" } as never);
+    const s = useWeb.getState();
+    expect(s.conn).toBe("connecting");
+    expect(s.machines.map((m) => m.id)).toEqual(["local"]);
+    expect(typeof s.apply).toBe("function");
   });
 });

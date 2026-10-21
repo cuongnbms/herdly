@@ -14,10 +14,11 @@ function NotPaired() {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function App(_props: { socket?: Socket }) {
   const conn = useWeb((s) => s.conn);
+  const lost = useWeb((s) => s.lost);
   if (conn === "unpaired") return <NotPaired />;
   return (
     <>
-      {conn === "down" && <div role="status">Disconnected, reconnecting…</div>}
+      {(conn === "down" || (conn === "connecting" && lost)) && <div role="status">Disconnected, reconnecting…</div>}
       <main />
     </>
   );

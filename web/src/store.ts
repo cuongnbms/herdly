@@ -11,6 +11,8 @@ export interface ChatView {
 
 interface WebState {
   conn: Conn;
+  /** The connection was open and has been lost since: reconnect attempts show the bar. */
+  lost: boolean;
   machines: MachineView[];
   chats: Record<string, ChatView>;
   apply(f: Frame): void;
@@ -28,6 +30,7 @@ function withChat(chats: Record<string, ChatView>, pane: WebPane, patch: (v: Cha
 
 export const useWeb = create<WebState>()((set) => ({
   conn: "connecting",
+  lost: false,
   machines: [],
   chats: {},
 
@@ -64,10 +67,12 @@ export const useWeb = create<WebState>()((set) => ({
           return { chats: withChat(s.chats, f.pane, (v) => ({ ...v, chat: reduce(v.chat, f.event, false) })) };
         case "chat_error":
           return { chats: withChat(s.chats, f.pane, (v) => ({ ...v, error: f.error })) };
+        default:
+          return {};
       }
     }),
 
-  setConn: (conn) => set({ conn }),
+  setConn: (conn) => set((s) => ({ conn, lost: conn === "open" ? false : s.lost || conn === "down" })),
 
   prependOlder: (key, items, before) =>
     set((s) => {

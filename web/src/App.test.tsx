@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { App } from "./App";
 import { useWeb } from "./store";
 
-beforeEach(() => useWeb.setState({ conn: "open", machines: [], chats: {} }));
+beforeEach(() => useWeb.setState({ conn: "open", lost: false, machines: [], chats: {} }));
 
 describe("App", () => {
   it("shows the pairing hint only when unpaired", () => {
@@ -22,5 +22,16 @@ describe("App", () => {
     useWeb.setState({ conn: "down" });
     rerender(<App />);
     expect(screen.getByText("Disconnected, reconnecting…")).toBeInTheDocument();
+  });
+
+  it("keeps the bar through reconnect attempts and drops it on open, but not on the first connect", () => {
+    useWeb.setState({ conn: "connecting", lost: false });
+    render(<App />);
+    expect(screen.queryByText("Disconnected, reconnecting…")).not.toBeInTheDocument();
+    const { setConn } = useWeb.getState();
+    act(() => { setConn("open"); setConn("down"); setConn("connecting"); });
+    expect(screen.getByText("Disconnected, reconnecting…")).toBeInTheDocument();
+    act(() => setConn("open"));
+    expect(screen.queryByText("Disconnected, reconnecting…")).not.toBeInTheDocument();
   });
 });
