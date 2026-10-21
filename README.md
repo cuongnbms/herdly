@@ -58,6 +58,8 @@ The backend without Tauri is the `herdly-core` crate in `src-tauri/core/` (herdr
 transcripts, attach, git, files); the app in `src-tauri/src/` is the Tauri layer over it.
 `cargo test --workspace` and `cargo clippy --workspace` in `src-tauri` cover the app, `herdly-core` and `herdly-web`.
 
+Herdly Web (`src-tauri/web/`, `web/`) serves this Machine's Pane list and Chat lens to a phone; see [web/README.md](web/README.md).
+
 To use a local build day to day, `mise run sign:setup` once, then `mise run install:app`. The
 install signs Herdly.app with that local identity: an ad-hoc signed build is a new app to macOS
 on every install, so it would ask again for each permission (network volumes, Desktop, ...).

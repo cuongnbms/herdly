@@ -1,0 +1,12 @@
+[Unit]
+Description=Herdly Web (herdr from a phone)
+After=network-online.target
+
+[Service]
+ExecStart=@REPO@/src-tauri/target/release/herdly-web serve --static @REPO@/web/dist
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

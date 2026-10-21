@@ -4,6 +4,7 @@ pub mod app;
 pub mod auth;
 pub mod backend;
 pub mod chat;
+pub mod cli;
 pub mod config;
 pub mod error;
 pub mod hub;
