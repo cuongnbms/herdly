@@ -335,9 +335,11 @@ button:disabled { opacity: 0.45; cursor: default; }
 /* The 32px pill sits inside a transparent 6px border, so the tap area is 44px. */
 .need-chip {
   min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
   display: inline-flex;
   align-items: center;
-  padding: 0 4px;
+  padding: 0 10px;
   border: 6px solid transparent;
   border-radius: 999px;
   background: color-mix(in srgb, var(--amber) 16%, transparent);
