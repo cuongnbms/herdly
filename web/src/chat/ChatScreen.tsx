@@ -56,6 +56,21 @@ function BottomBar({ pane, view, onSent, onFailed }: { pane: WebPane; view: Pane
   );
 }
 
+/** Owns the clock for "not seen yet", so its tick re-renders only this bubble. */
+function PendingBubble({ p }: { p: Pending }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div data-pending style={{ ...userBubble, opacity: 0.55 }}>
+      <div>{p.text}</div>
+      {isStale(p, now) && <div style={{ fontSize: 12 }}>not seen yet</div>}
+    </div>
+  );
+}
+
 function BlockedPrompt({ pane, view }: { pane: WebPane; view: PaneView }) {
   const { prompt, answer, busy, error } = usePrompt(pane, view);
   return prompt ? <PromptCard key={prompt.id} prompt={prompt} busy={busy} error={error} onAnswer={(a) => void answer(a)} /> : null;
@@ -84,7 +99,6 @@ export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack():
   const [pending, setPending] = useState<Pending[]>([]);
   const nextId = useRef(1);
   const prevItems = useRef<ChatItem[]>(items);
-  const [now, setNow] = useState(() => Date.now());
 
   useLayoutEffect(() => {
     const prev = prevItems.current;
@@ -106,12 +120,6 @@ export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack():
       el.scrollTop = el.scrollHeight;
     }
   }, [items, pending]);
-
-  useEffect(() => {
-    if (pending.length === 0) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [pending.length]);
 
   const onScroll = useCallback(() => {
     const el = box.current;
@@ -139,7 +147,6 @@ export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack():
 
   const onSent = (text: string) => {
     const id = nextId.current++;
-    setNow(Date.now());
     setPending((ps) => [...ps, { id, text, sentAt: Date.now() }]);
     return id;
   };
@@ -162,12 +169,7 @@ export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack():
       )}
       <div ref={box} data-transcript onScroll={onScroll} style={{ flex: 1, overflowY: "auto" }}>
         {items.map((it, i) => <ItemView key={before + i} item={it} />)}
-        {pending.map((p) => (
-          <div key={p.id} data-pending style={{ ...userBubble, opacity: 0.55 }}>
-            <div>{p.text}</div>
-            {isStale(p, now) && <div style={{ fontSize: 12 }}>not seen yet</div>}
-          </div>
-        ))}
+        {pending.map((p) => <PendingBubble key={p.id} p={p} />)}
       </div>
       <footer style={{ padding: "8px 12px", borderTop: "1px solid #8884" }}>
         <BottomBar pane={pane} view={paneView} onSent={onSent} onFailed={onFailed} />

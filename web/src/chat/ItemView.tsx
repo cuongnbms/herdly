@@ -1,5 +1,5 @@
 import { checklist, checklistSummary } from "@desktop/chat/checklist";
-import type { CSSProperties } from "react";
+import { memo, type CSSProperties } from "react";
 import type { ChatItem } from "../types";
 import { Markdown } from "./Markdown";
 
@@ -9,7 +9,8 @@ const MARK = { pending: "[ ]", in_progress: "[~]", completed: "[x]" } as const;
 
 export const userBubble: CSSProperties = { margin: "6px 12px 6px 48px", padding: "8px 12px", borderRadius: 12, background: "#1565c022", whiteSpace: "pre-wrap", overflowWrap: "anywhere" };
 
-export function ItemView({ item }: { item: ChatItem }) {
+/** Memoised: the chat store keeps each item's object across Append and paging, so a shown item never re-parses. */
+export const ItemView = memo(function ItemView({ item }: { item: ChatItem }) {
   switch (item.kind) {
     case "user":
       return (
@@ -57,4 +58,4 @@ export function ItemView({ item }: { item: ChatItem }) {
     case "shell_output":
       return <pre style={{ ...pre, ...block }}>{item.stdout}{item.stderr}</pre>;
   }
-}
+});

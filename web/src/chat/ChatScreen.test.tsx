@@ -3,8 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import { useWeb } from "../store";
 import { ChatScreen } from "./ChatScreen";
+import { Markdown } from "./Markdown";
 
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), chatPage: vi.fn(), panePrompt: vi.fn(), paneRead: vi.fn().mockResolvedValue("Do you want to proceed?\n❯ 1. Yes\n  2. No\n") }));
+// A pass-through spy: counts how often a Transcript item's Markdown is parsed again.
+vi.mock("./Markdown", async (orig) => {
+  const real = await orig<typeof import("./Markdown")>();
+  return { Markdown: vi.fn(real.Markdown) };
+});
 
 const pane = { session: "s", pane_id: "p1" };
 const located = { agent: "claude", path: "/t/a.jsonl", ambiguous: false, candidates: [], pending: false };
@@ -31,6 +37,15 @@ describe("ChatScreen", () => {
     expect(screen.getByText("done").tagName).toBe("STRONG");
     act(() => useWeb.getState().apply({ type: "chat", pane, event: { type: "append", items: [{ kind: "system", text: "compacted" }] } }));
     expect(screen.getByText("compacted")).toBeInTheDocument();
+  });
+
+  it("does not parse the Markdown of items already shown again when an item is appended", () => {
+    open([{ kind: "assistant_text", markdown: "**done**" }]);
+    render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    vi.mocked(Markdown).mockClear();
+    act(() => useWeb.getState().apply({ type: "chat", pane, event: { type: "append", items: [{ kind: "assistant_text", markdown: "*next*" }] } }));
+    expect(screen.getByText("next").tagName).toBe("EM");
+    expect(vi.mocked(Markdown).mock.calls.map(([props]) => props.text)).toEqual(["*next*"]);
   });
 
   it("pages older items in at the top", async () => {
@@ -83,6 +98,25 @@ describe("ChatScreen", () => {
     expect(screen.getByText("run the tests").closest("[data-pending]")).not.toBeNull();
     act(() => useWeb.getState().apply({ type: "chat", pane, event: { type: "append", items: [{ kind: "user", text: "run the tests" }] } }));
     expect(screen.getByText("run the tests").closest("[data-pending]")).toBeNull();
+  });
+
+  it("marks a pending message not seen yet after 30 s, without parsing the Transcript again", () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(api.panePrompt).mockImplementation(() => new Promise(() => {}));
+      open([{ kind: "assistant_text", markdown: "**done**" }]);
+      render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+      fireEvent.change(screen.getByLabelText("Message"), { target: { value: "run the tests" } });
+      fireEvent.click(screen.getByText("Send"));
+      vi.mocked(Markdown).mockClear();
+      act(() => vi.advanceTimersByTime(29_000));
+      expect(screen.queryByText("not seen yet")).toBeNull();
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(screen.getByText("not seen yet").closest("[data-pending]")).not.toBeNull();
+      expect(Markdown).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the text and shows the error when sending fails", async () => {
