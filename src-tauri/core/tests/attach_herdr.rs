@@ -14,7 +14,7 @@ const HERDR: &str = "/opt/homebrew/bin/herdr";
 const SESSION: &str = "herdly-test-attach";
 
 /// Stops and deletes the test session, even when the test fails.
-struct SessionGuard;
+struct SessionGuard(Option<std::process::Child>);
 impl Drop for SessionGuard {
     fn drop(&mut self) {
         let run = |args: &[&str]| {
@@ -27,6 +27,9 @@ impl Drop for SessionGuard {
         };
         run(&["--session", SESSION, "server", "stop"]);
         run(&["session", "delete", SESSION]);
+        if let Some(mut child) = self.0.take() {
+            let _ = child.wait();
+        }
     }
 }
 
@@ -68,14 +71,15 @@ fn session_socket() -> Option<PathBuf> {
 #[tokio::test]
 #[ignore]
 async fn attaches_echoes_and_reports_held() {
-    let _guard = SessionGuard;
-    Command::new(HERDR)
-        .args(["--session", SESSION, "server"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn herdr server");
+    let _guard = SessionGuard(Some(
+        Command::new(HERDR)
+            .args(["--session", SESSION, "server"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn herdr server"),
+    ));
 
     let mut socket = None;
     for _ in 0..100 {

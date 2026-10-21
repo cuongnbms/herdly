@@ -19,11 +19,14 @@ fn herdr(args: &[&str]) -> std::process::Output {
 }
 
 /// Stops and deletes the test session, even when the test fails.
-struct SessionGuard;
+struct SessionGuard(Option<std::process::Child>);
 impl Drop for SessionGuard {
     fn drop(&mut self) {
         herdr(&["--session", SESSION, "server", "stop"]);
         herdr(&["session", "delete", SESSION]);
+        if let Some(mut child) = self.0.take() {
+            let _ = child.wait();
+        }
     }
 }
 
@@ -48,14 +51,15 @@ async fn ssh_localhost_master_exec_and_forward() {
     let out = exec(&ssh, &probe_argv(None, None)).await.unwrap();
     assert!(out.stdout.contains("HOME="), "{}", out.stdout);
 
-    let _guard = SessionGuard;
-    Command::new(HERDR)
-        .args(["--session", SESSION, "server"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn herdr server");
+    let _guard = SessionGuard(Some(
+        Command::new(HERDR)
+            .args(["--session", SESSION, "server"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn herdr server"),
+    ));
     let mut entry = None;
     for _ in 0..100 {
         let list = herdr(&["session", "list"]);

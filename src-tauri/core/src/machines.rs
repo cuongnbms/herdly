@@ -1812,7 +1812,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            (v.id.as_str(), v.kind.as_str(), v.state.clone()),
+            (v.id.as_str(), v.kind.as_str(), v.state),
             ("dev-tuf", "ssh", MachineState::Disconnected)
         );
         assert_eq!(load_registry(&p)[0].ssh_target, "cuong@devtuf.lan");

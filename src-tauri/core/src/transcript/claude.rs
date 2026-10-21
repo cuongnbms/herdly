@@ -572,9 +572,10 @@ mod tests {
         }
     }
     use crate::transcript::{ChatMeta, ImageRef};
-    fn run_with(text: &str) -> (Vec<ChatItem>, Vec<(String, String, Vec<u8>)>, ClaudeParser) {
+    type Images = Vec<(String, String, Vec<u8>)>;
+    fn run_with(text: &str) -> (Vec<ChatItem>, Images, ClaudeParser) {
         let mut p = ClaudeParser::default();
-        let mut sink: Vec<(String, String, Vec<u8>)> = vec![];
+        let mut sink: Images = vec![];
         let mut out = vec![];
         for l in text.lines() {
             if let ParserOutput::Append(v) = p.push_line(l, &mut sink) {
