@@ -39,7 +39,12 @@ pub trait Backend: Send + Sync + 'static {
     fn views(&self) -> Vec<MachineView>;
     async fn call(&self, session: &str, method: &str, params: Value) -> AppResult<Value>;
     async fn locate(&self, pane: &WebPane) -> AppResult<Located>;
-    async fn open_chat(&self, pane: &WebPane, path: Option<String>, sink: ChatSink) -> AppResult<Located>;
+    async fn open_chat(
+        &self,
+        pane: &WebPane,
+        path: Option<String>,
+        sink: ChatSink,
+    ) -> AppResult<Located>;
     fn page(&self, pane: &WebPane, before: usize, limit: usize) -> Option<Vec<ChatItem>>;
     fn close_chat(&self, pane: &WebPane);
 }
@@ -64,8 +69,15 @@ impl Backend for Core {
         self.mgr.locate_pane(&pane.to_ref(), None).await
     }
 
-    async fn open_chat(&self, pane: &WebPane, path: Option<String>, sink: ChatSink) -> AppResult<Located> {
-        self.mgr.open_chat(&self.chats, &pane.to_ref(), path, sink).await
+    async fn open_chat(
+        &self,
+        pane: &WebPane,
+        path: Option<String>,
+        sink: ChatSink,
+    ) -> AppResult<Located> {
+        self.mgr
+            .open_chat(&self.chats, &pane.to_ref(), path, sink)
+            .await
     }
 
     fn page(&self, pane: &WebPane, before: usize, limit: usize) -> Option<Vec<ChatItem>> {

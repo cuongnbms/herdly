@@ -18,9 +18,15 @@ fn codes_map_to_statuses() {
 async fn api_error_body_is_the_app_error() {
     let res = ApiError(AppError::new("not_found", "unknown pane p9")).into_response();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
-    let body = http_body_util::BodyExt::collect(res.into_body()).await.unwrap().to_bytes();
+    let body = http_body_util::BodyExt::collect(res.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v, serde_json::json!({"code": "not_found", "message": "unknown pane p9"}));
+    assert_eq!(
+        v,
+        serde_json::json!({"code": "not_found", "message": "unknown pane p9"})
+    );
     let res = unauthorized().into_response();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }

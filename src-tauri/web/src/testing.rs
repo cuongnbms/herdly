@@ -35,7 +35,10 @@ pub fn located(path: &str) -> Located {
 }
 
 pub fn pane(session: &str, id: &str) -> WebPane {
-    WebPane { session: session.into(), pane_id: id.into() }
+    WebPane {
+        session: session.into(),
+        pane_id: id.into(),
+    }
 }
 
 impl FakeBackend {
@@ -55,12 +58,22 @@ impl Backend for FakeBackend {
     }
 
     async fn call(&self, session: &str, method: &str, params: Value) -> AppResult<Value> {
-        self.calls.lock().unwrap().push((session.into(), method.into(), params));
-        self.call_result.lock().unwrap().clone().unwrap_or_else(|| Ok(json!({})))
+        self.calls
+            .lock()
+            .unwrap()
+            .push((session.into(), method.into(), params));
+        self.call_result
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| Ok(json!({})))
     }
 
     async fn locate(&self, pane: &WebPane) -> AppResult<Located> {
-        self.log.lock().unwrap().push(format!("locate:{}", pane.pane_id));
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("locate:{}", pane.pane_id));
         self.locate_results
             .lock()
             .unwrap()
@@ -68,11 +81,17 @@ impl Backend for FakeBackend {
             .unwrap_or_else(|| Err(AppError::new("not_found", "no locate result")))
     }
 
-    async fn open_chat(&self, pane: &WebPane, path: Option<String>, sink: ChatSink) -> AppResult<Located> {
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("open:{}:{}", pane.pane_id, path.as_deref().unwrap_or("-")));
+    async fn open_chat(
+        &self,
+        pane: &WebPane,
+        path: Option<String>,
+        sink: ChatSink,
+    ) -> AppResult<Located> {
+        self.log.lock().unwrap().push(format!(
+            "open:{}:{}",
+            pane.pane_id,
+            path.as_deref().unwrap_or("-")
+        ));
         self.sinks.lock().unwrap().insert(pane.clone(), sink);
         let delay = *self.open_delay.lock().unwrap();
         if !delay.is_zero() {
@@ -84,16 +103,25 @@ impl Backend for FakeBackend {
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Ok(located(path.as_deref().unwrap_or("/t/a.jsonl"))));
-        self.log.lock().unwrap().push(format!("opened:{}", pane.pane_id));
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("opened:{}", pane.pane_id));
         result
     }
 
     fn page(&self, pane: &WebPane, before: usize, limit: usize) -> Option<Vec<ChatItem>> {
-        self.pages.lock().unwrap().push((pane.clone(), before, limit));
+        self.pages
+            .lock()
+            .unwrap()
+            .push((pane.clone(), before, limit));
         self.page_result.lock().unwrap().clone()
     }
 
     fn close_chat(&self, pane: &WebPane) {
-        self.log.lock().unwrap().push(format!("close:{}", pane.pane_id));
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("close:{}", pane.pane_id));
     }
 }
