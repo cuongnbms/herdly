@@ -102,3 +102,17 @@ Upgrade herdly-web and its bundled web assets together. The installed desktop bi
 6. Browser smoke at narrow mobile sizes and rotation, with virtual-keyboard layout coverage where automation permits. Real iOS Safari and Android Chrome checks remain explicit manual acceptance for keyboard/IME, touch scroll under mouse reporting, safe areas, background/resume, and Take over between phone and desktop. Mark any checks not performed rather than claiming device support from emulation alone.
 
 Acceptance: a paired phone can open a shell or Agent Pane's Terminal, read/generate live output, type and resize; Held requires explicit Take over; stale/disconnected attempts cannot replay keys or close a newer Attach; leaving Terminal does not kill the Pane process; Chat and installed desktop remain usable without a desktop upgrade.
+
+## Rulings
+
+Made under autopilot; the user has not reviewed them.
+
+### Flagged
+
+none
+
+### Other
+
+- Ruling: use pnpm in both the repository root and web directory — web/README.md explicitly uses pnpm and both directories have pnpm lockfiles — wrong choice would require regenerating install artifacts, not changing product behavior.
+- Ruling: namespace web Lens preferences with `herdly-web:lens:v1:` and a JSON-encoded Session/Pane tuple — avoids collisions and leaves old Chat draft keys intact — wrong choice requires a preference-key migration only.
+- Ruling: bound queued terminal input to 64 frames and 1 MiB, closing lagged attempts instead of replaying or growing memory — a blocked PTY must not retain unbounded commands — wrong choice may disconnect unusually large pastes and can be tuned without protocol changes.
