@@ -917,8 +917,8 @@ mod tests {
             .unwrap();
         let _close = Close(manager.clone(), k.clone());
         let entry = manager.get(&k).unwrap();
-        // The exit watcher removes the entry only once the child exited and the reader drained,
-        // so the balance below is read after the reader's last delivery, without a sleep.
+        // The exit watcher removes the entry after the child exits and the reader drains, so
+        // this waits for the reader's last delivery without a sleep.
         let mut drained = false;
         for _ in 0..200 {
             if !manager.entries.lock().unwrap().contains_key(&k) {
@@ -928,14 +928,29 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
         let got = sink.received.load(Ordering::SeqCst);
-        let debt = *entry.unacked.lock().unwrap();
+        // The drain grace bounds the watcher, not the reader: a reader wedged on the credit
+        // mutex can still be running here, so the balance is read with a deadline. A plain
+        // `lock()` would turn exactly the lock-boundary regression this test guards against
+        // into a hung suite instead of a failure.
+        let debt = {
+            let mut debt = None;
+            for _ in 0..100 {
+                if let Ok(unacked) = entry.unacked.try_lock() {
+                    debt = Some(*unacked);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+            debt
+        };
         assert!(drained, "the stream never finished and drained");
         assert_eq!(
             got, TOTAL,
             "a sink that acknowledges inside `data` must not stall the reader above HIGH_WATER"
         );
         assert_eq!(
-            debt, 0,
+            debt,
+            Some(0),
             "bytes acknowledged inside `data` must not stay outstanding after delivery"
         );
     }
