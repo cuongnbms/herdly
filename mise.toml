@@ -45,6 +45,10 @@ run = "scripts/sign-setup.sh"
 description = "Type-check the frontend"
 run = "pnpm typecheck"
 
+[tasks."typecheck:web"]
+description = "Type-check the Herdly Web UI"
+run = "pnpm --dir web typecheck"
+
 [tasks.lint]
 description = "Clippy on the backend, warnings as errors"
 dir = "src-tauri"
@@ -53,6 +57,10 @@ run = "cargo clippy --workspace -- -D warnings"
 [tasks."test:frontend"]
 description = "Frontend tests (vitest)"
 run = "pnpm test"
+
+[tasks."test:web"]
+description = "Herdly Web UI tests (vitest)"
+run = "pnpm --dir web test"
 
 [tasks."test:backend"]
 description = "Backend tests (cargo)"
@@ -66,7 +74,7 @@ run = "scripts/sign.test.sh"
 
 [tasks.test]
 description = "Frontend, backend and signing script tests"
-depends = ["test:frontend", "test:backend", "test:sign"]
+depends = ["test:frontend", "test:web", "test:backend", "test:sign"]
 
 # Starts isolated `herdly-test-*` sessions on the local herdr and always
 # stops and deletes them. The SSH test only runs when HERDLY_SSH_TEST is set.
@@ -77,7 +85,7 @@ run = "cargo test --workspace -- --ignored --test-threads=1"
 
 [tasks.check]
 description = "Typecheck, lint and test"
-depends = ["typecheck", "lint", "test"]
+depends = ["typecheck", "typecheck:web", "lint", "test"]
 
 # Regenerates src-tauri/icons from one square source image. Only needed when the
 # icon itself changes; the committed icons are what `build` packages.

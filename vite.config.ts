@@ -34,6 +34,6 @@ export default defineConfig(() => ({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     // git worktrees under .worktrees/ carry their own copy of the tests and node_modules
-    exclude: [...configDefaults.exclude, ".worktrees/**"],
+    exclude: [...configDefaults.exclude, ".worktrees/**", "web/**"],
   },
 }));
