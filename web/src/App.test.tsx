@@ -1,9 +1,11 @@
-import { act, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { useWeb } from "./store";
 
-beforeEach(() => useWeb.setState({ conn: "open", lost: false, machines: [], chats: {} }));
+beforeEach(() => {
+  useWeb.setState({ conn: "open", lost: false, machines: [], chats: {}, open: null });
+});
 
 describe("App", () => {
   it("shows the pairing hint only when unpaired", () => {
@@ -33,5 +35,18 @@ describe("App", () => {
     expect(screen.getByText("Disconnected, reconnecting…")).toBeInTheDocument();
     act(() => setConn("open"));
     expect(screen.queryByText("Disconnected, reconnecting…")).not.toBeInTheDocument();
+  });
+
+  it("subscribes when a Chat opens, and on back unsubscribes, clears it and returns to the list", () => {
+    const pane = { session: "s", pane_id: "p1" };
+    const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
+    useWeb.setState({ open: pane });
+    act(() => useWeb.getState().apply({ type: "chat_opened", pane, located: { agent: "claude", path: "/t", ambiguous: false, candidates: [], pending: false } }));
+    render(<App socket={socket as never} />);
+    expect(socket.subscribe).toHaveBeenCalledWith(pane);
+    fireEvent.click(screen.getByLabelText("Back"));
+    expect(socket.unsubscribe).toHaveBeenCalledWith(pane);
+    expect(useWeb.getState().open).toBeNull();
+    expect(useWeb.getState().chats["s/p1"]).toBeUndefined();
   });
 });

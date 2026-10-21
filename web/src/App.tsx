@@ -1,6 +1,9 @@
+import { useEffect } from "react";
 import type { Socket } from "./socket";
+import { ChatScreen } from "./chat/ChatScreen";
 import { PaneList } from "./list/PaneList";
 import { useWeb } from "./store";
+import { webKey, type WebPane } from "./types";
 
 function NotPaired() {
   return (
@@ -12,17 +15,28 @@ function NotPaired() {
 }
 
 /** `socket` is main.tsx's one connection; the screens built on this shell subscribe through it. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function App(_props: { socket?: Socket }) {
+export function App({ socket }: { socket?: Socket }) {
   const conn = useWeb((s) => s.conn);
   const lost = useWeb((s) => s.lost);
   const open = useWeb((s) => s.open);
   const openChat = useWeb((s) => s.openChat);
+  const closeChat = useWeb((s) => s.closeChat);
+  const clearChat = useWeb((s) => s.clearChat);
+  const openKey = open ? webKey(open) : null;
+  useEffect(() => {
+    if (open) socket?.subscribe(open);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openKey, socket]);
+  const back = (p: WebPane) => {
+    socket?.unsubscribe(p);
+    clearChat(webKey(p));
+    closeChat();
+  };
   if (conn === "unpaired") return <NotPaired />;
   return (
     <>
       {(conn === "down" || (conn === "connecting" && lost)) && <div role="status">Disconnected, reconnecting…</div>}
-      {open ? <main /> : <PaneList onOpen={openChat} />}
+      {open ? <ChatScreen pane={open} onBack={() => back(open)} onRetry={() => socket?.subscribe(open)} /> : <PaneList onOpen={openChat} />}
     </>
   );
 }
