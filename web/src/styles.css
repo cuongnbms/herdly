@@ -427,7 +427,6 @@ button:disabled { opacity: 0.45; cursor: default; }
   overflow-wrap: anywhere;
 }
 .bubble-pending { opacity: 0.55; }
-.answer { margin: 6px 12px; overflow-wrap: anywhere; }
 .work { margin: 6px 12px; }
 .work-head {
   display: flex;
@@ -476,3 +475,26 @@ button:disabled { opacity: 0.45; cursor: default; }
 .checklist { list-style: none; margin: 0; padding-left: 4px; font-size: 13px; }
 .item-system { margin: 6px 16px; font-size: 13px; color: var(--fg-3); }
 .chip { display: inline-block; margin-left: 6px; padding: 0 8px; font-size: 12px; border-radius: var(--r-sm); background: var(--surface-3); color: var(--fg-2); }
+
+/* ---------- Transcript: messages and Markdown ---------- */
+[data-transcript] { padding: 8px 0 16px; overscroll-behavior: contain; }
+.bubble-note { font-size: 12px; color: var(--fg-3); }
+.answer { margin: 8px 16px; font-size: 15px; overflow-wrap: anywhere; }
+.markdown { overflow-wrap: anywhere; }
+.markdown p { margin: 0.5em 0; }
+.markdown h1 { font-size: 17px; font-weight: 600; }
+.markdown h2 { font-size: 16px; font-weight: 600; }
+.markdown h3 { font-size: 15px; font-weight: 600; }
+.markdown ul, .markdown ol { padding-left: 1.3em; }
+.markdown blockquote { margin: 0.5em 0; padding-left: 12px; border-left: 3px solid var(--line-3); color: var(--fg-2); }
+.markdown a { color: var(--link); }
+.markdown :not(pre) > code { padding: 1px 5px; border-radius: var(--r-sm); background: var(--active); color: var(--code-inline); font-size: 0.9em; }
+.markdown hr { border: 0; border-top: 1px solid var(--line-2); }
+.code-block { margin: 8px 0; background: var(--surface-code); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+.code-head { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px 2px 12px; background: var(--code-head); font: 12px var(--mono); color: var(--fg-3); }
+.code-block pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; }
+.table-wrap { overflow-x: auto; }
+.table-wrap table { border-collapse: collapse; }
+.table-wrap th, .table-wrap td { padding: 6px 10px; border: 1px solid var(--line-2); }
+.table-wrap th { background: var(--surface-2); }
+.answer-actions { margin-top: 2px; display: flex; justify-content: flex-start; }

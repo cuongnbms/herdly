@@ -2,9 +2,11 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useWeb } from "../store";
 import { ChatScreen } from "./ChatScreen";
+import { copyText } from "../ui/copy";
 import { Markdown } from "./Markdown";
 
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), chatPage: vi.fn(), panePrompt: vi.fn(), paneRead: vi.fn(() => new Promise(() => {})) }));
+vi.mock("../ui/copy", () => ({ copyText: vi.fn(() => true) }));
 vi.mock("./Markdown", async (orig) => {
   const real = await orig<typeof import("./Markdown")>();
   return { Markdown: vi.fn(real.Markdown) };
@@ -41,6 +43,12 @@ beforeEach(() => {
 });
 
 describe("Transcript work blocks", () => {
+  it("copies an answer's Markdown source", () => {
+    open("idle", [{ kind: "user", text: "go", ts: at(0) }, { kind: "assistant_text", markdown: "**All** green", ts: at(1) }]);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(copyText).toHaveBeenCalledWith("**All** green");
+  });
+
   it("folds a finished turn's work under one header and keeps the answer open", () => {
     open("idle");
     expect(head()).toHaveAccessibleName("Worked for 7s · 1 edit · 1 command");

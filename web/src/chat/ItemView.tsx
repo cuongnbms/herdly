@@ -2,6 +2,7 @@ import { checklist, checklistSummary } from "@desktop/chat/checklist";
 import type { ToolResult } from "@desktop/chat/workBlocks";
 import { memo, useState, type ReactNode } from "react";
 import type { ChatItem } from "../types";
+import { CopyButton } from "../ui/CopyButton";
 import { ChevronIcon } from "../ui/icons";
 import { Markdown } from "./Markdown";
 
@@ -36,7 +37,12 @@ export const ItemView = memo(function ItemView({ item, result }: { item: ChatIte
         </div>
       );
     case "assistant_text":
-      return <div className="answer"><Markdown text={item.markdown} /></div>;
+      return (
+        <div className="answer">
+          <Markdown text={item.markdown} />
+          <div className="answer-actions"><CopyButton text={item.markdown} /></div>
+        </div>
+      );
     case "thinking":
       return (
         <Collapsible headClass="work-head" head={<span>Thinking</span>}>

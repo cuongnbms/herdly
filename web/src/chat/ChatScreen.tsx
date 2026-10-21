@@ -60,7 +60,7 @@ function PendingBubble({ p }: { p: Pending }) {
   return (
     <div data-pending className="bubble-user bubble-pending">
       <div>{p.text}</div>
-      {isStale(p, now) && <div style={{ fontSize: 12 }}>not seen yet</div>}
+      <div className="bubble-note">{isStale(p, now) ? "not seen yet" : "sending…"}</div>
     </div>
   );
 }
