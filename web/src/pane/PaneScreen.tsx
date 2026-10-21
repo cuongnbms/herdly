@@ -44,9 +44,13 @@ export function PaneScreen({ pane, socket, onBack, onSwitch, onMenu, transport }
   const chatEnabled = canChat({ agent });
   /** The Lens the user picked for this Pane, or null while it follows the Agent and storage. */
   const [chosen, setChosen] = useState<Lens | null>(null);
-  const lens = chosen ?? chooseLens(agent, loadLens(pane));
-  // Chat hidden while Terminal is shown: the last Chat state stays, only the live feed stops.
-  const [chatShown, setChatShown] = useState(lens === "chat");
+  // The one effective Lens the header, the body and the subscription all read: a stored or picked
+  // Chat only counts while the Agent still has a Chat lens, so an unsupported Agent always lands
+  // on Terminal whatever was chosen before. It is recomputed from the current Agent on every
+  // render instead of being frozen at mount, so late Agent data moves the body and the
+  // subscription together.
+  const lens = chooseLens(agent, chosen ?? loadLens(pane));
+  const chatShown = lens === "chat";
 
   useEffect(() => {
     if (!chatShown) return;
@@ -57,7 +61,6 @@ export function PaneScreen({ pane, socket, onBack, onSwitch, onMenu, transport }
   const onLens = useCallback(
     (next: Lens) => {
       setChosen(next);
-      setChatShown(next === "chat");
       saveLens(pane, next);
     },
     [pane],

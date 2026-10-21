@@ -79,9 +79,12 @@ describe("PaneScreen Lens selector", () => {
     // The Pane list needs a Machine view to show anything, but a Pane can be selected while a
     // fresh machine frame replaces the old one: the default must follow the Agent, not the
     // first render.
-    rig();
+    const { socket } = rig();
+    expect(socket.subscribe).not.toHaveBeenCalled();
     act(() => useWeb.setState({ machines: [machine("claude")] as never }));
     expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    // The rendered body switched to Chat, so the transcript must be fetched too.
+    expect(socket.subscribe).toHaveBeenCalledWith(pane);
   });
 
   it("disables Chat for a Pane whose Agent has no Chat lens, and opens Terminal", () => {
@@ -107,6 +110,29 @@ describe("PaneScreen Chat subscription", () => {
     useWeb.setState({ machines: [machine(null)] as never });
     const { socket } = rig();
     expect(socket.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("unsubscribes when the Pane's Agent stops having a Chat lens", () => {
+    useWeb.setState({ machines: [machine("claude")] as never });
+    const { socket } = rig();
+    expect(socket.subscribe).toHaveBeenCalledWith(pane);
+    act(() => useWeb.setState({ machines: [machine("codex")] as never }));
+    expect(socket.unsubscribe).toHaveBeenCalledWith(pane);
+    expect(screen.getByRole("button", { name: "Terminal" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Chat" })).toBeDisabled();
+  });
+
+  it("falls back to Terminal when a Pane the user put on Chat loses its Chat lens", () => {
+    useWeb.setState({ machines: [machine("claude")] as never });
+    const { socket } = rig();
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    // The same Pane now runs an Agent with no Chat lens: only Terminal can show it.
+    act(() => useWeb.setState({ machines: [machine("codex")] as never }));
+    expect(screen.getByRole("button", { name: "Terminal" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Chat" })).toBeDisabled();
+    expect(socket.unsubscribe).toHaveBeenCalledWith(pane);
   });
 
   it("unsubscribes on unmount", () => {
