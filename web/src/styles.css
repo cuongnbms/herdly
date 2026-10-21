@@ -432,6 +432,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   display: flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
   min-height: 44px;
   font-size: 13px;
   color: var(--fg-2);
@@ -452,6 +453,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   align-items: center;
   gap: 8px;
   min-width: 0;
+  max-width: 100%;
   min-height: 44px;
   font-family: var(--mono);
   font-size: 13px;
