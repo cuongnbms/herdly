@@ -44,7 +44,7 @@ export function PaneList({ onOpen }: { onOpen(p: WebPane): void }) {
 
   return (
     <main style={{ maxWidth: 640, margin: "0 auto" }}>
-      {machine?.error && <div role="alert" style={{ padding: 12, background: "#c0392b", color: "#fff" }}>{machine.error.message}</div>}
+      {machine?.error && <div role="alert" style={{ padding: 12, background: "#c0392b", color: "#fff" }}><strong>{machine.state}</strong>: <span>{machine.error.message}</span></div>}
       {orderSessions(machine?.sessions ?? []).map((s) => {
         const g = groupSession(s);
         return (

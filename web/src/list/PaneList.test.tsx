@@ -41,13 +41,13 @@ describe("PaneList", () => {
     status("working", "done");
     expect(screen.getByText("title 1").closest("[data-pane]")!.querySelector("[data-status]")!.getAttribute("data-status")).toBe("working");
     status("done", "working");
-console.log("LS", localStorage.getItem("herdly-web:seen"), JSON.stringify(useWeb.getState().machines[0].sessions[0].workspaces[0].tabs[0].panes[0]));
     expect(screen.getByText("title 1").closest("[data-pane]")!.querySelector("[data-status]")!.getAttribute("data-status")).toBe("done");
   });
 
   it("shows the machine's error as a banner", () => {
-    useWeb.setState({ machines: [machine([], { code: "herdr_not_found", message: "herdr not found" })] as never });
+    useWeb.setState({ machines: [{ ...machine([], { code: "herdr_not_found", message: "herdr not found" }), state: "error" }] as never });
     render(<PaneList onOpen={() => {}} />);
     expect(screen.getByText("herdr not found")).toBeInTheDocument();
+    expect(screen.getByText("error")).toBeInTheDocument();
   });
 });
