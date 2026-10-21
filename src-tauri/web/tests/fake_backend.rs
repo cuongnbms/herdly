@@ -108,3 +108,57 @@ async fn locate_pops_results_then_reports_not_found_and_call_records() {
         )
     );
 }
+
+#[tokio::test]
+async fn fake_terminal_delivers_through_the_sink_and_records_every_call() {
+    use herdly_core::attach::{AttachEvent, Sink};
+    use herdly_web::terminal::backend::TerminalSize;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Rec {
+        bytes: Mutex<Vec<u8>>,
+        events: Mutex<Vec<AttachEvent>>,
+    }
+    impl Sink for Rec {
+        fn data(&self, b: Vec<u8>) {
+            self.bytes.lock().unwrap().extend(b);
+        }
+        fn event(&self, e: AttachEvent) {
+            self.events.lock().unwrap().push(e);
+        }
+    }
+
+    let fake = FakeBackend::default();
+    let handle = fake.terminal(&pane("s", "p1"), true).await.unwrap();
+    assert_eq!(*fake.log.lock().unwrap(), vec!["terminal:p1:true"]);
+    let rec = Arc::new(Rec::default());
+    handle
+        .open(TerminalSize { cols: 91, rows: 33 }, rec.clone())
+        .await
+        .unwrap();
+    handle.write(b"hello\r".to_vec()).await.unwrap();
+    handle
+        .resize(TerminalSize {
+            cols: 40,
+            rows: 100,
+        })
+        .await
+        .unwrap();
+    handle.ack(3);
+    handle.close().await;
+
+    let attempt = fake.terminal_attempts.lock().unwrap()[0].clone();
+    assert_eq!(attempt.sizes(), vec![TerminalSize { cols: 91, rows: 33 }]);
+    assert_eq!(attempt.resizes(), vec![TerminalSize { cols: 40, rows: 100 }]);
+    assert_eq!(attempt.inputs(), vec![b"hello\r".to_vec()]);
+    assert_eq!(attempt.acks(), vec![3]);
+    assert_eq!(attempt.close_count(), 1);
+    assert!(attempt.is_closed());
+
+    // Output and events go to the real Sink the handle opened with.
+    attempt.emit_data(vec![0x1b, 0x5b, 0xff]);
+    attempt.emit_event(AttachEvent::Attached);
+    assert_eq!(*rec.bytes.lock().unwrap(), vec![0x1b, 0x5b, 0xff]);
+    assert_eq!(*rec.events.lock().unwrap(), vec![AttachEvent::Attached]);
+}

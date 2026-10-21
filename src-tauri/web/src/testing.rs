@@ -6,10 +6,12 @@ use crate::chat::ChatHub;
 use crate::config::{now_secs, REVOKE_CHECK};
 use crate::hub::Hub;
 use crate::store::Store;
+use crate::terminal::backend::{TerminalHandle, TerminalSize};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::Router;
+use herdly_core::attach::{AttachEvent, Sink};
 use herdly_core::error::{AppError, AppResult};
 use herdly_core::transcript::{ChatEvent, ChatItem, Located};
 use herdly_core::view::MachineView;
@@ -19,6 +21,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::oneshot;
 use tower::ServiceExt;
 
 #[derive(Default)]
@@ -33,6 +36,10 @@ pub struct FakeBackend {
     pub sinks: Mutex<HashMap<WebPane, ChatSink>>,
     pub page_result: Mutex<Option<Vec<ChatItem>>>,
     pub pages: Mutex<Vec<(WebPane, usize, usize)>>,
+    /// One `FakeTerminal` per `terminal` call, in order.
+    pub terminal_attempts: Mutex<Vec<Arc<FakeTerminal>>>,
+    /// When set, `terminal` fails with it (a resolution failure).
+    pub terminal_error: Mutex<Option<AppError>>,
 }
 
 pub fn located(path: &str) -> Located {
@@ -60,6 +67,125 @@ impl FakeBackend {
         if let Some(sink) = sink {
             sink(ev);
         }
+    }
+}
+
+/// What a test observed of one Terminal attempt. Only the OS/network boundary is replaced:
+/// bytes and events still reach the real `Sink` the socket gave `open`.
+#[derive(Default)]
+pub struct FakeTerminal {
+    /// The attempt was allocated and has not been closed.
+    closed: Mutex<bool>,
+    opened: Mutex<bool>,
+    sizes: Mutex<Vec<TerminalSize>>,
+    resizes: Mutex<Vec<TerminalSize>>,
+    inputs: Mutex<Vec<Vec<u8>>>,
+    acks: Mutex<Vec<usize>>,
+    closes: Mutex<usize>,
+    /// The sink `open` captured, so the test can deliver as the PTY would.
+    sink: Mutex<Option<Arc<dyn Sink>>>,
+    /// Held until a test releases it, to model a spawn that blocks.
+    gate: Mutex<Option<oneshot::Receiver<()>>>,
+    open_fails: Mutex<Option<AppError>>,
+}
+
+impl FakeTerminal {
+    /// A Terminal whose `open` blocks until `release_open` is called.
+    pub fn gated() -> (Arc<FakeTerminal>, oneshot::Sender<()>) {
+        let (tx, rx) = oneshot::channel();
+        let terminal = Arc::new(FakeTerminal {
+            gate: Mutex::new(Some(rx)),
+            ..Default::default()
+        });
+        (terminal, tx)
+    }
+
+    /// A Terminal whose `open` fails with `e`.
+    pub fn failing(e: AppError) -> Arc<FakeTerminal> {
+        Arc::new(FakeTerminal {
+            open_fails: Mutex::new(Some(e)),
+            ..Default::default()
+        })
+    }
+
+    pub fn inputs(&self) -> Vec<Vec<u8>> {
+        self.inputs.lock().unwrap().clone()
+    }
+    pub fn acks(&self) -> Vec<usize> {
+        self.acks.lock().unwrap().clone()
+    }
+    pub fn sizes(&self) -> Vec<TerminalSize> {
+        self.sizes.lock().unwrap().clone()
+    }
+    pub fn resizes(&self) -> Vec<TerminalSize> {
+        self.resizes.lock().unwrap().clone()
+    }
+    pub fn is_open(&self) -> bool {
+        *self.opened.lock().unwrap() && !self.is_closed()
+    }
+    pub fn is_closed(&self) -> bool {
+        *self.closed.lock().unwrap()
+    }
+    pub fn close_count(&self) -> usize {
+        *self.closes.lock().unwrap()
+    }
+
+    /// Delivers output through the real sink, as the PTY reader would.
+    pub fn emit_data(&self, bytes: Vec<u8>) {
+        let sink = self.sink.lock().unwrap().clone();
+        if let Some(sink) = sink {
+            sink.data(bytes);
+        }
+    }
+
+    /// Delivers a Terminal event through the real sink.
+    pub fn emit_event(&self, e: AttachEvent) {
+        let sink = self.sink.lock().unwrap().clone();
+        if let Some(sink) = sink {
+            sink.event(e);
+        }
+    }
+}
+
+#[async_trait]
+impl TerminalHandle for FakeTerminal {
+    async fn open(&self, size: TerminalSize, sink: Arc<dyn Sink>) -> AppResult<()> {
+        self.sizes.lock().unwrap().push(size);
+        *self.sink.lock().unwrap() = Some(sink);
+        let gate = self.gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
+        if let Some(e) = self.open_fails.lock().unwrap().take() {
+            return Err(e);
+        }
+        *self.opened.lock().unwrap() = true;
+        Ok(())
+    }
+
+    async fn write(&self, data: Vec<u8>) -> AppResult<()> {
+        if self.is_closed() {
+            return Err(AppError::new("not_found", "terminal is closed"));
+        }
+        self.inputs.lock().unwrap().push(data);
+        Ok(())
+    }
+
+    async fn resize(&self, size: TerminalSize) -> AppResult<()> {
+        if self.is_closed() {
+            return Err(AppError::new("not_found", "terminal is closed"));
+        }
+        self.resizes.lock().unwrap().push(size);
+        Ok(())
+    }
+
+    fn ack(&self, bytes: usize) {
+        self.acks.lock().unwrap().push(bytes);
+    }
+
+    async fn close(&self) {
+        *self.closes.lock().unwrap() += 1;
+        *self.closed.lock().unwrap() = true;
     }
 }
 
@@ -135,6 +261,23 @@ impl Backend for FakeBackend {
             .lock()
             .unwrap()
             .push(format!("close:{}", pane.pane_id));
+    }
+
+    async fn terminal(&self, pane: &WebPane, takeover: bool) -> AppResult<Arc<dyn TerminalHandle>> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("terminal:{}:{takeover}", pane.pane_id));
+        // A scripted attempt can refuse the allocation, as resolution does.
+        if let Some(e) = self.terminal_error.lock().unwrap().clone() {
+            return Err(e);
+        }
+        let terminal = match self.terminal_attempts.lock().unwrap().pop() {
+            Some(t) => t,
+            None => Arc::new(FakeTerminal::default()),
+        };
+        self.terminal_attempts.lock().unwrap().push(terminal.clone());
+        Ok(terminal)
     }
 }
 

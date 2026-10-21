@@ -10,5 +10,6 @@ pub mod error;
 pub mod hub;
 pub mod static_files;
 pub mod store;
+pub mod terminal;
 pub mod testing;
 pub mod ws;
