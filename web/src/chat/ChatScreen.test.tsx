@@ -111,6 +111,23 @@ describe("ChatScreen", () => {
     await waitFor(() => expect(screen.getByText("Do you want to proceed?")).toBeInTheDocument());
   });
 
+  it("starts the prompt card blank when the prompt changes", async () => {
+    open([]);
+    const blocked = structuredClone(machine);
+    blocked.sessions[0].workspaces[0].tabs[0].panes[0].status = "blocked";
+    act(() => useWeb.setState({ machines: [blocked] as never }));
+    vi.mocked(api.paneRead).mockResolvedValueOnce(`────────────────────────────\n←  ☒ One  ✔ Submit  →\nFirst question?\n❯ 1. Yes\n  2. No\n  3. Type something.\n────────────────────────────\n  4. Chat about this\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\n`);
+    render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    await waitFor(() => expect(screen.getByText("First question?")).toBeInTheDocument());
+    const field = screen.getByLabelText("Answer") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "typed for the first" } });
+    expect(field.value).toBe("typed for the first");
+    vi.mocked(api.paneRead).mockResolvedValue(`────────────────────────────\n←  ☒ Two  ✔ Submit  →\nSecond question?\n❯ 1. Maybe\n  2. No\n  3. Type something.\n────────────────────────────\n  4. Chat about this\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\n`);
+    act(() => useWeb.setState({ machines: [structuredClone(blocked)].map((m) => { m.sessions[0].workspaces[0].tabs[0].panes[0].title = "next"; return m; }) as never }));
+    await waitFor(() => expect(screen.getByText("Second question?")).toBeInTheDocument());
+    expect((screen.getByLabelText("Answer") as HTMLInputElement).value).toBe("");
+  });
+
   it("shows the ambiguity note, and Retry for both error shapes", () => {
     const onRetry = vi.fn();
     open([]);

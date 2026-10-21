@@ -58,7 +58,7 @@ function BottomBar({ pane, view, onSent, onFailed }: { pane: WebPane; view: Pane
 
 function BlockedPrompt({ pane, view }: { pane: WebPane; view: PaneView }) {
   const { prompt, answer, busy, error } = usePrompt(pane, view);
-  return prompt ? <PromptCard prompt={prompt} busy={busy} error={error} onAnswer={(a) => void answer(a)} /> : null;
+  return prompt ? <PromptCard key={prompt.id} prompt={prompt} busy={busy} error={error} onAnswer={(a) => void answer(a)} /> : null;
 }
 
 export function ChatScreen({ pane, onBack, onRetry }: { pane: WebPane; onBack(): void; onRetry(): void }) {
