@@ -12,6 +12,7 @@ import { PromptCard } from "../prompt/PromptCard";
 import { Composer, type Draft } from "./Composer";
 import { loadDraft, saveDraft } from "./drafts";
 import { usePrompt } from "../prompt/usePrompt";
+import { ArrowDownIcon } from "../ui/icons";
 
 const AT_BOTTOM_PX = 40;
 
@@ -94,6 +95,8 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
   const stick = useRef(true);
   const anchorHeight = useRef<number | null>(null);
   const asked = useRef<number | null>(null);
+  // null while stuck to the bottom, else the total when the user left it.
+  const [baseline, setBaseline] = useState<number | null>(null);
 
   // Pending messages: settled only by items that arrived after the send.
   const [pending, setPending] = useState<Pending[]>([]);
@@ -107,8 +110,10 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
     const last = prev[prev.length - 1];
     const at = last === undefined ? -1 : items.lastIndexOf(last);
     const fresh = at >= 0 ? items.slice(at + 1) : items;
+    // A Reset replaced the items: count new ones from here.
+    if (prev.length > 0 && at < 0) setBaseline((b) => (b === null ? null : total));
     if (fresh.length > 0) setPending((ps) => settle(ps, fresh));
-  }, [items]);
+  }, [items, total]);
 
   useLayoutEffect(() => {
     const el = box.current;
@@ -125,6 +130,7 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
     const el = box.current;
     if (!el) return;
     stick.current = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_PX;
+    setBaseline((b) => (stick.current ? null : (b ?? total)));
     if (el.scrollTop > 0 || before <= 0 || asked.current === before) return;
     const at = before;
     asked.current = at;
@@ -143,12 +149,18 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
         asked.current = null;
       },
     );
-  }, [before, pane, key, prependOlder]);
+  }, [before, total, pane, key, prependOlder]);
 
   const onSent = (text: string) => {
     const id = nextId.current++;
     setPending((ps) => [...ps, { id, text, sentAt: Date.now() }]);
     return id;
+  };
+  const toBottom = () => {
+    const el = box.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    stick.current = true;
+    setBaseline(null);
   };
   const onFailed = (id: number) => setPending((ps) => ps.filter((p) => p.id !== id));
 
@@ -172,6 +184,14 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
         )}
         {pending.map((p) => <PendingBubble key={p.id} p={p} />)}
       </div>
+      {baseline !== null && (
+        <div className="scroll-down-anchor">
+          <button type="button" className="scroll-down" aria-label="Scroll to bottom" onClick={toBottom}>
+            <ArrowDownIcon />
+            {total - baseline > 0 && <span>{total - baseline} new</span>}
+          </button>
+        </div>
+      )}
       <footer className="chat-footer">
         <BottomBar pane={pane} view={paneView} onSent={onSent} onFailed={onFailed} />
       </footer>

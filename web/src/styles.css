@@ -498,3 +498,26 @@ button:disabled { opacity: 0.45; cursor: default; }
 .table-wrap th, .table-wrap td { padding: 6px 10px; border: 1px solid var(--line-2); }
 .table-wrap th { background: var(--surface-2); }
 .answer-actions { margin-top: 2px; display: flex; justify-content: flex-start; }
+
+/* ---------- Scroll to bottom ---------- */
+/* Zero-height anchor between the transcript and the footer: the button floats over the transcript's bottom edge. */
+.scroll-down-anchor { position: relative; height: 0; flex: none; z-index: 1; }
+.scroll-down {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 22px;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow-soft);
+}
+.scroll-down span { color: var(--accent); }
