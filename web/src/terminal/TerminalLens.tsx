@@ -342,13 +342,17 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
             return;
           }
           const mapped = controlCharacter(data);
-          // Ctrl is spent by this insertion. The follow-up insertion event, when the browser
-          // emits one because this `beforeinput` could not be canceled, is handled above.
+          // Ctrl is spent by this insertion, accelerator or not.
           syncCtrl(false);
+          if (!mapped) {
+            // Unsupported text is not swallowed by anyone: it reaches xterm, which sends it once.
+            // No debt is created, because nothing of ours was emitted for a tail to follow.
+            owedInput = "";
+            return;
+          }
+          // A debt exists only to swallow the follow-up of a non-cancelable insertion whose
+          // mapped byte we already sent. Canceling the beforeinput cancels its `input` too.
           owedInput = e.type === "beforeinput" && !(e as InputEvent).cancelable ? data : "";
-          if (!mapped) return;
-          // Canceling the beforeinput cancels its `input` too: nothing else will arrive for it.
-          if (e.cancelable) owedInput = "";
           charge(e);
           send(mapped);
           return;

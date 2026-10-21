@@ -261,6 +261,40 @@ async function main() {
       JSON.stringify(afterCancel),
     );
 
+    // SYNTHETIC BOUNDARY: a non-cancelable beforeinput. Chromium 153 never emits this itself
+    // (measured: every real beforeinput is cancelable), so this check stands in for browsers that
+    // do. Unsupported text must still reach the wire once and leave no debt behind.
+    await clear();
+    await page.getByRole("button", { name: "Ctrl" }).click();
+    const syntheticNonCancelable = async (text) => {
+      await page.evaluate((value) => {
+        const ta = document.querySelector(".xterm-helper-textarea");
+        ta.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: value, bubbles: true, cancelable: false }));
+        ta.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: value, bubbles: true }));
+      }, text);
+      await page.waitForTimeout(200);
+    };
+    await syntheticNonCancelable("ß");
+    await syntheticNonCancelable("ß");
+    const unsupportedNonCancelable = sentTexts(await log());
+    check(
+      "SYNTHETIC non-cancelable unsupported insertion passes through once each, no stale debt",
+      JSON.stringify(unsupportedNonCancelable) === JSON.stringify(["ß", "ß"]) &&
+        (await page.getByRole("button", { name: "Ctrl" }).getAttribute("aria-pressed")) === "false",
+      JSON.stringify(unsupportedNonCancelable),
+    );
+
+    // SYNTHETIC BOUNDARY: the mapped counterpart must send one control byte, not two.
+    await clear();
+    await page.getByRole("button", { name: "Ctrl" }).click();
+    await syntheticNonCancelable("c");
+    const mappedNonCancelable = sentTexts(await log());
+    check(
+      "SYNTHETIC non-cancelable mapped insertion sends U+0003 once",
+      JSON.stringify(mappedNonCancelable) === JSON.stringify(["\u0003"]),
+      JSON.stringify(mappedNonCancelable),
+    );
+
     // A modifier keydown must not spend Ctrl before the character arrives.
     await clear();
     await page.getByRole("button", { name: "Ctrl" }).click();

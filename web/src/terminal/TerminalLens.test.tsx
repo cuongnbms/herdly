@@ -478,6 +478,24 @@ describe("TerminalLens Ctrl at the real text-entry boundary", () => {
     expect(r.last.inputs).toEqual(["\x03", "c"]);
   });
 
+  it("passes an unsupported non-cancelable insertion through once instead of owing it", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    // Synthetic but valid: a non-cancelable beforeinput cannot be prevented. Chromium never
+    // emits this path itself (measured), so it stands in for any browser that does.
+    await nonCancelableInsert("ß");
+    // Unsupported text spends Ctrl and reaches the wire once, unchanged.
+    expect(r.last.inputs).toEqual(["ß"]);
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
+    // No stale debt survives it: the same character again must reach the wire, not be swallowed.
+    await nonCancelableInsert("ß");
+    expect(r.last.inputs).toEqual(["ß", "ß"]);
+    // ...and an ordinary supported character afterwards is still sent.
+    await inputOnly("c");
+    expect(r.last.inputs).toEqual(["ß", "ß", "c"]);
+  });
+
   it("sends once when a non-cancelable beforeinput is followed by its input", async () => {
     const r = await mounted();
     await act(async () => { r.last.attach(); });
