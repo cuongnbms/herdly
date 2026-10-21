@@ -289,4 +289,5 @@ button:disabled { opacity: 0.45; cursor: default; }
   z-index: 20;
   padding-top: calc(env(safe-area-inset-top) + 6px);
   font-size: 13px;
+  background: color-mix(in srgb, var(--amber) 16%, var(--surface-0));
 }
