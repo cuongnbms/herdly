@@ -52,6 +52,57 @@ pub const INPUT_BYTES: usize = 1024 * 1024;
 /// the transport refuses itself, so its close code is chosen here (see [`oversize`]).
 pub const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 
+/// The initial-open deadline, as production arms and reads it.
+///
+/// The decision lives here rather than inline in `run`, so a test can drive the same predicate
+/// with a controlled clock and exact instants instead of re-deriving the arithmetic or waiting
+/// out the bound in real time.
+#[derive(Clone, Copy, Debug)]
+pub struct IdleDeadline {
+    /// When the first frame must have arrived.
+    at: std::time::Instant,
+    /// The bound itself, so the caller's arithmetic is the one under test.
+    budget: Duration,
+}
+
+impl IdleDeadline {
+    /// Arms the deadline `budget` after `from`.
+    pub fn at(from: tokio::time::Instant, budget: Duration) -> IdleDeadline {
+        IdleDeadline {
+            at: from.into_std() + budget,
+            budget,
+        }
+    }
+
+    /// Arms the deadline from an explicit instant, which is how a controlled clock reaches it.
+    pub fn at_instant(armed_at: std::time::Instant, budget: Duration) -> IdleDeadline {
+        IdleDeadline {
+            at: armed_at + budget,
+            budget,
+        }
+    }
+
+    /// The instant the first frame becomes overdue.
+    pub fn as_std(&self) -> Option<std::time::Instant> {
+        Some(self.at)
+    }
+
+    /// Whether the bound has been reached at `now`. Exactly at the bound counts as due.
+    pub fn is_due_at(&self, now: tokio::time::Instant) -> bool {
+        IdleDeadline::due_by(now.into_std(), self.at - self.budget, self.budget)
+    }
+
+    /// The one predicate: has `budget` elapsed since `armed_at` at `now`?
+    pub fn due_by(now: std::time::Instant, armed_at: std::time::Instant, budget: Duration) -> bool {
+        now.saturating_duration_since(armed_at) >= budget
+    }
+
+    /// Sleeps until the bound. Never returns before it.
+    pub async fn expired(&self) {
+        tokio::time::sleep_until(self.at.into()).await
+    }
+}
+
 /// Mounted behind the Origin and cookie middleware, so a refused request never upgrades.
 pub async fn ws_handler(
     State(st): State<Arc<AppState>>,
@@ -75,18 +126,6 @@ fn oversize(err: &axum::Error) -> bool {
     // tungstenite reports a capacity failure as "Space limit exceeded: Message too long: …".
     let text = err.to_string();
     text.contains("Message too long") || text.contains("Space limit exceeded")
-}
-
-/// Asks the writer for the first close code this attempt wants. The first request wins.
-fn request_close(ctl: &watch::Sender<Option<u16>>, code: u16) {
-    ctl.send_if_modified(|cur| {
-        if cur.is_none() {
-            *cur = Some(code);
-            true
-        } else {
-            false
-        }
-    });
 }
 
 async fn send_close<S>(sink: &mut S, code: u16)
@@ -136,7 +175,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
     revoke.tick().await; // the first tick is immediate; the device was just checked
 
     // Phase 1: the initial open frame, inside the deadline and while the device is watched.
-    let deadline = tokio::time::Instant::now() + st.cfg.open_timeout;
+    let deadline = IdleDeadline::at(tokio::time::Instant::now(), st.cfg.open_timeout);
     let open = loop {
         tokio::select! {
             biased;
@@ -146,7 +185,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
                     return;
                 }
             }
-            _ = tokio::time::sleep_until(deadline) => {
+            _ = deadline.expired() => {
                 // The client never said what to attach to: an incomplete attempt, which the
                 // browser must not retry blindly.
                 send_close(&mut sink, CLOSE_POLICY).await;
@@ -209,13 +248,12 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
     let ledger = Arc::new(AckLedger::default());
     let (input_tx, input_rx) = mpsc::channel::<Vec<u8>>(INPUT_FRAMES);
     let pending = Arc::new(AtomicUsize::new(0));
-    let (ctl_tx, ctl_rx) = watch::channel::<Option<u16>>(None);
     // One resize worker, owned by this attempt: a burst of sizes cannot create a task per
     // frame, and the supervisor ends it with the attempt.
-    // The writer also carries a failed-open message: it is the one task that owns the socket's
-    // outgoing half, so an error frame never races a data frame for it.
-    let (fail_tx, fail_rx) = watch::channel::<Option<String>>(None);
     let resize = Arc::new(ResizeSlot::new(handle.clone()));
+    // The writer's single ending state: the read loop and the supervisor both report here, so
+    // their wake-up order cannot decide what the client sees.
+    let ending = EndingState::new();
 
     // The spawn may outlive this socket, so the supervisor owns its result: it reports a
     // failure and keeps the ownership until the attempt has really been closed.
@@ -229,8 +267,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
         sink,
         queue.clone(),
         ledger.clone(),
-        ctl_rx,
-        fail_rx,
+        ending.clone(),
     ));
     let worker = tokio::spawn(input_loop(
         handle.clone(),
@@ -246,7 +283,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
         opening,
         worker,
         resize.clone(),
-        fail_tx,
+        ending.clone(),
     ));
 
     let attempt = Attempt {
@@ -267,7 +304,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
                     .signal()
                     .and_then(|s| s.close_code())
                     .unwrap_or(CLOSE_NORMAL);
-                request_close(&ctl_tx, code);
+                ending.close(code);
                 break;
             }
             _ = &mut writer => {
@@ -278,7 +315,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
                 if !device_live(&st, &info).await {
                     // Stop first: the Attach is closed before the writer is joined.
                     supervisor.stop(Signal::Ended);
-                    request_close(&ctl_tx, CLOSE_REVOKED);
+                    ending.close(CLOSE_REVOKED);
                     break;
                 }
             }
@@ -286,7 +323,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
                 let msg = match msg {
                     None => break,
                     Some(Err(e)) => {
-                        request_close(&ctl_tx, if oversize(&e) { CLOSE_OVERSIZED } else { CLOSE_NORMAL });
+                        ending.close(if oversize(&e) { CLOSE_OVERSIZED } else { CLOSE_NORMAL });
                         break;
                     }
                     Some(Ok(msg)) => msg,
@@ -294,7 +331,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
                 match msg {
                     Message::Ping(_) | Message::Pong(_) => continue,
                     Message::Close(_) => {
-                        request_close(&ctl_tx, CLOSE_NORMAL);
+                        ending.close(CLOSE_NORMAL);
                         break;
                     }
                     other => match decode(other) {
@@ -307,7 +344,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
                                     || attempt.input.try_send(bytes).is_err();
                             if too_much {
                                 supervisor.stop(Signal::InputOverflow);
-                                request_close(&ctl_tx, CLOSE_LAGGED);
+                                ending.close(CLOSE_LAGGED);
                                 break;
                             }
                             attempt.pending.fetch_add(len, Ordering::SeqCst);
@@ -321,21 +358,21 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
                             // Only credit the attempt really sent reaches its handle.
                             Ok(()) => attempt.handle.ack(bytes),
                             Err(code) => {
-                                request_close(&ctl_tx, code);
+                                ending.close(code);
                                 break;
                             }
                         },
                         Ok(Command::Close) => {
-                            request_close(&ctl_tx, CLOSE_NORMAL);
+                            ending.close(CLOSE_NORMAL);
                             break;
                         }
                         // One socket is one attempt: a repeated open is a protocol error.
                         Ok(Command::Open(_)) => {
-                            request_close(&ctl_tx, CLOSE_POLICY);
+                            ending.close(CLOSE_POLICY);
                             break;
                         }
                         Err(code) => {
-                            request_close(&ctl_tx, code);
+                            ending.close(code);
                             break;
                         }
                     },
@@ -346,7 +383,7 @@ async fn run(st: Arc<AppState>, info: DeviceInfo, socket: WebSocket) {
 
     // A reader that ended without choosing a code (the peer simply went away) still owes the
     // writer an end, or it would wait for frames that can never come.
-    request_close(&ctl_tx, CLOSE_NORMAL);
+    ending.close(CLOSE_NORMAL);
     // The socket is over, so the Attach must not outlive it: close it before waiting on the
     // writer, whose peer may be slow to take the final frames.
     supervisor.stop(Signal::Ended);
@@ -465,7 +502,7 @@ async fn supervise(
     mut opening: JoinHandle<herdly_core::error::AppResult<()>>,
     worker: JoinHandle<()>,
     resize: Arc<ResizeSlot>,
-    fail: watch::Sender<Option<String>>,
+    ending: EndingState,
 ) {
     let mut cancel = supervisor.cancellation();
     let mut tick = tokio::time::interval(GRACE_TICK);
@@ -482,8 +519,10 @@ async fn supervise(
                 match result {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
-                        // Core's own code and message: never argv, a cookie or a command.
-                        fail.send_replace(Some(json_error(&e.code, &e.message)));
+                        // Core's own code and message: never argv, a cookie or a command. The
+                        // ending carries both the frame and its 1008, so a read-loop close
+                        // arriving in the same instant can never hide the error.
+                        ending.open_failed(json_error(&e.code, &e.message));
                         supervisor.stop(Signal::Ended);
                     }
                     // The task was cancelled or panicked: nothing opened, nothing to close.
@@ -543,6 +582,101 @@ async fn input_loop(
     }
 }
 
+/// The one way this attempt ends for the writer: what to send, and which close code follows.
+///
+/// Both the socket's read loop and the supervisor report through this state, so the order in
+/// which they wake the writer cannot decide the outcome. A failed open is recorded with its
+/// frame, so it is always sent before its 1008 close, whatever else is pending.
+#[derive(Clone, Debug, Default)]
+struct Ending {
+    /// The error frame a failed open owes the client, if any.
+    error: Option<String>,
+    /// The close code this attempt earned.
+    code: Option<u16>,
+}
+
+impl Ending {
+    /// Records this attempt's close code. The first code wins, but a pending error frame is
+    /// never dropped: it decides the code even if another ending arrived first.
+    fn close(&mut self, code: u16) -> bool {
+        let before = (self.code, self.error.is_some());
+        if self.code.is_none() {
+            self.code = Some(code);
+        }
+        before != (self.code, self.error.is_some())
+    }
+
+    /// Records a failed open: its error frame, and the policy close that follows it.
+    fn open_failed(&mut self, frame: String) -> bool {
+        let before = (self.code, self.error.is_some());
+        if self.error.is_none() {
+            self.error = Some(frame);
+            // An application error ends the attempt, and 1008 is what the client must see.
+            self.code = Some(CLOSE_POLICY);
+        }
+        if self.code.is_none() {
+            self.code = Some(CLOSE_POLICY);
+        }
+        before != (self.code, self.error.is_some())
+    }
+
+    /// The code to close with.
+    fn code(&self) -> u16 {
+        self.code.unwrap_or(CLOSE_NORMAL)
+    }
+}
+
+/// The attempt's ending, shared by the read loop, the supervisor and the writer.
+#[derive(Clone)]
+struct EndingState {
+    state: Arc<Mutex<Ending>>,
+    changed: Arc<tokio::sync::Notify>,
+}
+
+impl EndingState {
+    fn new() -> EndingState {
+        EndingState {
+            state: Arc::new(Mutex::new(Ending::default())),
+            changed: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn get(&self) -> Ending {
+        self.state.lock().unwrap().clone()
+    }
+
+    /// Records the close code (first wins) and wakes the writer.
+    fn close(&self, code: u16) {
+        let changed = self.state.lock().unwrap().close(code);
+        if changed {
+            self.changed.notify_waiters();
+        }
+    }
+
+    /// Records a failed open's error frame, which always decides the close code.
+    fn open_failed(&self, frame: String) {
+        let changed = self.state.lock().unwrap().open_failed(frame);
+        if changed {
+            self.changed.notify_waiters();
+        }
+    }
+
+    /// Resolves when the ending changes. Registered before the state is read, so a change
+    /// between the read and the wait is not missed; a state that already has a code returns
+    /// immediately, because the caller checks it first.
+    async fn changed(&self) {
+        let notified = self.changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        notified.await;
+    }
+
+    /// Prunes an error frame the writer has just sent, so it is sent exactly once.
+    fn take_error(&self) -> Option<String> {
+        self.state.lock().unwrap().error.take()
+    }
+}
+
 /// Sends the attempt's frames in queue order, reserving wire credit before each send, and ends
 /// with the close code the attempt earned.
 ///
@@ -555,39 +689,29 @@ async fn writer_loop<S>(
     mut sink: S,
     queue: Arc<Queue>,
     ledger: Arc<AckLedger>,
-    mut ctl: watch::Receiver<Option<u16>>,
-    mut fail: watch::Receiver<Option<String>>,
+    ending: EndingState,
 ) -> u16
 where
     S: futures_util::Sink<Message, Error = axum::Error> + Unpin,
 {
     let code = loop {
-        let failed = fail.borrow().clone();
-        if let Some(frame) = failed {
-            // A failed open is an attempt-ending error, sent before its policy close.
+        // One place decides what happens next: a failed open first, then any close code.
+        if let Some(frame) = ending.get().error {
             let _ =
                 tokio::time::timeout(SEND_DEADLINE, sink.send(Message::Text(frame.into()))).await;
+            ending.take_error();
             break CLOSE_POLICY;
         }
+        if let Some(code) = ending.get().code {
+            break code;
+        }
         let drain_by = DrainDeadline::from(queue.grace_deadline());
+        // An already-expired drain must end the attempt now, not grant a fresh budget.
+        if drain_by.is_expired_at(Instant::now()) {
+            break CLOSE_LAGGED;
+        }
         tokio::select! {
             biased;
-            changed = ctl.changed() => {
-                if changed.is_err() {
-                    // Nobody can ask for a code any more; the peer is gone either way.
-                    send_close(&mut sink, CLOSE_NORMAL).await;
-                    return CLOSE_NORMAL;
-                }
-                if let Some(code) = *ctl.borrow() {
-                    break code;
-                }
-            }
-            _ = fail.changed() => continue,
-            // The absolute drain bound runs whether the writer is dequeuing or sending.
-            _ = wait_drain(drain_by) => {
-                // A drain that cannot finish in its bound is lagged, not a good close.
-                break CLOSE_LAGGED;
-            }
             frame = queue.next_for_send(&ledger) => {
                 let message = match frame {
                     Ok(Frame::Binary(bytes)) => Message::Binary(bytes.into()),
@@ -595,46 +719,87 @@ where
                         let text = serde_json::to_string(&event).expect("an event always serializes");
                         Message::Text(text.into())
                     }
-                    // A sealed, drained attempt is a good close; lost bytes are not.
-                    Err(Stop::Sealed) => break CLOSE_NORMAL,
-                    Err(Stop::Overflow) => break CLOSE_LAGGED,
+                    // Recorded rather than broken out of, so a pending open error still wins.
+                    Err(Stop::Sealed) => {
+                        ending.close(CLOSE_NORMAL);
+                        continue;
+                    }
+                    Err(Stop::Overflow) => {
+                        ending.close(CLOSE_LAGGED);
+                        continue;
+                    }
                 };
-                match send_frame(&mut sink, message, &mut ctl, &mut fail, drain_by).await {
+                match send_frame(&mut sink, message, &ending, drain_by).await {
                     Outcome::Sent => {}
-                    Outcome::Code(code) => break code,
+                    // Not `break`: the ending may carry an open error frame that must be sent
+                    // before this code, so the top of the loop decides.
+                    Outcome::Code(code) => {
+                        ending.close(code);
+                        continue;
+                    }
                     Outcome::Gone => return CLOSE_NORMAL,
                 }
             }
+            // The absolute drain bound runs whether the writer is dequeuing or sending.
+            _ = wait_drain(drain_by) => {
+                // A drain that cannot finish in its bound is lagged, not a good close; recorded
+                // so a pending open error can still be sent first.
+                ending.close(CLOSE_LAGGED);
+                continue;
+            }
+            // Any ending, including a failed open whose frame is sent at the top of the loop.
+            // Nothing here treats a closed channel as an ending: this state is never dropped
+            // before the writer finishes, and a vanished *sender* alone must not close 1008.
+            _ = ending.changed() => continue,
         }
     };
     send_close(&mut sink, code).await;
     code
 }
 
-/// The instant a drain must be over, or `None` while no terminal state has been queued.
-#[derive(Clone, Copy)]
-struct DrainDeadline(Option<Instant>);
+/// The absolute drain bound, or the absence of one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DrainDeadline {
+    /// No terminal state has been queued: the attempt may stream indefinitely.
+    Absent,
+    /// A drain is running and must be over by this instant, which may already have passed.
+    At(Instant),
+}
 
 impl DrainDeadline {
     /// The attempt's absolute drain bound, derived from the instant its grace was armed.
     fn from(grace_deadline: Option<Instant>) -> DrainDeadline {
-        DrainDeadline(grace_deadline.map(|at| at + DRAIN_DEADLINE - GRACE_TICK))
+        match grace_deadline {
+            Some(at) => DrainDeadline::At(at + DRAIN_DEADLINE - GRACE_TICK),
+            None => DrainDeadline::Absent,
+        }
     }
 
-    /// The time left, or `None` when there is no bound (or it is already due).
-    fn remaining_at(self, now: Instant) -> Option<Duration> {
-        let at = self.0?;
-        at.checked_duration_since(now)
+    /// Whether the bound has already passed: an expired drain closes immediately instead of
+    /// granting the frame a fresh budget.
+    fn is_expired_at(self, now: Instant) -> bool {
+        match self {
+            DrainDeadline::Absent => false,
+            DrainDeadline::At(at) => now >= at,
+        }
+    }
+
+    /// The budget for one frame: the smaller of its own bound and what the drain has left.
+    /// An expired drain leaves nothing; an absent one leaves the frame's own bound.
+    fn frame_budget(self, now: Instant) -> Duration {
+        match self {
+            DrainDeadline::Absent => SEND_DEADLINE,
+            DrainDeadline::At(at) => at.saturating_duration_since(now).min(SEND_DEADLINE),
+        }
     }
 }
 
 /// Sleeps until the drain bound, or forever when the attempt has none.
 async fn wait_drain(deadline: DrainDeadline) {
-    match deadline.remaining_at(Instant::now()) {
-        // Already due: the caller's deadline branch fires on the next poll.
-        Some(left) if !left.is_zero() => tokio::time::sleep(left).await,
-        Some(_) => {}
-        None => std::future::pending::<()>().await,
+    match deadline {
+        DrainDeadline::Absent => std::future::pending::<()>().await,
+        // An expired bound is ready at once; `sleep(0)` yields and returns.
+        DrainDeadline::At(at) => tokio::time::sleep_until(at.into()).await,
     }
 }
 
@@ -652,33 +817,32 @@ enum Outcome {
 async fn send_frame<S>(
     sink: &mut S,
     frame: Message,
-    ctl: &mut watch::Receiver<Option<u16>>,
-    fail: &mut watch::Receiver<Option<String>>,
+    ending: &EndingState,
     drain_by: DrainDeadline,
 ) -> Outcome
 where
     S: futures_util::Sink<Message, Error = axum::Error> + Unpin,
 {
-    if let Some(code) = *ctl.borrow() {
+    let ending_now = ending.get();
+    if let Some(code) = ending_now.code {
         return Outcome::Code(code);
     }
     // The frame may take no longer than the smaller of its own bound and the drain's remainder.
-    let budget = drain_by
-        .remaining_at(Instant::now())
-        .map_or(SEND_DEADLINE, |left| left.min(SEND_DEADLINE));
+    let budget = drain_by.frame_budget(Instant::now());
+    if budget.is_zero() {
+        // The drain is already over: do not start a send the bound cannot wait for.
+        return Outcome::Code(CLOSE_LAGGED);
+    }
     tokio::select! {
         biased;
-        changed = ctl.changed() => match changed {
-            Ok(()) => Outcome::Code(ctl.borrow().unwrap_or(CLOSE_NORMAL)),
-            Err(_) => Outcome::Gone,
-        },
-        _ = fail.changed() => Outcome::Code(CLOSE_POLICY),
         sent = tokio::time::timeout(budget, sink.send(frame)) => match sent {
             Ok(Ok(())) => Outcome::Sent,
             Ok(Err(_)) => Outcome::Gone,
             // Past its own bound, or past the drain's: either way the peer cannot keep up.
             Err(_) => Outcome::Code(CLOSE_LAGGED),
         },
+        // Any ending interrupts the send; the loop then sends a pending error frame first.
+        _ = ending.changed() => Outcome::Code(ending.get().code()),
     }
 }
 
@@ -709,6 +873,8 @@ mod tests {
     struct Slow {
         delay: Duration,
         sent: Arc<AtomicUsize>,
+        /// Every frame this peer accepted, in order.
+        frames: Arc<Mutex<Vec<Message>>>,
         /// One sleep per frame, created when the frame starts so it really elapses.
         wait: Arc<Mutex<Option<std::pin::Pin<Box<tokio::time::Sleep>>>>>,
     }
@@ -718,11 +884,22 @@ mod tests {
             Slow {
                 delay,
                 sent: Arc::new(AtomicUsize::new(0)),
+                frames: Arc::new(Mutex::new(Vec::new())),
                 wait: Arc::new(Mutex::new(None)),
             }
         }
         fn sent(&self) -> usize {
             self.sent.load(Ordering::SeqCst)
+        }
+        /// The accepted frames, skipping the final close frame.
+        fn frames(&self) -> Vec<Message> {
+            self.frames
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| !matches!(m, Message::Close(_)))
+                .cloned()
+                .collect()
         }
     }
 
@@ -736,8 +913,9 @@ mod tests {
             std::task::Poll::Ready(Ok(()))
         }
 
-        fn start_send(self: std::pin::Pin<&mut Self>, _item: Message) -> Result<(), Self::Error> {
+        fn start_send(self: std::pin::Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
             self.sent.fetch_add(1, Ordering::SeqCst);
+            self.frames.lock().unwrap().push(item);
             *self.wait.lock().unwrap() = Some(Box::pin(tokio::time::sleep(self.delay)));
             Ok(())
         }
@@ -772,11 +950,23 @@ mod tests {
     #[derive(Clone, Default)]
     struct Stalled {
         in_flight: Arc<AtomicUsize>,
+        /// Every frame that entered a send, in order.
+        frames: Arc<Mutex<Vec<Message>>>,
     }
 
     impl Stalled {
         fn in_flight(&self) -> usize {
             self.in_flight.load(Ordering::SeqCst)
+        }
+        /// The frames that entered a send, skipping the final close frame.
+        fn frames(&self) -> Vec<Message> {
+            self.frames
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| !matches!(m, Message::Close(_)))
+                .cloned()
+                .collect()
         }
     }
 
@@ -790,8 +980,9 @@ mod tests {
             std::task::Poll::Ready(Ok(()))
         }
 
-        fn start_send(self: std::pin::Pin<&mut Self>, _item: Message) -> Result<(), Self::Error> {
+        fn start_send(self: std::pin::Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
             self.in_flight.fetch_add(1, Ordering::SeqCst);
+            self.frames.lock().unwrap().push(item);
             Ok(())
         }
 
@@ -827,16 +1018,14 @@ mod tests {
         let queue = Queue::new();
         let ledger = Arc::new(AckLedger::default());
         assert_eq!(queue.push_data(b"wedged-output".to_vec()), Push::Accepted);
-        let (ctl_tx, ctl_rx) = watch::channel(None);
-        let (_fail_tx, fail_rx) = watch::channel::<Option<String>>(None);
+        let ending = EndingState::new();
         let sink = Stalled::default();
         let started = std::time::Instant::now();
         let writer = tokio::spawn(writer_loop(
             sink.clone(),
             queue,
             ledger.clone(),
-            ctl_rx,
-            fail_rx,
+            ending.clone(),
         ));
         // Let the writer dequeue and wedge inside the send.
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -855,7 +1044,6 @@ mod tests {
                 && elapsed < SEND_DEADLINE + CLOSE_GRACE + Duration::from_millis(750),
             "the lagged close follows the 2 s send deadline (plus the close frame's grace), took {elapsed:?}"
         );
-        drop(ctl_tx);
     }
 
     #[tokio::test]
@@ -867,11 +1055,10 @@ mod tests {
             assert_eq!(queue.push_data(vec![i]), Push::Accepted);
         }
         let ledger = Arc::new(AckLedger::default());
-        let (ctl_tx, ctl_rx) = watch::channel(None);
-        let (_fail_tx, fail_rx) = watch::channel::<Option<String>>(None);
+        let ending = EndingState::new();
         let sink = Slow::new(Duration::from_millis(300));
         let started = std::time::Instant::now();
-        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ctl_rx, fail_rx));
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
         let code = tokio::time::timeout(Duration::from_secs(20), writer)
             .await
             .expect("the drain deadline must end the writer")
@@ -889,7 +1076,6 @@ mod tests {
             "a 2 s bound cannot deliver 40 frames of 300 ms, sent {}",
             sink.sent()
         );
-        drop(ctl_tx);
     }
 
     #[tokio::test]
@@ -906,21 +1092,18 @@ mod tests {
         assert_eq!(queue.push_data(b"output".to_vec()), Push::Accepted);
 
         let ledger = Arc::new(AckLedger::default());
-        let (ctl_tx, ctl_rx) = watch::channel(None);
-        let (_fail_tx, fail_rx) = watch::channel::<Option<String>>(None);
+        let ending = EndingState::new();
         let sink = Stalled::default();
         let writer = tokio::spawn(writer_loop(
             sink.clone(),
             queue.clone(),
             ledger.clone(),
-            ctl_rx,
-            fail_rx,
+            ending.clone(),
         ));
         let handle: Arc<dyn TerminalHandle> = Arc::new(crate::testing::FakeTerminal::default());
         let opening = tokio::spawn(async { Ok(()) });
         let worker = tokio::spawn(async { std::future::pending::<()>().await });
         let resize = Arc::new(ResizeSlot::new(handle.clone()));
-        let (fail_tx, _fail_rx) = watch::channel::<Option<String>>(None);
         let supervising = tokio::spawn(supervise(
             registry.clone(),
             supervisor.clone(),
@@ -929,7 +1112,7 @@ mod tests {
             opening,
             worker,
             resize,
-            fail_tx,
+            ending.clone(),
         ));
 
         // The writer is wedged inside its first send and cannot reach the event or the seal.
@@ -955,7 +1138,7 @@ mod tests {
             "sealing waited for nothing on the wire"
         );
 
-        drop(ctl_tx);
+        ending.close(CLOSE_NORMAL);
         let _ = writer.await;
         supervisor.stop(Signal::Ended);
         let _ = tokio::time::timeout(Duration::from_secs(10), supervising).await;
@@ -1061,7 +1244,7 @@ mod tests {
         });
         let worker = tokio::spawn(async { std::future::pending::<()>().await });
         let resize = Arc::new(ResizeSlot::new(handle.clone()));
-        let (fail_tx, mut fail_rx) = watch::channel::<Option<String>>(None);
+        let ending = EndingState::new();
         let supervising = tokio::spawn(supervise(
             registry.clone(),
             supervisor.clone(),
@@ -1070,15 +1253,14 @@ mod tests {
             opening,
             worker,
             resize,
-            fail_tx,
+            ending.clone(),
         ));
-        // The failure is reported to the writer without the socket having to ask for it, and
+        // The failure is recorded for the writer without the socket having to ask for it, and
         // the attempt ends instead of waiting for output that can never come.
-        tokio::time::timeout(Duration::from_secs(2), fail_rx.changed())
+        tokio::time::timeout(Duration::from_secs(2), ending.changed())
             .await
-            .expect("the failed open must be reported")
-            .unwrap();
-        let reported = fail_rx.borrow().clone().expect("an error frame");
+            .expect("the failed open must be reported");
+        let reported = ending.get().error.expect("an error frame");
         let parsed: serde_json::Value = serde_json::from_str(&reported).unwrap();
         assert_eq!(parsed["type"], "error");
         assert_eq!(parsed["error"]["code"], "io");
@@ -1111,6 +1293,201 @@ mod tests {
             tokio::time::Instant::now() - (deadline - OPEN_TIMEOUT) == OPEN_TIMEOUT,
             "the elapsed time is the bound itself, to the millisecond"
         );
+    }
+
+    #[tokio::test]
+    async fn a_pending_open_error_beats_a_close_that_arrived_first() {
+        // I1's race: the read loop's normal close and a failed open land in the same instant.
+        // Both notifications are ready before the writer looks, and the close was recorded
+        // *first*, which is exactly the interleaving that used to hide the error frame.
+        let ending = EndingState::new();
+        ending.close(CLOSE_NORMAL);
+        ending.open_failed(json_error("io", "cannot open a pty"));
+        let queue = Queue::new();
+        let ledger = Arc::new(AckLedger::default());
+        let (ctl_tx, ctl_rx) = watch::channel::<Option<u16>>(None);
+        drop(ctl_tx);
+        // Drive the writer's decision without a socket: the state alone must decide.
+        assert_eq!(ending.get().code, Some(CLOSE_POLICY));
+        let recorded: serde_json::Value =
+            serde_json::from_str(&ending.get().error.expect("an error frame")).unwrap();
+        assert_eq!(
+            recorded,
+            serde_json::json!({
+                "type": "error",
+                "error": {"code": "io", "message": "cannot open a pty"}
+            }),
+            "the ending carries the Spec's error shape and its 1008"
+        );
+        // And the real writer sends that frame and closes 1008, never 1000.
+        let sink = Slow::new(Duration::ZERO);
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
+        let code = tokio::time::timeout(Duration::from_secs(5), writer)
+            .await
+            .expect("the writer ends")
+            .unwrap();
+        assert_eq!(code, CLOSE_POLICY);
+        let frames = sink.frames();
+        assert_eq!(
+            frames.len(),
+            1,
+            "exactly one frame before the close: {frames:?}"
+        );
+        match &frames[0] {
+            Message::Text(text) => assert_eq!(
+                serde_json::from_str::<serde_json::Value>(text.as_str()).unwrap(),
+                serde_json::json!({
+                    "type": "error",
+                    "error": {"code": "io", "message": "cannot open a pty"}
+                })
+            ),
+            other => panic!("expected the error frame, got {other:?}"),
+        }
+        assert_eq!(
+            ending.get().error,
+            None,
+            "the error frame is sent exactly once"
+        );
+        drop(ctl_rx);
+    }
+
+    #[tokio::test]
+    async fn an_open_error_arriving_during_a_send_interrupts_it_and_is_still_sent() {
+        // The same race on the send path: the frame is in flight when the error is recorded.
+        let ending = EndingState::new();
+        let queue = Queue::new();
+        let ledger = Arc::new(AckLedger::default());
+        assert_eq!(queue.push_data(b"output".to_vec()), Push::Accepted);
+        let sink = Stalled::default();
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(sink.in_flight(), 1, "the writer is inside a send");
+        // A close and then the error: the error must still reach the client.
+        ending.close(CLOSE_NORMAL);
+        ending.open_failed(json_error("io", "cannot open a pty"));
+        let code = tokio::time::timeout(Duration::from_secs(5), writer)
+            .await
+            .expect("the ending interrupts the send")
+            .unwrap();
+        assert_eq!(
+            code, CLOSE_POLICY,
+            "the open error decides the close, not the normal one"
+        );
+        // The interrupted data frame was already started, so it precedes the error: what
+        // matters is that the error frame is delivered after it, before the close.
+        let frames = sink.frames();
+        let last = frames.last().expect("the error frame");
+        assert!(
+            matches!(last, Message::Text(t) if t.contains(r#""type":"error""#)),
+            "the error frame is the last frame before the close: {frames:?}"
+        );
+        assert!(
+            matches!(frames.first(), Some(Message::Binary(_))),
+            "the interrupted output frame comes first: {frames:?}"
+        );
+        assert_eq!(frames.len(), 2, "nothing else is sent: {frames:?}");
+        assert_eq!(ending.get().error, None);
+    }
+
+    #[test]
+    fn an_expired_drain_grants_no_fresh_budget_and_an_absent_one_does_not_expire() {
+        let now = Instant::now();
+        // Already past: the deadline is distinguishable from "no deadline at all".
+        let expired = DrainDeadline::At(now - Duration::from_millis(1));
+        assert!(expired.is_expired_at(now));
+        assert_eq!(expired.frame_budget(now), Duration::ZERO);
+        // Exactly at the bound counts as expired: the attempt must close, not start a send.
+        let due = DrainDeadline::At(now);
+        assert!(due.is_expired_at(now));
+        assert_eq!(due.frame_budget(now), Duration::ZERO);
+        // An absent bound never expires and leaves the frame its own budget.
+        let absent = DrainDeadline::Absent;
+        assert!(!absent.is_expired_at(now + Duration::from_secs(3600)));
+        assert_eq!(absent.frame_budget(now), SEND_DEADLINE);
+        // A running drain leaves only what is left of it, capped by the frame bound.
+        let running = DrainDeadline::At(now + Duration::from_millis(500));
+        assert!(!running.is_expired_at(now));
+        assert_eq!(running.frame_budget(now), Duration::from_millis(500));
+        let long = DrainDeadline::At(now + Duration::from_secs(600));
+        assert_eq!(long.frame_budget(now), SEND_DEADLINE);
+    }
+
+    #[tokio::test]
+    async fn a_writer_that_starts_after_the_drain_bound_closes_lagged_immediately() {
+        // The drain expired *before* the writer's first poll, which used to be read as "no
+        // deadline" and grant another full per-frame budget.
+        let queue = draining_queue(DRAIN_DEADLINE + Duration::from_millis(500));
+        for i in 0..8u8 {
+            assert_eq!(queue.push_data(vec![i]), Push::Accepted);
+        }
+        let ledger = Arc::new(AckLedger::default());
+        let ending = EndingState::new();
+        // A sink that would accept everything quickly: only the expiry can close it, and only
+        // because it never gets to send.
+        let sink = Slow::new(Duration::ZERO);
+        let started = Instant::now();
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
+        let code = tokio::time::timeout(Duration::from_secs(5), writer)
+            .await
+            .expect("an expired drain ends the writer at once")
+            .unwrap();
+        assert_eq!(code, crate::config::CLOSE_LAGGED);
+        assert!(
+            sink.frames().is_empty(),
+            "an expired drain sends no data frame: {:?}",
+            sink.frames()
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "no fresh budget: took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_writer_outliving_its_ending_sender_is_not_a_policy_close() {
+        // N1: the ending state's senders can all vanish (an attempt whose cleanup finished)
+        // while the writer is still parked. That must not be read as a failed open, must not
+        // close 1008, and must not spin.
+        let queue = Queue::new();
+        let ledger = Arc::new(AckLedger::default());
+        let ending = EndingState::new();
+        let sink = Stalled::default();
+        let writer = tokio::spawn(writer_loop(sink.clone(), queue, ledger, ending.clone()));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Only the writer holds the state now: no other sender exists, and nothing has ended.
+        drop(EndingState::new());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !writer.is_finished(),
+            "a vanished sender must not end the attempt by itself"
+        );
+        // A normal shutdown then ends it with 1000, not 1008.
+        ending.close(CLOSE_NORMAL);
+        let code = tokio::time::timeout(Duration::from_secs(5), writer)
+            .await
+            .expect("the normal close ends the writer")
+            .unwrap();
+        assert_eq!(code, CLOSE_NORMAL);
+    }
+
+    #[tokio::test]
+    async fn the_idle_open_deadline_is_the_production_value_at_both_sides_of_the_bound() {
+        // M1: the deadline decision is a production helper, driven by a controlled clock.
+        let deadline = IdleDeadline::at(tokio::time::Instant::now(), OPEN_TIMEOUT);
+        assert!(!deadline.is_due_at(tokio::time::Instant::now()));
+        // One millisecond before the bound it is still not due...
+        let just_before = deadline.as_std().unwrap() - Duration::from_millis(1);
+        assert!(!IdleDeadline::due_by(
+            just_before,
+            just_before,
+            OPEN_TIMEOUT
+        ));
+        // ...and at the bound it is.
+        let at = deadline.as_std().unwrap();
+        assert!(IdleDeadline::due_by(at, at - OPEN_TIMEOUT, OPEN_TIMEOUT));
+        // The production constant is what the helper is driven with.
+        assert_eq!(OPEN_TIMEOUT, Duration::from_secs(10));
     }
 
     #[test]

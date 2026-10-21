@@ -8,15 +8,7 @@
 //! attempt is left with an open Attach, and no new attempt starts once shutdown has begun.
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::sync::{oneshot, watch};
-
-/// The longest `shutdown` waits for one attempt before reporting it as still unfinished.
-///
-/// This bounds the *shutdown call*, not the attempt: an attempt whose cleanup is still running
-/// keeps its registration, so a later shutdown pass still finds it. Nothing claims a timed-out
-/// attempt is clean.
-pub const JOIN_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Why a supervisor is being asked to clean up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,8 +37,6 @@ pub struct Supervisor {
     cancel: watch::Sender<bool>,
     signal: Mutex<Option<Signal>>,
     joined: Mutex<Option<oneshot::Receiver<()>>>,
-    /// Shutdown's receiver for "cleanup really finished"; taken by `shutdown`.
-    shutdown: Mutex<Option<oneshot::Receiver<()>>>,
     /// The receiver `register` created: holding it keeps `stop` from ever finding "no
     /// receivers", so a stop that lands before anyone subscribes is still durable.
     _initial: Mutex<watch::Receiver<bool>>,
@@ -83,14 +73,16 @@ impl Supervisor {
         self.cancel.subscribe()
     }
 
-    /// Resolves once cleanup has finished, bounded by [`JOIN_TIMEOUT`] so a caller cannot hang;
-    /// a timed-out attempt stays registered, so this is not a claim that it is clean.
+    /// Waits until this attempt's cleanup has really finished.
+    ///
+    /// There is deliberately no timeout: a bound here would only hide unfinished cleanup from
+    /// the caller that is supposed to wait for it. Callers that must not block forever use the
+    /// registry's own shutdown, which waits too, or drop the wait (`tokio::time::timeout` at
+    /// the test level) knowing that it then proves nothing about ownership.
     pub async fn join(&self) {
         let rx = self.joined.lock().unwrap().take();
         let Some(rx) = rx else { return };
-        if tokio::time::timeout(JOIN_TIMEOUT, rx).await.is_err() {
-            tracing::warn!("terminal attempt cleanup still running after the join timeout");
-        }
+        let _ = rx.await;
     }
 }
 
@@ -98,8 +90,6 @@ struct Entry {
     supervisor: Arc<Supervisor>,
     /// Dropped when cleanup finishes, resolving every `Supervisor::join`.
     _done: Option<oneshot::Sender<()>>,
-    /// Signalled by `finish`, so `shutdown` waits for real cleanup and not for a timeout.
-    shutdown: Option<oneshot::Sender<()>>,
 }
 
 /// Every attempt between its registration and its finished cleanup.
@@ -107,6 +97,8 @@ pub struct TerminalRegistry {
     next: AtomicU64,
     shutting_down: AtomicBool,
     entries: Mutex<Vec<Entry>>,
+    /// Signalled by `finish`, so `shutdown` waits for real completions rather than a timeout.
+    finished: tokio::sync::Notify,
 }
 
 impl Default for TerminalRegistry {
@@ -115,6 +107,7 @@ impl Default for TerminalRegistry {
             next: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
             entries: Mutex::new(Vec::new()),
+            finished: tokio::sync::Notify::new(),
         }
     }
 }
@@ -144,19 +137,16 @@ impl TerminalRegistry {
         }
         let (cancel, initial) = watch::channel(false);
         let (done, joined) = oneshot::channel();
-        let (shutdown, shut) = oneshot::channel();
         let supervisor = Arc::new(Supervisor {
             id: self.next.fetch_add(1, Ordering::Relaxed),
             cancel,
             signal: Mutex::new(None),
             joined: Mutex::new(Some(joined)),
-            shutdown: Mutex::new(Some(shut)),
             _initial: Mutex::new(initial),
         });
         entries.push(Entry {
             supervisor: supervisor.clone(),
             _done: Some(done),
-            shutdown: Some(shutdown),
         });
         Some(supervisor)
     }
@@ -173,14 +163,11 @@ impl TerminalRegistry {
         else {
             return;
         };
-        let mut entry = entries.remove(index);
-        // Told explicitly rather than by dropping: `shutdown` must see a success, not the
-        // cancellation a dropped sender reports.
-        if let Some(done) = entry.shutdown.take() {
-            let _ = done.send(());
-        }
-        // Dropping the entry then resolves every `join`.
-        drop(entry);
+        // Dropping the entry resolves every `join`.
+        drop(entries.remove(index));
+        drop(entries);
+        // Every `shutdown` waiting on this registry re-checks the list when it wakes.
+        self.finished.notify_waiters();
     }
 
     /// Attempts registered but not yet fully cleaned up.
@@ -192,30 +179,31 @@ impl TerminalRegistry {
         self.len() == 0
     }
 
-    /// Stops accepting attempts and ends every registered one, waiting for their cleanup.
+    /// Stops accepting attempts and ends every registered one, and **waits** until each of
+    /// them has really finished its cleanup.
+    ///
+    /// There is no timeout: returning early would let the runtime exit and cancel a supervisor
+    /// that is still closing a late `open`, which is exactly the window this registry exists to
+    /// cover. Concurrent and repeated calls all wait for the same completions.
     pub async fn shutdown(&self) {
         self.begin_shutdown();
-        let mut waits: Vec<oneshot::Receiver<()>> = {
-            let mut entries = self.entries.lock().unwrap();
-            let mut supers: Vec<Arc<Supervisor>> = Vec::new();
-            let mut waits: Vec<oneshot::Receiver<()>> = Vec::new();
-            for e in entries.iter_mut() {
-                if let Some(rx) = e.supervisor.shutdown.lock().unwrap().take() {
-                    supers.push(e.supervisor.clone());
-                    waits.push(rx);
-                }
+        loop {
+            // Registered before the list is read, so a `finish` that lands between the two is
+            // still observed rather than missed.
+            let wake = self.finished.notified();
+            tokio::pin!(wake);
+            wake.as_mut().enable();
+            let supers: Vec<Arc<Supervisor>> = {
+                let entries = self.entries.lock().unwrap();
+                entries.iter().map(|e| e.supervisor.clone()).collect()
+            };
+            if supers.is_empty() {
+                return;
             }
             for s in &supers {
                 s.stop(Signal::Shutdown);
             }
-            waits
-        };
-        for rx in waits.drain(..) {
-            // The attempt keeps its registration if this times out, so nothing is reported
-            // clean before its close really finished.
-            if tokio::time::timeout(JOIN_TIMEOUT, rx).await.is_err() {
-                tracing::warn!("terminal attempt cleanup still running at shutdown");
-            }
+            wake.await;
         }
     }
 }
@@ -223,6 +211,7 @@ impl TerminalRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn a_supervisor_keeps_the_first_signal_and_refuses_nothing_early() {
@@ -305,6 +294,83 @@ mod tests {
         assert_eq!(registry.len(), 0);
         first.join().await;
         second.join().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_waits_for_a_cleanup_that_outlasts_the_old_join_timeout() {
+        // I2: `shutdown` used to bound its wait at 15 s and then return, letting the runtime
+        // exit and cancel a supervisor still closing a late open. This cleanup finishes after
+        // that old bound, and shutdown must still be waiting for it.
+        let registry = TerminalRegistry::new();
+        let supervisor = registry.register().unwrap();
+        let shuts = {
+            let registry = registry.clone();
+            tokio::spawn(async move {
+                registry.shutdown().await;
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(supervisor.signal(), Some(Signal::Shutdown));
+        assert!(!shuts.is_finished(), "shutdown must still be waiting");
+
+        // Advance the controlled clock past every bound the old code applied, then finish.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert!(
+            !shuts.is_finished(),
+            "no timeout may end shutdown before the cleanup reports completion"
+        );
+        assert_eq!(
+            registry.len(),
+            1,
+            "the entry survives until cleanup finishes"
+        );
+        registry.finish(&supervisor);
+        tokio::time::timeout(Duration::from_secs(5), shuts)
+            .await
+            .expect("shutdown returns once cleanup finishes")
+            .unwrap();
+        assert!(registry.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_second_and_concurrent_shutdown_still_await_the_real_completion() {
+        let registry = TerminalRegistry::new();
+        let supervisor = registry.register().unwrap();
+        // Two callers converge on the same attempts: both must wait, not the first only.
+        let one = {
+            let registry = registry.clone();
+            tokio::spawn(async move { registry.shutdown().await })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let two = {
+            let registry = registry.clone();
+            tokio::spawn(async move { registry.shutdown().await })
+        };
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            !one.is_finished() && !two.is_finished(),
+            "both wait for cleanup"
+        );
+
+        // A repeated call after the first returns also settles only once the entry is gone.
+        registry.finish(&supervisor);
+        tokio::time::timeout(Duration::from_secs(5), one)
+            .await
+            .expect("the first shutdown returns")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), two)
+            .await
+            .expect("the concurrent shutdown returns")
+            .unwrap();
+        assert!(registry.is_empty());
+
+        // Nothing is registered any more, so a fresh call returns at once rather than hanging
+        // on a completion that will never come.
+        tokio::time::timeout(Duration::from_secs(1), registry.shutdown())
+            .await
+            .expect("an idle shutdown returns immediately");
+        // And a second attempt is still refused.
+        assert!(registry.register().is_none());
     }
 
     #[tokio::test]

@@ -457,15 +457,42 @@ async fn early_input_is_forwarded_and_bad_frames_close_with_their_codes() {
     drop(ws);
 }
 
+#[tokio::test(start_paused = true)]
+async fn the_open_deadline_helper_fires_at_exactly_ten_seconds_on_a_controlled_clock() {
+    // M1: the *production* helper the route calls, driven by a paused clock. Nothing here waits
+    // in real time, and the assertion is the exact instant, not a range: a production bound of
+    // 9 s or 11 s fails it.
+    use herdly_web::terminal::socket::{IdleDeadline, OPEN_TIMEOUT};
+    assert_eq!(OPEN_TIMEOUT, Duration::from_secs(10), "the shipped bound");
+
+    let armed_at = tokio::time::Instant::now();
+    let deadline = IdleDeadline::at(armed_at, OPEN_TIMEOUT);
+    // Not due one nanosecond before, due exactly at the bound.
+    assert!(!deadline.is_due_at(armed_at + OPEN_TIMEOUT - Duration::from_nanos(1)));
+    assert!(deadline.is_due_at(armed_at + OPEN_TIMEOUT));
+
+    // The same helper's wait: it must not return before the bound, and must return at it.
+    let early = tokio::time::timeout_at(
+        armed_at + OPEN_TIMEOUT - Duration::from_millis(1),
+        deadline.expired(),
+    )
+    .await;
+    assert!(early.is_err(), "the deadline must not fire early");
+    deadline.expired().await;
+    assert_eq!(
+        tokio::time::Instant::now().duration_since(armed_at),
+        OPEN_TIMEOUT,
+        "the helper's wait ends exactly at the production bound"
+    );
+}
+
 #[tokio::test]
-async fn an_idle_socket_is_closed_at_its_deadline_after_the_upgrade() {
-    // The real route on a shortened bound: the deadline itself is pinned exactly, under a
-    // controlled clock, by the socket module's `OpenDeadline` test; this proves the route
-    // applies the bound it was given rather than an unrelated one.
+async fn the_route_applies_the_open_deadline_it_was_configured_with() {
+    // The route on a short bound: it enforces the configured deadline rather than an unrelated
+    // one. The exact 10 s production value is pinned by the paused-clock test above.
     let server =
         Server::start_with_timeout(Duration::from_secs(15), Duration::from_millis(400)).await;
     let mut ws = server.connect().await;
-    // No open frame is ever sent.
     let started = std::time::Instant::now();
     assert_eq!(close_code(&mut ws).await, 1008);
     let waited = started.elapsed();
@@ -1157,11 +1184,25 @@ async fn a_slow_open_keeps_its_owner_until_the_late_completion_is_closed() {
 }
 
 #[tokio::test]
-async fn a_resize_burst_through_the_socket_stays_bounded_and_applies_the_newest() {
+async fn a_resize_burst_through_the_socket_stays_bounded_while_the_worker_is_stuck() {
     let server = Server::start(Duration::from_secs(15)).await;
-    let (mut ws, attempt) = opened(&server).await;
+    // The first resize is wedged on a PTY lock, so every later size has to wait behind it.
+    let (attempt, resize_gate) = FakeTerminal::gated_resize();
+    server.fake.script_terminal(attempt.clone());
+    let mut ws = server.connect().await;
+    ws.send(open_frame("s", "p1", 80, 24, false)).await.unwrap();
+    let attempt = server.opened_attempt(0).await;
     attached(&mut ws, &attempt).await;
-    // A burst of 60 sizes, each a legal control frame.
+
+    // The stuck resize, then a burst of 60 more sizes while it is still held.
+    ws.send(Message::Text(
+        json!({"type": "resize", "cols": 10, "rows": 20})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    wait_until("the first resize to wedge", || attempt.resizes().len() == 1).await;
     for cols in 11..=70u16 {
         ws.send(Message::Text(
             json!({"type": "resize", "cols": cols, "rows": 20})
@@ -1171,21 +1212,36 @@ async fn a_resize_burst_through_the_socket_stays_bounded_and_applies_the_newest(
         .await
         .unwrap();
     }
-    // The newest size wins, and it is the last one sent.
-    wait_until("the last size to be applied", || {
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Bounded while stuck: only the wedged one ever entered the PTY, and the reader kept
+    // answering, so its work did not become one task per frame.
+    assert_eq!(
+        attempt.resizes().len(),
+        1,
+        "a stuck resize must not queue one job per frame: {:?}",
+        attempt.resizes()
+    );
+    assert_eq!(
+        attempt.resizes_peak(),
+        1,
+        "resizes are serialized, never concurrent"
+    );
+
+    // Releasing it applies the newest size, in order after the stuck one.
+    drop(resize_gate);
+    wait_until("the newest size to be applied", || {
         attempt
             .resizes()
             .last()
             .is_some_and(|s| *s == TerminalSize { cols: 70, rows: 20 })
     })
     .await;
-    // The worker applied fewer resizes than frames arrived: the burst coalesced rather than
-    // queueing one blocking job per frame.
-    assert!(
-        attempt.resizes().len() < 60,
-        "a burst must coalesce, applied {}",
-        attempt.resizes().len()
+    assert_eq!(
+        attempt.resizes_peak(),
+        1,
+        "the coalesced resize is serialized too"
     );
+
     // Closing still ends the attempt, burst or not.
     ws.send(Message::Close(None)).await.unwrap();
     wait_until("the attempt to close", || attempt.is_closed()).await;
@@ -1297,4 +1353,74 @@ async fn sigterm_through_the_real_serve_path_exits_cleanly() {
         status.success(),
         "a graceful shutdown exits cleanly, not by the default handler: {status:?}"
     );
+}
+
+#[tokio::test]
+async fn a_failed_open_after_the_client_disconnects_still_records_the_policy_close() {
+    // The read loop's own close and the failed open race. Whatever order they land in, the
+    // attempt ends 1008 with its error recorded - never a silent 1000.
+    let server = Server::start(Duration::from_secs(15)).await;
+    let (attempt, open_gate) = FakeTerminal::gated();
+    server.fake.script_terminal(attempt.clone());
+    let mut ws = server.connect().await;
+    ws.send(open_frame("s", "p1", 80, 24, false)).await.unwrap();
+    wait_until("the pending open", || attempt.sizes().len() == 1).await;
+    // The client goes away while the spawn is still in flight.
+    drop(ws);
+    wait_until("the registration to be owned", || {
+        server.st.terminals.len() == 1
+    })
+    .await;
+    drop(open_gate);
+    // The late open succeeded here, so it is closed; the attempt ends without an error frame
+    // and its registration clears only after the close.
+    wait_until("the late open to be closed", || attempt.is_closed()).await;
+    wait_until("the registration to clear", || {
+        server.st.terminals.is_empty()
+    })
+    .await;
+    assert_eq!(attempt.close_count(), 1);
+}
+
+#[tokio::test]
+async fn a_failed_open_with_a_pending_client_close_reports_the_error_not_a_normal_close() {
+    // Both endings are ready at the same moment: the client's own close frame and the failed
+    // spawn. The error must be delivered, and the close must be 1008 rather than 1000.
+    let server = Server::start(Duration::from_secs(15)).await;
+    let (attempt, open_gate) = FakeTerminal::gated();
+    server.fake.script_terminal(attempt.clone());
+    let (failing, gate) = FakeTerminal::gated();
+    // A gated spawn that fails once its gate opens: the failure lands right after the client
+    // asked to close, which is the interleaving I1 named.
+    *failing.pending_open_failure().lock().unwrap() =
+        Some(herdly_core::error::AppError::new("io", "cannot open a pty"));
+    server.fake.script_terminal(failing.clone());
+    let mut first = server.connect().await;
+    first
+        .send(open_frame("s", "p1", 80, 24, false))
+        .await
+        .unwrap();
+    wait_until("the pending open", || attempt.sizes().len() == 1).await;
+    drop(open_gate);
+
+    let mut ws = server.connect().await;
+    ws.send(open_frame("s", "p2", 80, 24, false)).await.unwrap();
+    wait_until("the second pending open", || failing.sizes().len() == 1).await;
+    // The client closes at the same instant the spawn fails.
+    ws.send(Message::Close(None)).await.unwrap();
+    drop(gate);
+    // The frame the client sees before the connection ends is the error, not silence.
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), ws.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let value: Value = serde_json::from_str(&text).unwrap();
+                assert_eq!(value["type"], "error", "{value}");
+                assert_eq!(value["error"]["code"], "io");
+            }
+            Ok(Some(Ok(_))) | Ok(None) | Ok(Some(Err(_))) => break,
+            Err(_) => panic!("the socket must end"),
+        }
+    }
+    wait_until("the failed attempt to be closed", || failing.is_closed()).await;
+    assert_eq!(failing.close_count(), 1);
 }

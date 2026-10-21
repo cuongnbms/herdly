@@ -108,6 +108,12 @@ pub struct FakeTerminal {
     /// When set, every write parks until a test releases it, the way a wedged PTY holds each
     /// write in turn.
     park_writes: Mutex<bool>,
+    /// Resizes currently inside `resize`; a value above one would mean unserialized resizes.
+    resizes_in_flight: AtomicUsize,
+    /// The highest `resizes_in_flight` ever observed, for asserting the worker serializes.
+    resizes_peak: AtomicUsize,
+    /// Held while set, to model a resize stuck on a PTY lock.
+    resize_gate: Mutex<Option<oneshot::Receiver<()>>>,
     /// Writes currently inside `write`: 0 means the input worker is not stuck in one.
     writes_in_flight: AtomicUsize,
     /// The in-flight write count observed at `close`, so a test can show cleanup arrived while
@@ -144,6 +150,17 @@ impl FakeTerminal {
         let terminal = FakeTerminal::default();
         *terminal.park_writes.lock().unwrap() = true;
         Arc::new(terminal)
+    }
+
+    /// A Terminal whose first `resize` blocks until the returned sender is dropped, so a test
+    /// can hold the resize worker while a burst of sizes arrives behind it.
+    pub fn gated_resize() -> (Arc<FakeTerminal>, oneshot::Sender<()>) {
+        let (tx, rx) = oneshot::channel();
+        let terminal = Arc::new(FakeTerminal {
+            resize_gate: Mutex::new(Some(rx)),
+            ..Default::default()
+        });
+        (terminal, tx)
     }
 
     /// A Terminal whose `open` fails with `e`.
@@ -188,6 +205,16 @@ impl FakeTerminal {
     /// How many writes were still inside `write` when `close` ran.
     pub fn closed_with_writes_in_flight(&self) -> usize {
         self.closed_with_writes_in_flight.load(Ordering::SeqCst)
+    }
+    /// The most resizes that were ever inside `resize` at once: 1 means serialized.
+    pub fn resizes_peak(&self) -> usize {
+        self.resizes_peak.load(Ordering::SeqCst)
+    }
+
+    /// The failure this attempt will report when its `open` finishes, so a test can combine a
+    /// gated spawn with a failing one.
+    pub fn pending_open_failure(&self) -> &Mutex<Option<AppError>> {
+        &self.open_fails
     }
 
     /// Delivers output through the real sink, as the PTY reader would.
@@ -251,7 +278,14 @@ impl TerminalHandle for FakeTerminal {
         if self.is_closed() {
             return Err(AppError::new("not_found", "terminal is closed"));
         }
+        let now = self.resizes_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.resizes_peak.fetch_max(now, Ordering::SeqCst);
         self.resizes.lock().unwrap().push(size);
+        let gate = self.resize_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
+        self.resizes_in_flight.fetch_sub(1, Ordering::SeqCst);
         Ok(())
     }
 
