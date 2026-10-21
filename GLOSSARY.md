@@ -162,6 +162,10 @@ _Avoid_: web server, server, mobile app
 A browser that Herdly Web accepted through a one-time pairing link and keeps accepting until it is revoked.
 _Avoid_: client, session (a Session is herdr's), login
 
+**Android shell**:
+The Android app (`android/`) that shows Herdly Web full screen in a WebView. Its WebView is its own browser, so it is a Paired device of its own, separate from Chrome on the same phone. It has no UI of its own beyond asking for the pairing link.
+_Avoid_: mobile app, native app
+
 ## Relationships
 
 - A **Machine** has zero or more **Sessions**

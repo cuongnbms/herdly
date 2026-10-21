@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Herdly</string>
+    <string name="pair_title">Pair with Herdly Web</string>
+    <string name="pair_message">Paste the link printed by herdly-web pair (or the server address).</string>
+    <string name="pair_hint">http://192.0.2.10:7380/pair?t=…</string>
+    <string name="pair_open">Open</string>
+    <string name="pair_invalid">Not an http(s) link</string>
+    <string name="shortcut_pair">Pair or change server</string>
+    <string name="error_title">Can\'t reach Herdly Web</string>
+    <string name="error_retry">Retry</string>
+    <string name="error_change">Change link</string>
+    <string name="cancel">Cancel</string>
+</resources>
