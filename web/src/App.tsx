@@ -2,20 +2,24 @@ import { useEffect } from "react";
 import type { Socket } from "./socket";
 import { ChatScreen } from "./chat/ChatScreen";
 import { PaneList } from "./list/PaneList";
+import { useAttention } from "./attention";
 import { useWeb } from "./store";
 import { webKey, type WebPane } from "./types";
 
 function NotPaired() {
   return (
-    <main>
-      <h1>Not paired</h1>
-      <p>Open a pairing link from herdly-web pair on the devbox.</p>
+    <main className="notpaired">
+      <div className="notpaired-card">
+        <h1>Not paired</h1>
+        <p>Open a pairing link from herdly-web pair on the devbox.</p>
+      </div>
     </main>
   );
 }
 
 /** `socket` is main.tsx's one connection; the screens built on this shell subscribe through it. */
 export function App({ socket }: { socket?: Socket }) {
+  useAttention();
   const conn = useWeb((s) => s.conn);
   const lost = useWeb((s) => s.lost);
   const open = useWeb((s) => s.open);
@@ -35,7 +39,7 @@ export function App({ socket }: { socket?: Socket }) {
   if (conn === "unpaired") return <NotPaired />;
   return (
     <>
-      {(conn === "down" || (conn === "connecting" && lost)) && <div role="status">Disconnected, reconnecting…</div>}
+      {(conn === "down" || (conn === "connecting" && lost)) && <div role="status" className="banner banner-warn reconnect">Disconnected, reconnecting…</div>}
       {open ? <ChatScreen pane={open} onBack={() => back(open)} onRetry={() => socket?.subscribe(open)} /> : <PaneList onOpen={openChat} />}
     </>
   );
