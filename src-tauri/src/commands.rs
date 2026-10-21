@@ -351,8 +351,6 @@ pub async fn term_close(att: Att<'_>, key: AttachKey) -> Result<(), AppError> {
 
 type Chats<'a> = State<'a, Arc<ChatManager>>;
 
-const CHAT_PAGE: usize = 200;
-
 /// Locates a Pane's transcript without opening it (the Terminal fallback probes with this).
 #[tauri::command]
 pub async fn chat_locate(
@@ -555,7 +553,7 @@ pub async fn chat_open(
     events: Channel<ChatEvent>,
 ) -> Result<Located, AppError> {
     let pane_ref = PaneRef {
-        machine_id: machine_id.clone(),
+        machine_id,
         session,
         pane_id,
     };
@@ -564,28 +562,7 @@ pub async fn chat_open(
             tracing::warn!("chat event send failed: {err}");
         }
     });
-    // Locating costs round trips to the Machine: a Pane still tailing its transcript skips it.
-    if let Some(l) = chats.reattach_cached(&pane_ref, path.as_deref(), sink.clone()) {
-        return Ok(Located { cached: true, ..l });
-    }
-    let (located, frozen) = match chats.frozen_located(&pane_ref, path.as_deref()) {
-        Some(l) => (l, true),
-        None => (mgr.locate_pane(&pane_ref, path).await?, false),
-    };
-    let transport = mgr.transport(&machine_id)?;
-    let parser = transcript::parser_for(&located.agent).ok_or_else(|| {
-        AppError::new(
-            "not_found",
-            format!("no transcript parser for agent '{}'", located.agent),
-        )
-    })?;
-    // A frozen tail whose state never arrived is read afresh: not cached.
-    let kept = chats
-        .open_tail(&pane_ref, &located.path, transport, parser, sink)
-        .await;
-    let cached = frozen && kept;
-    chats.set_located(&pane_ref, &located);
-    Ok(Located { cached, ..located })
+    mgr.open_chat(&chats, &pane_ref, path, sink).await
 }
 
 #[tauri::command]
@@ -604,7 +581,7 @@ pub async fn chat_page(
                 pane_id,
             },
             before,
-            CHAT_PAGE,
+            transcript::CHAT_PAGE,
         )
         .ok_or_else(|| AppError::new("not_found", "no open chat for this pane"))
 }

@@ -642,6 +642,38 @@ impl MachineManager {
         })
     }
 
+    /// Opens the transcript of the agent in a Pane onto `sink`: the Pane's running tail when it qualifies, else a frozen tail's kept location, else located afresh. `cached` says no locating happened.
+    pub async fn open_chat(
+        &self,
+        chats: &ChatManager,
+        pane: &PaneRef,
+        path: Option<String>,
+        sink: transcript::Sink,
+    ) -> AppResult<Located> {
+        // Locating costs round trips to the Machine: a Pane still tailing its transcript skips it.
+        if let Some(l) = chats.reattach_cached(pane, path.as_deref(), sink.clone()) {
+            return Ok(Located { cached: true, ..l });
+        }
+        let (located, frozen) = match chats.frozen_located(pane, path.as_deref()) {
+            Some(l) => (l, true),
+            None => (self.locate_pane(pane, path).await?, false),
+        };
+        let transport = self.transport(&pane.machine_id)?;
+        let parser = transcript::parser_for(&located.agent).ok_or_else(|| {
+            AppError::new(
+                "not_found",
+                format!("no transcript parser for agent '{}'", located.agent),
+            )
+        })?;
+        // A frozen tail whose state never arrived is read afresh: not cached.
+        let kept = chats
+            .open_tail(pane, &located.path, transport, parser, sink)
+            .await;
+        let cached = frozen && kept;
+        chats.set_located(pane, &located);
+        Ok(Located { cached, ..located })
+    }
+
     // ---- events --------------------------------------------------------
 
     fn emit_now(&self, id: &str) {
@@ -3313,5 +3345,102 @@ mod tests {
             released.lock().unwrap()
         );
         assert_eq!(mgr.views()[0].state, MachineState::Connected);
+    }
+
+    fn claude_at(path: &str) -> AgentGet {
+        let path = path.to_string();
+        Arc::new(move || {
+            Ok(json!({"agent": {"agent": "claude",
+                "agent_session": {"kind": "path", "value": path}}}))
+        })
+    }
+
+    async fn open_at(mgr: &MachineManager, chats: &ChatManager, path: &str) -> Located {
+        mgr.open_chat(
+            chats,
+            &pane_ref("w1:p1"),
+            Some(path.into()),
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap()
+    }
+
+    fn opened(path: &str, cached: bool) -> Located {
+        Located {
+            agent: "claude".into(),
+            path: path.into(),
+            ambiguous: false,
+            candidates: vec![],
+            pending: false,
+            cached,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn open_chat_reuses_a_running_tail_then_a_frozen_location() {
+        let t = tempfile::tempdir().unwrap();
+        let a: String = t.path().join("a.jsonl").to_string_lossy().into();
+        let b: String = t.path().join("b.jsonl").to_string_lossy().into();
+        std::fs::write(&a, "").unwrap();
+        std::fs::write(&b, "").unwrap();
+        let p = pane_mgr(fixture_snap(), claude_at(&a)).await;
+        let (mgr, chats) = (&p.mgr, ChatManager::default());
+
+        assert_eq!(
+            open_at(mgr, &chats, &a).await,
+            opened(&a, false),
+            "a fresh tail"
+        );
+        assert_eq!(p.asked(), 1);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            open_at(mgr, &chats, &a).await,
+            opened(&a, true),
+            "the running tail"
+        );
+        assert_eq!(p.asked(), 1, "not located again");
+
+        assert_eq!(
+            open_at(mgr, &chats, &b).await,
+            opened(&b, false),
+            "another file freezes the first"
+        );
+        assert_eq!(p.asked(), 2);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            open_at(mgr, &chats, &a).await,
+            opened(&a, true),
+            "the frozen tail, resumed"
+        );
+        assert_eq!(p.asked(), 2, "its kept location, not located again");
+    }
+
+    #[tokio::test]
+    async fn open_chat_refuses_an_agent_without_a_parser() {
+        let p = pane_mgr(
+            fixture_snap(),
+            Arc::new(|| Ok(json!({"agent": {"agent": "zsh"}}))),
+        )
+        .await;
+        let mgr = &p.mgr;
+        let chats = ChatManager::default();
+        let e = mgr
+            .open_chat(
+                &chats,
+                &pane_ref("w1:p1"),
+                Some("/t/a.jsonl".into()),
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (e.code.as_str(), e.message.as_str()),
+            ("not_found", "no transcript parser for agent 'zsh'")
+        );
+        assert!(
+            chats.page(&pane_ref("w1:p1"), 0, 1).is_none(),
+            "nothing opened"
+        );
     }
 }

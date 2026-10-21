@@ -240,6 +240,9 @@ struct Tails {
     frozen: VecDeque<(PaneRef, Frozen)>,
 }
 
+/// Chat items per page the Chat lens asks for.
+pub const CHAT_PAGE: usize = 200;
+
 /// A Machine's tails, taken out under the lock and ended after it: open, parked, frozen.
 type MachineTails = (Vec<Entry>, VecDeque<(PaneRef, Entry)>, VecDeque<(PaneRef, Frozen)>);
 
