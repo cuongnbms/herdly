@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { useWeb } from "./store";
 
+// Two Panes, alpha (p1) and beta (p2), on one machine.
+const pv = (id: string, title: string) => ({ pane_id: id, terminal_id: "t" + id, title, cwd: null, agent: "claude", status: "idle" });
+const twoPanes = { id: "local", label: "local", kind: "local", state: "connected", error: null, version: null, pi_agent_dir: null, has_pi: false, status: "idle",
+  sessions: [{ name: "s", running: true, status: "idle", error: null, workspaces: [{ workspace_id: "w", label: "w", number: 1, status: "idle", tabs: [{ tab_id: "t", label: "t", number: 1, status: "idle", panes: [pv("p1", "alpha"), pv("p2", "beta")] }] }] }] };
+
 beforeEach(() => {
   useWeb.setState({ conn: "open", lost: false, machines: [], chats: {}, open: null });
 });
@@ -53,11 +58,8 @@ describe("App", () => {
   it("switches Panes from the sheet: unsubscribes and clears the old, subscribes the new", () => {
     const a = { session: "s", pane_id: "p1" };
     const b = { session: "s", pane_id: "p2" };
-    const pv = (id: string, title: string) => ({ pane_id: id, terminal_id: "t" + id, title, cwd: null, agent: "claude", status: "idle" });
-    const m = { id: "local", label: "local", kind: "local", state: "connected", error: null, version: null, pi_agent_dir: null, has_pi: false, status: "idle",
-      sessions: [{ name: "s", running: true, status: "idle", error: null, workspaces: [{ workspace_id: "w", label: "w", number: 1, status: "idle", tabs: [{ tab_id: "t", label: "t", number: 1, status: "idle", panes: [pv("p1", "alpha"), pv("p2", "beta")] }] }] }] };
     const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
-    useWeb.setState({ machines: [m] as never, open: a });
+    useWeb.setState({ machines: [twoPanes] as never, open: a });
     act(() => useWeb.getState().apply({ type: "chat_opened", pane: a, located: { agent: "claude", path: "/t", ambiguous: false, candidates: [], pending: false } }));
     render(<App socket={socket as never} />);
     fireEvent.click(screen.getByRole("button", { name: /alpha/ }));
@@ -67,5 +69,20 @@ describe("App", () => {
     expect(useWeb.getState().open).toEqual(b);
     expect(useWeb.getState().chats["s/p1"]).toBeUndefined();
     expect(screen.getByRole("button", { name: /beta/ })).toBeInTheDocument();
+  });
+
+  it("gives each Pane its own Chat screen: a draft typed in one is not in the next", () => {
+    localStorage.clear();
+    const a = { session: "s", pane_id: "p1" };
+    const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
+    useWeb.setState({ machines: [twoPanes] as never, open: a });
+    render(<App socket={socket as never} />);
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "draft A" } });
+    fireEvent.click(screen.getByRole("button", { name: /alpha/ }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Panes" })).getByText("beta"));
+    expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /beta/ }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Panes" })).getByText("alpha"));
+    expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("draft A");
   });
 });

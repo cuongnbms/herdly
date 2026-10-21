@@ -378,3 +378,39 @@ button:disabled { opacity: 0.45; cursor: default; }
 .menu [role="menuitem"]:active { background: var(--active); }
 .menu [role="menuitem"].armed { color: var(--err-fg); }
 .menu-error { font-size: 13px; color: var(--err-fg); padding: 6px 12px; }
+
+/* ---------- Composer ---------- */
+.chat-footer {
+  padding: 8px 12px calc(env(safe-area-inset-bottom) + 8px);
+  background: var(--surface-0);
+  border-top: 1px solid var(--line);
+}
+.composer { display: flex; flex-direction: column; gap: 6px; }
+.composer-row { display: flex; gap: 8px; align-items: flex-end; }
+.composer textarea {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  font-size: 15px;
+  line-height: 22px;
+  padding: 10px 14px;
+  color: var(--fg);
+  background: var(--surface-1);
+  border: 1px solid var(--line-2);
+  border-radius: 22px;
+  overflow-y: auto;
+}
+.composer textarea:focus { border-color: var(--accent); outline: none; }
+.send-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.send-btn[aria-label="Stop"] { background: var(--err); color: var(--fg); }
+.send-btn:disabled { background: var(--surface-2); color: var(--fg-3); }
+.composer-error { font-size: 13px; color: var(--err-fg); }

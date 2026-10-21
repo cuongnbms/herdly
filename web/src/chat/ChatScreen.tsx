@@ -7,6 +7,8 @@ import { ItemView, userBubble } from "./ItemView";
 import { isStale, settle, type Pending } from "./pending";
 import { ChatHeader } from "./ChatHeader";
 import { PromptCard } from "../prompt/PromptCard";
+import { Composer, type Draft } from "./Composer";
+import { loadDraft, saveDraft } from "./drafts";
 import { usePrompt } from "../prompt/usePrompt";
 
 const AT_BOTTOM_PX = 40;
@@ -15,42 +17,34 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-interface Draft { text: string; error: string | null }
-
-/** The text field and Send: not shown while the Pane is blocked, where typed text would land in the Agent's menu. */
-function Composer({ draft, setDraft, onSend }: { draft: Draft; setDraft(d: Draft): void; onSend(): void }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {draft.error && <div role="alert" style={{ color: "#c0392b", fontSize: 13 }}>{draft.error}</div>}
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-        <textarea aria-label="Message" rows={2} value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} style={{ flex: 1, font: "inherit", minHeight: 44 }} />
-        <button type="button" onClick={onSend} style={{ minHeight: 44, minWidth: 64 }}>Send</button>
-      </div>
-    </div>
-  );
-}
-
 /** The prompt card instead of the Composer while the Pane is blocked. */
 function BottomBar({ pane, view, onSent, onFailed }: { pane: WebPane; view: PaneView | undefined; onSent(text: string): number; onFailed(id: number): void }) {
   const blocked = view?.status === "blocked";
+  const key = webKey(pane);
   // The draft lives here, not in Composer, so a prompt that hides Composer does not lose it.
-  const [draft, setDraft] = useState<Draft>({ text: "", error: null });
+  const [draft, setDraftState] = useState<Draft>(() => ({ text: loadDraft(key), error: null }));
+  const setDraft = (d: Draft) => {
+    setDraftState(d);
+    saveDraft(key, d.text);
+  };
   const send = async () => {
     const t = draft.text;
     if (!t.trim()) return;
-    setDraft({ text: "", error: null });
+    setDraftState({ text: "", error: null });
+    saveDraft(key, "");
     const id = onSent(t);
     try {
       await panePrompt(pane, t);
     } catch (e) {
-      setDraft((cur) => ({ text: cur.text ? `${t}\n${cur.text}` : t, error: errorText(e) }));
+      const cur = loadDraft(key);
+      const restored = cur ? `${t}\n${cur}` : t;
+      saveDraft(key, restored);
+      setDraftState({ text: restored, error: errorText(e) });
       onFailed(id);
     }
   };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {blocked ? <BlockedPrompt pane={pane} view={view} /> : <Composer draft={draft} setDraft={setDraft} onSend={send} />}
-    </div>
+    blocked ? <BlockedPrompt pane={pane} view={view} /> : <Composer pane={pane} working={view?.status === "working"} draft={draft} setDraft={setDraft} onSend={send} />
   );
 }
 
@@ -164,7 +158,7 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
         {items.map((it, i) => <ItemView key={before + i} item={it} />)}
         {pending.map((p) => <PendingBubble key={p.id} p={p} />)}
       </div>
-      <footer style={{ padding: "8px 12px", borderTop: "1px solid #8884" }}>
+      <footer className="chat-footer">
         <BottomBar pane={pane} view={paneView} onSent={onSent} onFailed={onFailed} />
       </footer>
     </div>

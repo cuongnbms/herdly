@@ -26,10 +26,33 @@ function open(items: unknown[], total = items.length) {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   vi.mocked(api.panePrompt).mockReset();
 });
 
 describe("ChatScreen", () => {
+  it("keeps a Pane's draft across leaving and coming back", () => {
+    open([]);
+    const { unmount } = render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "half a thought" } });
+    unmount();
+    render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("half a thought");
+  });
+
+  it("clears the stored draft on send, and stores a failed send's text even after leaving", async () => {
+    let reject!: (e: unknown) => void;
+    vi.mocked(api.panePrompt).mockImplementation(() => new Promise((_, rj) => (reject = rj)));
+    open([]);
+    const { unmount } = render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(localStorage.getItem("herdly-web:draft:s/p1")).toBeNull();
+    unmount();
+    await act(async () => reject(new api.ApiError(502, "herdr_error", "pane gone")));
+    expect(localStorage.getItem("herdly-web:draft:s/p1")).toBe("hello");
+  });
+
   it("renders the transcript and appends live", () => {
     open([{ kind: "user", text: "fix the login" }, { kind: "assistant_text", markdown: "**done**" }]);
     render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
@@ -93,7 +116,7 @@ describe("ChatScreen", () => {
     open([]);
     render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "run the tests" } });
-    fireEvent.click(screen.getByText("Send"));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.panePrompt).toHaveBeenCalledWith(pane, "run the tests"));
     expect(screen.getByText("run the tests").closest("[data-pending]")).not.toBeNull();
     act(() => useWeb.getState().apply({ type: "chat", pane, event: { type: "append", items: [{ kind: "user", text: "run the tests" }] } }));
@@ -107,7 +130,7 @@ describe("ChatScreen", () => {
       open([{ kind: "assistant_text", markdown: "**done**" }]);
       render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
       fireEvent.change(screen.getByLabelText("Message"), { target: { value: "run the tests" } });
-      fireEvent.click(screen.getByText("Send"));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
       vi.mocked(Markdown).mockClear();
       act(() => vi.advanceTimersByTime(29_000));
       expect(screen.queryByText("not seen yet")).toBeNull();
@@ -124,7 +147,7 @@ describe("ChatScreen", () => {
     open([]);
     render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "hello" } });
-    fireEvent.click(screen.getByText("Send"));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.getByText("pane gone")).toBeInTheDocument());
     expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("hello");
   });
@@ -139,7 +162,7 @@ describe("ChatScreen", () => {
     act(() => useWeb.setState({ machines: [blocked] as never }));
     render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
     expect(screen.queryByLabelText("Message")).toBeNull();
-    expect(screen.queryByText("Send")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
     fireEvent.click(screen.getByLabelText("More"));
     expect(screen.getByRole("menuitem", { name: "Send Esc" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Send Ctrl+C" })).toBeInTheDocument();
@@ -165,7 +188,7 @@ describe("ChatScreen", () => {
     open([]);
     render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "hello" } });
-    fireEvent.click(screen.getByText("Send"));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.panePrompt).toHaveBeenCalledWith(pane, "hello"));
     const blocked = structuredClone(machine);
     blocked.sessions[0].workspaces[0].tabs[0].panes[0].status = "blocked";
