@@ -6,16 +6,19 @@ Herdly Web serves the Pane list and Chat lens of this Machine's herdr to a Paire
 
 ## Build
 
+From the repo root:
+
 ```sh
-cd src-tauri && cargo build --release -p herdly-web
-cd web && pnpm install && pnpm build
+(cd src-tauri && cargo build --release -p herdly-web)
+(cd web && pnpm install && pnpm build)
 ```
 
 ## Install
 
-From the main checkout, not `.worktrees/`:
+From the repo root of the main checkout, not `.worktrees/`:
 
 ```sh
+mkdir -p ~/.config/systemd/user
 sed "s#@REPO@#$PWD#g" web/herdly-web.service > ~/.config/systemd/user/herdly-web.service
 systemctl --user daemon-reload
 systemctl --user enable --now herdly-web
@@ -38,8 +41,8 @@ Open the printed link (or scan the QR code) in Chrome on the phone within 10 min
 ## Devices and revoking
 
 ```sh
-herdly-web devices
-herdly-web revoke <id>
+src-tauri/target/release/herdly-web devices
+src-tauri/target/release/herdly-web revoke <id>
 ```
 
 ## Upgrade

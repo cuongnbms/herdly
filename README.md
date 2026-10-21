@@ -48,9 +48,9 @@ pnpm tauri dev      # run the app with hot reload
 pnpm test           # frontend tests (vitest)
 pnpm typecheck
 cd src-tauri
-cargo test          # backend tests
-cargo clippy -- -D warnings
-cargo test -- --ignored --test-threads=1   # integration tests against a real local herdr
+cargo test --workspace          # backend tests
+cargo clippy --workspace -- -D warnings
+cargo test --workspace -- --ignored --test-threads=1   # integration tests against a real local herdr
 pnpm tauri build    # produces src-tauri/target/release/bundle/macos/Herdly.app
 ```
 
