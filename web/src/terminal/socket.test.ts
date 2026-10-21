@@ -178,8 +178,43 @@ describe("TerminalSocket", () => {
       takeover: false,
     });
     expect(r.events).toEqual([{ type: "connecting" }, { type: "disconnected" }, { type: "connecting" }]);
-    // A retry keeps the screen: only an explicit start begins a fresh terminal.
-    expect(r.resets()).toBe(1);
+    // Every fresh attempt begins with a fresh screen: a retry must not concatenate onto the
+    // previous attempt's terminal (Spec: "reset output state so a restarted terminal screen is
+    // not concatenated with an old one"). One reset for the start, one for the retry.
+    expect(r.resets()).toBe(2);
+  });
+
+  it("resets the screen before a retry's first output, without touching it earlier", async () => {
+    const r = rig();
+    const order: string[] = [];
+    const s = new TerminalSocket(
+      "ws://h/ws/terminal",
+      { session: "s", pane_id: "p1" },
+      {
+        reset() { order.push("reset"); },
+        event() { order.push("event"); },
+        output() { order.push("output"); },
+      },
+      {
+        ...r.time.deps,
+        open() { const w = new Wire(); r.wires.push(w); return w; },
+        me: () => Promise.resolve(200),
+      },
+    );
+    s.start({ cols: 80, rows: 24 });
+    r.wires[0].onopen!();
+    r.wires[0].onmessage!({ data: new Uint8Array([0x41]).buffer });
+    r.wires[0].onclose!({ code: 1006 });
+    await Promise.resolve();
+    await Promise.resolve();
+    // Disconnected: the previous output stays on screen until a new attempt starts.
+    expect(order).toEqual(["reset", "event", "output", "event"]);
+    r.time.run(0);
+    // The retry resets before it can deliver its own output: no concatenated screen.
+    expect(order).toEqual(["reset", "event", "output", "event", "reset", "event"]);
+    r.wires[1].onopen!();
+    r.wires[1].onmessage!({ data: new Uint8Array([0x42]).buffer });
+    expect(order).toEqual(["reset", "event", "output", "event", "reset", "event", "output"]);
   });
 
   it("ignores the second of onerror and onclose on one attempt", async () => {
@@ -319,6 +354,72 @@ describe("TerminalSocket", () => {
     expect(r.output.map((o) => o.bytes)).toEqual([[0x41]]);
     expect(texts(second).slice(1)).toEqual([]);
     expect(r.time.delays()).toEqual([1000]);
+  });
+
+  it("ignores a lost attempt's message callbacks while the pairing check is pending", async () => {
+    const r = rig();
+    const statuses: { answer: (s: number) => void }[] = [];
+    const s = new TerminalSocket(
+      "ws://h/ws/terminal",
+      { session: "s", pane_id: "p1" },
+      {
+        reset() {},
+        event(e) { r.events.push(e); },
+        output(bytes) { r.output.push({ bytes: [...bytes], parsed() {} }); },
+      },
+      {
+        ...r.time.deps,
+        open() { const w = new Wire(); r.wires.push(w); return w; },
+        me: () => new Promise<number>((resolve) => { statuses.push({ answer: resolve }); }),
+      },
+    );
+    s.start({ cols: 80, rows: 24 });
+    const w = r.wires[0];
+    // Held past the loss, the way a browser may still invoke a detached handler.
+    const staleMessage = w.onmessage!;
+    w.onopen!();
+    w.onmessage!({ data: JSON.stringify({ type: "attached" }) });
+    w.onmessage!({ data: new Uint8Array([0x41]).buffer });
+    w.onclose!({ code: 1006 });
+    expect(r.events).toEqual([{ type: "connecting" }, { type: "attached" }, { type: "disconnected" }]);
+    // A lost attempt may not render, nor decide this attempt's lifecycle: `exited` would
+    // otherwise set ended and cancel the retry that the pending pairing check still owes.
+    staleMessage({ data: new Uint8Array([0x42]).buffer });
+    staleMessage({ data: JSON.stringify({ type: "exited", code: 9 }) });
+    staleMessage({ data: JSON.stringify({ type: "error", error: { code: "io", message: "gone" } }) });
+    expect(r.output.map((o) => o.bytes)).toEqual([[0x41]]);
+    expect(r.events).toHaveLength(3);
+    statuses[0].answer(200);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(r.time.delays()).toEqual([1000]);
+  });
+
+  it("ignores a lost attempt's message callbacks while the backoff timer is pending", async () => {
+    const r = rig();
+    r.s.start({ cols: 80, rows: 24 });
+    const w = r.wires[0];
+    const staleMessage = w.onmessage!;
+    w.onopen!();
+    w.onmessage!({ data: JSON.stringify({ type: "attached" }) });
+    w.onclose!({ code: 1006 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(r.time.delays()).toEqual([1000]);
+    staleMessage({ data: new Uint8Array([0x42]).buffer });
+    staleMessage({ data: JSON.stringify({ type: "held" }) });
+    expect(r.output).toEqual([]);
+    expect(r.events).toEqual([{ type: "connecting" }, { type: "attached" }, { type: "disconnected" }]);
+    // The armed retry still runs, as a normal open.
+    r.time.run(0);
+    r.wires[1].onopen!();
+    expect(texts(r.wires[1])[0]).toEqual({
+      type: "open",
+      pane: { session: "s", pane_id: "p1" },
+      cols: 80,
+      rows: 24,
+      takeover: false,
+    });
   });
 
   it("cancels the retry when stop lands while the pairing check is pending", async () => {

@@ -78,7 +78,6 @@ export class TerminalSocket {
   start(size: TerminalSize, takeover = false): void {
     this.size = size;
     this.invalidate();
-    this.on.reset();
     this.connect(takeover);
   }
 
@@ -124,6 +123,10 @@ export class TerminalSocket {
   private connect(takeover: boolean): void {
     const gen = ++this.gen;
     this.dead = false;
+    // Every fresh attempt begins on a fresh screen, whether an explicit start or a retry:
+    // a restarted terminal's output must never be concatenated onto the previous attempt's.
+    // This runs before the attempt can deliver any output.
+    this.on.reset();
     this.on.event({ type: "connecting" });
     const ws = this.deps.open(this.url);
     ws.binaryType = "arraybuffer";
@@ -144,7 +147,9 @@ export class TerminalSocket {
       );
     };
     ws.onmessage = (e) => {
-      if (gen !== this.gen) return;
+      // A lost attempt may neither render nor decide this attempt's lifecycle: while the
+      // pairing check or a backoff timer is pending, its stale callbacks still arrive.
+      if (gen !== this.gen || this.dead || this.ws !== ws) return;
       if (typeof e.data === "string") this.event(e.data);
       else this.output(gen, ws, e.data);
     };
