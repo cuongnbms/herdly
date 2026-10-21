@@ -230,4 +230,15 @@ describe("ChatScreen", () => {
     expect(screen.getByText("no transcript")).toBeInTheDocument();
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
+
+  it("says it is reading the prompt until the screen has been read", () => {
+    vi.mocked(api.paneRead).mockImplementationOnce(() => new Promise(() => {}));
+    open([]);
+    const blocked = structuredClone(machine);
+    blocked.sessions[0].workspaces[0].tabs[0].panes[0].status = "blocked";
+    act(() => useWeb.setState({ machines: [blocked] as never }));
+    render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
+    expect(screen.getByText("Reading the prompt…")).toBeInTheDocument();
+    expect(document.querySelector("[data-prompt]")).toBeNull();
+  });
 });

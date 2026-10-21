@@ -68,7 +68,7 @@ function PendingBubble({ p }: { p: Pending }) {
 
 function BlockedPrompt({ pane, view }: { pane: WebPane; view: PaneView }) {
   const { prompt, answer, busy, error } = usePrompt(pane, view);
-  return prompt ? <PromptCard key={prompt.id} prompt={prompt} busy={busy} error={error} onAnswer={(a) => void answer(a)} /> : null;
+  return prompt ? <PromptCard key={prompt.id} prompt={prompt} busy={busy} error={error} onAnswer={(a) => void answer(a)} /> : <div className="prompt-card prompt-waiting">Reading the prompt…</div>;
 }
 
 export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane; onBack(): void; onRetry(): void; onSwitch?(p: WebPane): void }) {
@@ -165,16 +165,16 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
   const onFailed = (id: number) => setPending((ps) => ps.filter((p) => p.id !== id));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100dvh", maxWidth: 720, margin: "0 auto" }}>
+    <div className="chat">
       <ChatHeader pane={pane} onBack={onBack} onSwitch={onSwitch} />
-      {view?.located?.ambiguous && <div style={{ padding: "4px 12px", fontSize: 13 }}>Several transcripts match; showing the newest</div>}
+      {view?.located?.ambiguous && <div className="banner banner-warn">Several transcripts match; showing the newest</div>}
       {error && (
-        <div role="alert" style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", background: "#c0392b", color: "#fff" }}>
-          <span style={{ flex: 1 }}>{error.message}</span>
-          <button type="button" onClick={onRetry} style={{ minHeight: 44 }}>Retry</button>
+        <div role="alert" className="banner banner-err">
+          <span>{error.message}</span>
+          <button type="button" className="btn" onClick={onRetry}>Retry</button>
         </div>
       )}
-      <div ref={box} data-transcript onScroll={onScroll} style={{ flex: 1, overflowY: "auto" }}>
+      <div ref={box} data-transcript className="transcript" onScroll={onScroll}>
         {rows.map((row) =>
           row.kind === "item" ? (
             <ItemView key={row.key} item={row.item} />

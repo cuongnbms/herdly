@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PromptCard } from "./PromptCard";
 
@@ -15,6 +15,14 @@ describe("PromptCard", () => {
     fireEvent.change(screen.getByLabelText("Answer"), { target: { value: "use pnpm" } });
     fireEvent.click(screen.getByRole("button", { name: "Answer" }));
     expect(onAnswer).toHaveBeenLastCalledWith({ custom_text: "use pnpm" });
+  });
+
+  it("numbers single-choice options and offers a typed answer", () => {
+    render(<PromptCard prompt={prompt} busy={false} error={null} onAnswer={() => {}} />);
+    expect(within(screen.getByText("Yes").closest("button")!).getByText("1")).toBeInTheDocument();
+    expect(within(screen.getByText("No").closest("button")!).getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("and tell Claude why")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Or type your own answer")).toBe(screen.getByLabelText("Answer"));
   });
 
   it("disables options while busy", () => {
