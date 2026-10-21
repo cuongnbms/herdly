@@ -131,14 +131,37 @@ async function typeChar(ch: string) {
   await settle();
 }
 
-
-/** A mobile keyboard that enters text through insertText only: no printable keydown reaches us. */
-async function insertText(data: string) {
+/**
+ * One insertion as Chromium actually delivers it (`Input.insertText`, measured in 153.0.8010.12):
+ * `beforeinput` (cancelable, trusted) then `input` (not cancelable) — but only when the
+ * `beforeinput` was not prevented; a prevented one emits no `input` and leaves the field empty.
+ */
+async function inputOnly(data: string) {
   await act(async () => {
-    textarea().dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data, bubbles: true, cancelable: true }));
+    const before = new InputEvent("beforeinput", { inputType: "insertText", data, bubbles: true, cancelable: true });
+    textarea().dispatchEvent(before);
+    if (!before.defaultPrevented) {
+      textarea().dispatchEvent(new InputEvent("input", { inputType: "insertText", data, bubbles: true }));
+    }
+  });
+  await settle();
+}
+
+/**
+ * A browser that emits a non-cancelable `beforeinput`: the event cannot be stopped, so the
+ * `input` that follows is real and must be accounted for.
+ */
+async function nonCancelableInsert(data: string) {
+  await act(async () => {
+    textarea().dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data, bubbles: true, cancelable: false }));
     textarea().dispatchEvent(new InputEvent("input", { inputType: "insertText", data, bubbles: true }));
   });
   await settle();
+}
+
+/** A mobile keyboard that enters text through insertText only: no printable keydown reaches us. */
+async function insertText(data: string) {
+  await inputOnly(data);
 }
 
 beforeEach(() => {
@@ -402,6 +425,66 @@ describe("TerminalLens Ctrl at the real text-entry boundary", () => {
     screen.getByRole("button", { name: "Ctrl" }).click();
     await insertText("c");
     expect(r.last.inputs).toEqual(["c", "\x03"]);
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("still sends the next entry when only input events arrive", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    // A browser that reports the insertion only through `input`: no beforeinput, no keydown.
+    await act(async () => {
+      textarea().dispatchEvent(new InputEvent("input", { inputType: "insertText", data: "c", bubbles: true }));
+    });
+    await settle();
+    expect(r.last.inputs).toEqual(["\x03"]);
+    await act(async () => {
+      textarea().dispatchEvent(new InputEvent("input", { inputType: "insertText", data: "c", bubbles: true }));
+    });
+    await settle();
+    expect(r.last.inputs).toEqual(["\x03", "c"]);
+  });
+
+  it("still maps the next same character after a canceled Ctrl insertion", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    // Ctrl is spent by this beforeinput, the gate cancels it, and Chromium then emits no `input`
+    // and leaves the field empty — so nothing about it may be carried into the next insertion.
+    await inputOnly("c");
+    expect(r.last.inputs).toEqual(["\x03"]);
+    expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
+    // The next plain "c" is unrelated to the canceled one and must reach the wire.
+    await inputOnly("c");
+    expect(r.last.inputs).toEqual(["\x03", "c"]);
+  });
+
+  it("does not carry a pending follow-up across a fresh attempt", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    // A retry can land inside one insertion: the non-cancelable beforeinput owes its follow-up
+    // `input`, and the attempt is replaced before that input arrives.
+    await act(async () => {
+      textarea().dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: "c", bubbles: true, cancelable: false }));
+    });
+    await settle();
+    expect(r.last.inputs).toEqual(["\x03"]);
+    await act(async () => { r.last.handlers.reset(); });
+    await settle();
+    await act(async () => { r.last.attach(); });
+    // The replacement attempt must not inherit the old debt and swallow its first insertion.
+    await inputOnly("c");
+    expect(r.last.inputs).toEqual(["\x03", "c"]);
+  });
+
+  it("sends once when a non-cancelable beforeinput is followed by its input", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); });
+    screen.getByRole("button", { name: "Ctrl" }).click();
+    // A beforeinput the page cannot cancel: the browser's own `input` still arrives after it.
+    await nonCancelableInsert("c");
+    expect(r.last.inputs).toEqual(["\x03"]);
     expect(screen.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
   });
 

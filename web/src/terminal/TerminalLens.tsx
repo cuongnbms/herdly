@@ -117,6 +117,12 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
     let timer: ReturnType<typeof setTimeout> | undefined;
     /** A mapped control key was sent here; the rest of its event sequence must not reach xterm. */
     let swallowed = false;
+    /**
+     * A non-cancelable `beforeinput` cannot be stopped, so the browser's own `input` for that same
+     * insertion always follows. It is recorded once and consumed when it arrives — never guessed
+     * by comparing later text or by a timer.
+     */
+    let owedInput = "";
     /** The grid last reported to the transport, so an unchanged size never leaves again. */
     let sent: TerminalSize | null = null;
 
@@ -202,6 +208,9 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
 
     const reset = () => {
       if (!live) return;
+      // A fresh attempt starts with no input state from the previous one.
+      owedInput = "";
+      swallowed = false;
       newTerminal();
       setAttempt(INITIAL);
     };
@@ -261,16 +270,6 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
     };
 
     /**
-     * One insertion is reported as `beforeinput` then `input` with the same text: this says the
-     * next matching event is the tail of an insertion already handled. Consumption-based rather
-     * than a text comparison, because typing "c", arming Ctrl and typing "c" again must still
-     * produce ^C: a repeated character is not a duplicate.
-     */
-    let pendingInsert = false;
-    /** The text of the insertion already handled, so only its own tail is swallowed. */
-    let pendingText = "";
-
-    /**
      * The gate: capture phase on the host, ahead of the terminal's own textarea listeners, so a
      * settling attempt sees none of the user's keyboard, composition or paste while output
      * parsing still answers terminal queries.
@@ -278,6 +277,16 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
      * Ctrl is spent at the boundary that actually inserts text, never by a mere modifier or
      * action key: a desktop keydown carries the character, but a mobile keyboard enters text
      * through `beforeinput`/`input` insertText with no printable keydown at all.
+     *
+     * No synthetic "tail" state exists for the normal case. Measured in Chromium
+     * (153.0.8010.12): a trusted key is `keydown → keypress → beforeinput → input → keyup`; a
+     * prevented `beforeinput` emits no `input` at all and leaves the textarea empty;
+     * `Input.insertText` (the mobile path) emits `beforeinput → input`. Because this gate cancels
+     * the `beforeinput` it handles, the browser never follows it with an `input`.
+     *
+     * The one exception is a `beforeinput` the page cannot cancel (`cancelable === false`): the
+     * browser's own `input` for that same insertion always follows, in the same task, and cannot
+     * be stopped — so it is recorded once and consumed when it arrives, never guessed by timeout.
      */
     const gate = (e: Event) => {
       if (!live) return;
@@ -287,29 +296,26 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
         return;
       }
       if (!typing.current) {
+        // A settling or ended attempt owns no entry state at all: nothing may be carried out.
+        owedInput = "";
+        swallowed = false;
         charge(e);
         return;
       }
       const isInsert =
         e instanceof InputEvent && (e.inputType === "insertText" || e.inputType === "insertCompositionText");
-      // The tail of an insertion already sent must be kept from xterm even though Ctrl is now
-      // spent: without this check first, the raw character would follow the mapped control byte.
-      if (pendingInsert && isInsert && ((e as InputEvent).data ?? "") === pendingText) {
-        pendingInsert = false;
-        pendingText = "";
+      // The unavoidable follow-up of a non-cancelable insertion already sent: swallow exactly
+      // that event, then forget it. A lone `input`, or one after a canceled beforeinput, never
+      // sets this, so the next same-character entry always reaches the wire.
+      if (e.type === "input" && owedInput !== "" && isInsert && ((e as InputEvent).data ?? "") === owedInput) {
+        owedInput = "";
         charge(e);
         return;
       }
-      if (!entry.current.ctrl) {
-        // A plain insertion passing through: its pair must be known so a later Ctrl is not confused.
-        if (isInsert) {
-          pendingInsert = false;
-          pendingText = "";
-        }
-        return;
-      }
+      if (!entry.current.ctrl) return;
       switch (e.type) {
         case "keyup":
+          owedInput = "";
           return;
         case "keydown": {
           const text = entryText(e);
@@ -317,10 +323,11 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
           const mapped = controlCharacter(text);
           // Ctrl is one-shot: the next character spends it, accelerator or not.
           syncCtrl(false);
-          pendingInsert = false;
-          pendingText = "";
+          owedInput = "";
           if (mapped === null) return; // unsupported text goes out unchanged through xterm
           charge(e);
+          // Preventing the keydown is enough: Chromium cancels the whole chain, so no keypress,
+          // beforeinput or input follows and the raw character cannot leak out later.
           swallowed = true;
           send(mapped);
           return;
@@ -331,26 +338,18 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
           if (!isInsert) {
             // Composition and paste deliver a whole run: it goes out unchanged and spends Ctrl.
             syncCtrl(false);
-            pendingInsert = false;
-            pendingText = "";
+            owedInput = "";
             return;
           }
-          // Consume this insertion's own tail; the flag is spent, not the text compared, so a
-          // repeated character after a fresh Ctrl still maps.
           const mapped = controlCharacter(data);
+          // Ctrl is spent by this insertion. The follow-up insertion event, when the browser
+          // emits one because this `beforeinput` could not be canceled, is handled above.
           syncCtrl(false);
-          if (mapped === null) {
-            // Unsupported text goes out unchanged through xterm, which will deliver it once, so
-            // there is no tail of ours to consume.
-            pendingInsert = false;
-            pendingText = "";
-            return;
-          }
-          pendingInsert = true;
-          pendingText = data;
+          owedInput = e.type === "beforeinput" && !(e as InputEvent).cancelable ? data : "";
+          if (!mapped) return;
+          // Canceling the beforeinput cancels its `input` too: nothing else will arrive for it.
+          if (e.cancelable) owedInput = "";
           charge(e);
-          // No `swallowed` here: an insertion reached this branch because its own keydown did not
-          // map it, so no keyup belongs to it. Marking it swallowed would wedge the gate forever.
           send(mapped);
           return;
         }
@@ -358,8 +357,7 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
           // Composition and paste deliver a whole run, never a control key: they go out unchanged
           // and spend the modifier.
           syncCtrl(false);
-          pendingInsert = false;
-          pendingText = "";
+          owedInput = "";
           return;
       }
     };

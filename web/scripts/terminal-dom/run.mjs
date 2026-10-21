@@ -214,43 +214,51 @@ async function main() {
       JSON.stringify(ctrlTyped),
     );
 
-    // A mobile keyboard can insert text with no printable keydown: only beforeinput/input
-    // insertText fires. Ctrl must still map to U+0003 exactly once for that path.
+    // A mobile keyboard inserts text with no printable keydown. Chromium's `Input.insertText`
+    // (a trusted CDP event, measured: beforeinput -> input only) is that exact path.
+    const cdp = await page.context().newCDPSession(page);
+    const mobileType = async (text) => {
+      await cdp.send("Input.insertText", { text });
+      await page.waitForTimeout(200);
+    };
+    await page.locator(ta).focus();
+
     await clear();
     await page.getByRole("button", { name: "Ctrl" }).click();
-    await page.evaluate(() => {
-      const ta = document.querySelector(".xterm-helper-textarea");
-      ta.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: "c", bubbles: true, cancelable: true }));
-      ta.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: "c", bubbles: true }));
-    });
-    await page.waitForTimeout(200);
+    await mobileType("c");
     const inputOnly = sentTexts(await log());
     check(
-      "Ctrl maps an insertText-only c to U+0003 once",
+      "Ctrl maps a trusted insertText-only c to U+0003 once",
       JSON.stringify(inputOnly) === JSON.stringify(["\u0003"]) &&
         (await page.getByRole("button", { name: "Ctrl" }).getAttribute("aria-pressed")) === "false",
       JSON.stringify(inputOnly),
     );
 
-    // The same character typed once before arming Ctrl must still map: dedupe is per insertion,
-    // not a text comparison.
+    // The same character typed once before arming Ctrl must still map, and consecutive entries of
+    // the same character must all arrive: the gate keeps no synthetic tail between insertions.
     await clear();
-    const insert = (data) =>
-      page.evaluate((text) => {
-        const ta = document.querySelector(".xterm-helper-textarea");
-        ta.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: text, bubbles: true, cancelable: true }));
-        ta.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: text, bubbles: true }));
-      }, data);
-    await insert("c");
-    await page.waitForTimeout(150);
+    await mobileType("c");
     await page.getByRole("button", { name: "Ctrl" }).click();
-    await insert("c");
-    await page.waitForTimeout(200);
+    await mobileType("c");
+    await mobileType("c");
     const repeat = sentTexts(await log());
     check(
-      "a repeated character after a fresh Ctrl still maps to U+0003",
-      JSON.stringify(repeat) === JSON.stringify(["c", "\u0003"]),
+      "consecutive same-character insertions all arrive, first Ctrl one mapped once",
+      JSON.stringify(repeat) === JSON.stringify(["c", "\u0003", "c"]),
       JSON.stringify(repeat),
+    );
+
+    // A Ctrl insertion the gate cancels: Chromium emits no `input` for it (measured), so the next
+    // unrelated insertion of the same character must not be swallowed.
+    await clear();
+    await page.getByRole("button", { name: "Ctrl" }).click();
+    await mobileType("c");
+    await mobileType("c");
+    const afterCancel = sentTexts(await log());
+    check(
+      "a canceled Ctrl insertion does not eat the next same-character entry",
+      JSON.stringify(afterCancel) === JSON.stringify(["\u0003", "c"]),
+      JSON.stringify(afterCancel),
     );
 
     // A modifier keydown must not spend Ctrl before the character arrives.
@@ -285,12 +293,7 @@ async function main() {
     // Positive control for the non-ASCII rule: unsupported text goes out unchanged, once.
     await clear();
     await page.getByRole("button", { name: "Ctrl" }).click();
-    await page.evaluate(() => {
-      const ta = document.querySelector(".xterm-helper-textarea");
-      ta.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: "ß", bubbles: true, cancelable: true }));
-      ta.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: "ß", bubbles: true }));
-    });
-    await page.waitForTimeout(200);
+    await mobileType("ß");
     const nonAscii = sentTexts(await log());
     check(
       "unsupported non-ASCII insertText is sent unchanged once and spends Ctrl",
