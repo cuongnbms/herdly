@@ -1,61 +1,81 @@
 import { checklist, checklistSummary } from "@desktop/chat/checklist";
-import { memo, type CSSProperties } from "react";
+import type { ToolResult } from "@desktop/chat/workBlocks";
+import { memo, useState, type ReactNode } from "react";
 import type { ChatItem } from "../types";
+import { ChevronIcon } from "../ui/icons";
 import { Markdown } from "./Markdown";
 
-const block: CSSProperties = { margin: "6px 12px", overflowWrap: "anywhere" };
-const pre: CSSProperties = { margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 13 };
-const MARK = { pending: "[ ]", in_progress: "[~]", completed: "[x]" } as const;
+const MARK = { pending: "○", in_progress: "◐", completed: "●" } as const;
 
-export const userBubble: CSSProperties = { margin: "6px 12px 6px 48px", padding: "8px 12px", borderRadius: 12, background: "#1565c022", whiteSpace: "pre-wrap", overflowWrap: "anywhere" };
+/** A collapsible row: the body is rendered only while open. */
+function Collapsible({ head, headClass, children }: { head: ReactNode; headClass: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button type="button" className={`${headClass} toggle`} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <ChevronIcon className="chev" />
+        {head}
+      </button>
+      {open && <div className="work-body">{children}</div>}
+    </div>
+  );
+}
+
+function Images({ images }: { images: unknown[] | undefined }) {
+  return <>{images?.map((_, i) => <span key={i} className="chip">image</span>)}</>;
+}
 
 /** Memoised: the chat store keeps each item's object across Append and paging, so a shown item never re-parses. */
-export const ItemView = memo(function ItemView({ item }: { item: ChatItem }) {
+export const ItemView = memo(function ItemView({ item, result }: { item: ChatItem; result?: ToolResult }) {
   switch (item.kind) {
     case "user":
       return (
-        <div style={userBubble}>
+        <div className="bubble-user">
           {item.text}
-          {item.images?.map((_, i) => <div key={i}>[image]</div>)}
+          <Images images={item.images} />
         </div>
       );
     case "assistant_text":
-      return <div style={block}><Markdown text={item.markdown} /></div>;
+      return <div className="answer"><Markdown text={item.markdown} /></div>;
     case "thinking":
       return (
-        <details style={block}>
-          <summary>Thinking</summary>
-          <pre style={pre}>{item.text}</pre>
-        </details>
+        <Collapsible headClass="work-head" head={<span>Thinking</span>}>
+          <pre className="mono-block">{item.text}</pre>
+        </Collapsible>
       );
     case "tool_call": {
       const rows = checklist(item.input);
       return (
-        <details style={block}>
-          <summary>
-            <strong>{item.name}</strong> {item.input_summary}{rows && ` (${checklistSummary(rows)})`}
-          </summary>
+        <Collapsible
+          headClass="call-head"
+          head={<><span className="call-name">{item.name}</span> <span className="call-summary">{item.input_summary}{rows && ` (${checklistSummary(rows)})`}</span></>}
+        >
           {rows && (
-            <ul style={{ margin: 0, paddingLeft: 20, listStyle: "none" }}>
+            <ul className="checklist">
               {rows.map((r, i) => <li key={i} data-status={r.status}>{MARK[r.status]} {r.label}</li>)}
             </ul>
           )}
-        </details>
+          {result && (
+            <>
+              <pre className="call-result" data-error={result.is_error}>{result.output}</pre>
+              <Images images={result.images} />
+            </>
+          )}
+        </Collapsible>
       );
     }
     case "tool_result":
       return (
-        <details style={block}>
-          <summary>{item.is_error ? "Error" : "Result"}</summary>
-          <pre style={pre}>{item.output}</pre>
-          {item.images?.map((_, i) => <div key={i}>[image]</div>)}
-        </details>
+        <Collapsible headClass="work-head" head={<span>{item.is_error ? "Error" : "Result"}</span>}>
+          <pre className="call-result" data-error={item.is_error}>{item.output}</pre>
+          <Images images={item.images} />
+        </Collapsible>
       );
     case "system":
-      return <div style={{ ...block, opacity: 0.7, fontSize: 13 }}>{item.text}</div>;
+      return <div className="item-system">{item.text}</div>;
     case "shell_command":
-      return <pre style={{ ...pre, ...block }}>$ {item.command}</pre>;
+      return <pre className="mono-block">$ {item.command}</pre>;
     case "shell_output":
-      return <pre style={{ ...pre, ...block }}>{item.stdout}{item.stderr}</pre>;
+      return <pre className="mono-block">{item.stdout}{item.stderr}</pre>;
   }
 });

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const WEB_SRC = resolve(__dirname);
 const DESKTOP_SRC = resolve(__dirname, "../../src");
-const ALLOWED = ["lib/types", "chat/chatStore", "chat/checklist", "chat/prompt/screenPrompt", "chat/prompt/sendAnswer"];
+const ALLOWED = ["lib/types", "chat/chatStore", "chat/checklist", "chat/workBlocks", "chat/prompt/screenPrompt", "chat/prompt/sendAnswer"];
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {

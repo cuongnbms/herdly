@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { buildRows } from "@desktop/chat/workBlocks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { chatPage, panePrompt } from "../api";
 import { CHAT_PAGE } from "../config";
 import { useWeb } from "../store";
 import { webKey, type ChatItem, type PaneView, type WebPane } from "../types";
-import { ItemView, userBubble } from "./ItemView";
+import { ItemView } from "./ItemView";
+import { WorkBlock } from "./WorkBlock";
 import { isStale, settle, type Pending } from "./pending";
 import { ChatHeader } from "./ChatHeader";
 import { PromptCard } from "../prompt/PromptCard";
@@ -56,7 +58,7 @@ function PendingBubble({ p }: { p: Pending }) {
     return () => clearInterval(t);
   }, []);
   return (
-    <div data-pending style={{ ...userBubble, opacity: 0.55 }}>
+    <div data-pending className="bubble-user bubble-pending">
       <div>{p.text}</div>
       {isStale(p, now) && <div style={{ fontSize: 12 }}>not seen yet</div>}
     </div>
@@ -77,9 +79,15 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
   );
   const prependOlder = useWeb((s) => s.prependOlder);
 
+  const status = paneView?.status;
+  const live = status === "working" || status === "blocked";
+
   const items: ChatItem[] = view?.chat.items ?? [];
   const total = view?.chat.total ?? 0;
   const before = total - items.length;
+  const { rows, results } = useMemo(() => buildRows(items, before), [items, before]);
+  const [openBlocks, setOpenBlocks] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const onToggle = useCallback((id: string, wasOpen: boolean) => setOpenBlocks((m) => new Map(m).set(id, !wasOpen)), []);
   const error = view?.error ?? view?.chat.error ?? null;
 
   const box = useRef<HTMLDivElement>(null);
@@ -155,7 +163,13 @@ export function ChatScreen({ pane, onBack, onRetry, onSwitch }: { pane: WebPane;
         </div>
       )}
       <div ref={box} data-transcript onScroll={onScroll} style={{ flex: 1, overflowY: "auto" }}>
-        {items.map((it, i) => <ItemView key={before + i} item={it} />)}
+        {rows.map((row) =>
+          row.kind === "item" ? (
+            <ItemView key={row.key} item={row.item} />
+          ) : (
+            <WorkBlock key={row.key} block={row.block} results={results} live={live && row.last} open={openBlocks.get(row.block.id) ?? (live && row.last)} onToggle={onToggle} />
+          ),
+        )}
         {pending.map((p) => <PendingBubble key={p.id} p={p} />)}
       </div>
       <footer className="chat-footer">
