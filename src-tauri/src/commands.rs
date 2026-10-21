@@ -6,7 +6,6 @@ use crate::{
     files::{
         all::{self, FileList},
         edit,
-        html::HtmlPages,
         list::{self, Entry},
         paths::{check_rel, resolve_root},
         read::{self, FileContent, FileVersion},
@@ -16,6 +15,7 @@ use crate::{
     },
     git::{self, DiffScope, FileDiff, GitCommit, GitCommitFile, GitRepo, GitStatus},
     herdr::rpc,
+    html::HtmlPages,
     layout::LayoutStore,
     machines::{self, MachineManager},
     sshconfig,

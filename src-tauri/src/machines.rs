@@ -683,7 +683,7 @@ impl MachineManager {
 
     // ---- connection ----------------------------------------------------
 
-    pub(crate) fn cancel_reconnect(&self, id: &str) {
+    pub fn cancel_reconnect(&self, id: &str) {
         let _ = self.with_machine(id, |m| {
             if let Some(h) = m.reconnect.take() {
                 h.abort();
@@ -1528,46 +1528,6 @@ mod tests {
     };
     use serde_json::json;
     use std::sync::Mutex;
-
-    /// Every herdr method the frontend names as a string literal must pass `call`'s
-    /// allowlist; a missing one fails only at runtime, often silently.
-    #[test]
-    fn frontend_methods_are_allowed() {
-        fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-            for e in std::fs::read_dir(dir).unwrap() {
-                let p = e.unwrap().path();
-                if p.is_dir() {
-                    walk(&p, out);
-                } else if matches!(p.extension().and_then(|x| x.to_str()), Some("ts" | "tsx"))
-                    && !p.to_string_lossy().contains(".test.")
-                {
-                    out.push(p);
-                }
-            }
-        }
-        let mut files = Vec::new();
-        walk(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../src"),
-            &mut files,
-        );
-        let mut missing = Vec::new();
-        for f in files {
-            let text = std::fs::read_to_string(&f).unwrap();
-            for lit in text.split('"').skip(1).step_by(2) {
-                let Some((ns, name)) = lit.split_once('.') else {
-                    continue;
-                };
-                let method = ["pane", "tab", "workspace", "agent", "session"].contains(&ns)
-                    && !name.is_empty()
-                    && name.chars().all(|c| c.is_ascii_lowercase() || c == '_');
-                // Event names share the namespace but are never called.
-                if method && !name.ends_with("_changed") && !ALLOWED_METHODS.contains(&lit) {
-                    missing.push(format!("{lit} ({})", f.display()));
-                }
-            }
-        }
-        assert!(missing.is_empty(), "not in ALLOWED_METHODS: {missing:?}");
-    }
 
     #[test]
     fn registry_roundtrip_and_corrupt_file() {

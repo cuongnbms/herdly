@@ -6,6 +6,7 @@ pub mod files;
 pub mod fonts;
 pub mod git;
 pub mod herdr;
+pub mod html;
 pub mod layout;
 pub mod machines;
 pub mod mouse;
@@ -36,7 +37,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .register_uri_scheme_protocol("herdly-html", |ctx, req| {
             ctx.app_handle()
-                .state::<Arc<files::html::HtmlPages>>()
+                .state::<Arc<html::HtmlPages>>()
                 .respond(req.method(), req.uri().path())
         })
         .menu(app_menu)
@@ -146,7 +147,7 @@ pub fn run() {
             app.manage(chats);
             app.manage(transcript::btw::BtwRuns::default());
             app.manage(Arc::new(files::watch_manager::FilesWatch::default()));
-            app.manage(Arc::new(files::html::HtmlPages::default()));
+            app.manage(Arc::new(html::HtmlPages::default()));
             tauri::async_runtime::spawn(async move { mgr.connect_at_startup().await });
             Ok(())
         })
@@ -225,9 +226,52 @@ fn init_logging(dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machines::ALLOWED_METHODS;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn the_quit_item_names_the_app() {
         assert_eq!(quit_label("Herdly"), "Quit Herdly");
+    }
+
+    /// Every herdr method the frontend names as a string literal must pass `call`'s
+    /// allowlist; a missing one fails only at runtime, often silently.
+    #[test]
+    fn frontend_methods_are_allowed() {
+        fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if matches!(p.extension().and_then(|x| x.to_str()), Some("ts" | "tsx"))
+                    && !p.to_string_lossy().contains(".test.")
+                {
+                    out.push(p);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../src"),
+            &mut files,
+        );
+        assert!(!files.is_empty(), "no frontend sources under ../src");
+        let mut missing = Vec::new();
+        for f in files {
+            let text = std::fs::read_to_string(&f).unwrap();
+            for lit in text.split('"').skip(1).step_by(2) {
+                let Some((ns, name)) = lit.split_once('.') else {
+                    continue;
+                };
+                let method = ["pane", "tab", "workspace", "agent", "session"].contains(&ns)
+                    && !name.is_empty()
+                    && name.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+                // Event names share the namespace but are never called.
+                if method && !name.ends_with("_changed") && !ALLOWED_METHODS.contains(&lit) {
+                    missing.push(format!("{lit} ({})", f.display()));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "not in ALLOWED_METHODS: {missing:?}");
     }
 }
