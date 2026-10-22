@@ -68,7 +68,15 @@ class MainActivity : ComponentActivity() {
         setContentView(root)
 
         onBackPressedDispatcher.addCallback(this) {
-            if (web.canGoBack()) web.goBack() else moveTaskToBack(true)
+            // Pane navigation is React state, not WebView history. A cancelled event means
+            // the page handled Back; old servers and the root screen keep the native fallback.
+            web.evaluateJavascript(
+                "window.dispatchEvent(new Event('herdly:android-back', { cancelable: true }))",
+            ) { unhandled ->
+                if (unhandled != "false") {
+                    if (web.canGoBack()) web.goBack() else moveTaskToBack(true)
+                }
+            }
         }
 
         route(intent)

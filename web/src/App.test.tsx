@@ -13,6 +13,64 @@ beforeEach(() => {
 });
 
 describe("App", () => {
+  it("handles Android Back from a Pane like the in-app Back button", () => {
+    const pane = { session: "s", pane_id: "p1" };
+    useWeb.setState({ machines: [twoPanes] as never, open: pane });
+    useWeb.getState().apply({ type: "chat_opened", pane, located: { agent: "claude", path: "/t", ambiguous: false, candidates: [], pending: false } });
+    render(<App />);
+    expect(screen.getByLabelText("Back")).toBeInTheDocument();
+    expect(useWeb.getState().chats["s/p1"]).toBeDefined();
+
+    const back = new Event("herdly:android-back", { cancelable: true });
+    act(() => { window.dispatchEvent(back); });
+
+    expect(screen.getByRole("heading", { name: "Herdly" })).toBeInTheDocument();
+    expect(useWeb.getState().open).toBeNull();
+    expect(useWeb.getState().chats["s/p1"]).toBeUndefined();
+    expect(back.defaultPrevented).toBe(true);
+  });
+
+  it("leaves Android Back unhandled at the root, when unpaired, and after unmount", () => {
+    const view = render(<App />);
+    const rootBack = new Event("herdly:android-back", { cancelable: true });
+    act(() => { window.dispatchEvent(rootBack); });
+    expect(rootBack.defaultPrevented).toBe(false);
+    expect(screen.getByRole("heading", { name: "Herdly" })).toBeInTheDocument();
+
+    act(() => useWeb.setState({ conn: "unpaired", open: { session: "s", pane_id: "p1" } }));
+    const unpairedBack = new Event("herdly:android-back", { cancelable: true });
+    act(() => { window.dispatchEvent(unpairedBack); });
+    expect(unpairedBack.defaultPrevented).toBe(false);
+    expect(screen.getByRole("heading", { name: "Not paired" })).toBeInTheDocument();
+
+    act(() => useWeb.setState({ conn: "open", machines: [twoPanes] as never }));
+    expect(screen.getByLabelText("Back")).toBeInTheDocument();
+    view.unmount();
+    const afterUnmount = new Event("herdly:android-back", { cancelable: true });
+    window.dispatchEvent(afterUnmount);
+    expect(afterUnmount.defaultPrevented).toBe(false);
+    expect(useWeb.getState().open).toEqual({ session: "s", pane_id: "p1" });
+  });
+
+  it("returns from Terminal on Android Back and handles a newly opened Pane", () => {
+    localStorage.clear();
+    useWeb.setState({ machines: [twoPanes] as never, open: { session: "s", pane_id: "p1" } });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(screen.getByTestId("terminal-host")).toBeInTheDocument();
+    act(() => { window.dispatchEvent(new Event("herdly:android-back", { cancelable: true })); });
+    expect(screen.getByRole("heading", { name: "Herdly" })).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-host")).not.toBeInTheDocument();
+
+    act(() => useWeb.getState().openChat({ session: "s", pane_id: "p2" }));
+    expect(screen.getByLabelText("Back")).toBeInTheDocument();
+    const nextBack = new Event("herdly:android-back", { cancelable: true });
+    act(() => { window.dispatchEvent(nextBack); });
+    expect(nextBack.defaultPrevented).toBe(true);
+    expect(screen.getByRole("heading", { name: "Herdly" })).toBeInTheDocument();
+    expect(useWeb.getState().open).toBeNull();
+  });
+
   it("opens the sidebar from the list and closes it with Escape, restoring focus", () => {
     render(<App />);
     const menu = screen.getByRole("button", { name: "Open sidebar" });
