@@ -38,6 +38,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer, connect } from "node:net";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 
@@ -202,9 +203,123 @@ async function fetchJson(url, cookie) {
   return { status: res.status, headers: res.headers, text: await res.text() };
 }
 
+/**
+ * Controlled delivery delay at the OS TCP boundary, not a replacement WebSocket.
+ * HTTP, upgrades, client input, and pre-Attached output pass unchanged to/from Rust.
+ * Only the first real Attached frame and its suffix are held. Each complete server frame
+ * retains its original header/payload; release writes that queue once, in receive order.
+ */
+async function deliveryGate(targetPort) {
+  const sockets = new Set();
+  const frames = [];
+  const queued = [];
+  let armed = true;
+  let held = false;
+  let released = false;
+  let downstream;
+  let releaseTail = () => {};
+  let heldResolve;
+  const attached = new Promise((resolve) => { heldResolve = resolve; });
+  const listener = createServer((client) => {
+    const upstream = connect({ host: "127.0.0.1", port: targetPort });
+    for (const s of [client, upstream]) {
+      sockets.add(s);
+      s.on("close", () => sockets.delete(s));
+      s.on("error", () => { client.destroy(); upstream.destroy(); });
+    }
+    let requestLine = "";
+    let terminalRoute = false;
+    client.on("data", (chunk) => {
+      if (requestLine.includes("\r\n")) return;
+      requestLine += chunk.toString();
+      terminalRoute = /^GET \/ws\/terminal(?:\?| )/.test(requestLine);
+    });
+    client.pipe(upstream);
+    client.on("close", () => upstream.destroy());
+    upstream.on("end", () => client.end());
+    let headers = Buffer.alloc(0);
+    let pending = Buffer.alloc(0);
+    let mode = "headers";
+    upstream.on("data", (chunk) => {
+      if (mode === "headers") {
+        headers = Buffer.concat([headers, chunk]);
+        const end = headers.indexOf("\r\n\r\n");
+        if (end < 0) return;
+        const head = headers.subarray(0, end + 4);
+        chunk = headers.subarray(end + 4);
+        client.write(head);
+        mode = terminalRoute && /^HTTP\/1\.[01] 101\b/.test(head.toString()) && armed ? "frames" : "pass";
+        headers = Buffer.alloc(0);
+      }
+      if (mode === "pass" || released) {
+        client.write(chunk);
+        return;
+      }
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= 2) {
+        const opcode = pending[0] & 15;
+        let length = pending[1] & 127;
+        let offset = 2;
+        if (length === 126) {
+          if (pending.length < 4) return;
+          length = pending.readUInt16BE(2);
+          offset = 4;
+        } else if (length === 127) {
+          if (pending.length < 10) return;
+          length = Number(pending.readBigUInt64BE(2));
+          offset = 10;
+        }
+        if (pending.length < offset + length) return;
+        const raw = Buffer.from(pending.subarray(0, offset + length));
+        pending = pending.subarray(offset + length);
+        const payload = raw.subarray(offset);
+        const isAttached = opcode === 1 && payload.toString() === '{"type":"attached"}';
+        if (isAttached && armed) {
+          held = true;
+          armed = false;
+          downstream = client;
+          releaseTail = () => {
+            if (pending.length) client.write(pending);
+            pending = Buffer.alloc(0);
+          };
+        }
+        const entry = { seq: frames.length, at: Date.now(), opcode, raw: raw.toString("base64"), hex: [...payload].map((b) => b.toString(16).padStart(2, "0")).join(" "), text: payload.toString(), held, releasedAt: held ? null : Date.now() };
+        frames.push(entry);
+        if (held) queued.push({ raw, entry });
+        else client.write(raw);
+        if (isAttached && held) heldResolve();
+      }
+    });
+  });
+  await new Promise((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", resolve);
+  });
+  return {
+    bind: `127.0.0.1:${listener.address().port}`,
+    attached,
+    frames,
+    release() {
+      if (!held || released || !downstream || downstream.destroyed) throw new Error("no live held Attached frame to release");
+      for (const { raw, entry } of queued.splice(0)) {
+        downstream.write(raw);
+        entry.releasedAt = Date.now();
+      }
+      releaseTail();
+      held = false;
+      released = true;
+    },
+    async close() {
+      queued.length = 0;
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => listener.close(resolve));
+    },
+  };
+}
+
 /** Records securitypolicyviolation events and page-level errors for the checks. */
 const PAGE_PROBE = `
-window.__t8 = window.__t8 || { violations: [], wire: [], events: [] };
+window.__t8 = window.__t8 || { violations: [], wire: [], events: [], connections: [], closes: [] };
 // Every gate-relevant DOM event, with the payload it carried and the phase the page was in at
 // dispatch: "banner" is null once the page is Attached (there is no banner then), so "pre
 // Attached" is read at the dispatch instant rather than assumed after the fact.
@@ -230,10 +345,13 @@ window.addEventListener("securitypolicyviolation", (e) => {
   const Native = window.WebSocket;
   function Recording(url, protocols) {
     const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
+    window.__t8.connections.push({ url: String(url), at: Date.now() });
+    ws.addEventListener("close", (e) => window.__t8.closes.push({ url: String(url), code: e.code, reason: e.reason, at: Date.now() }));
     const log = (kind, data) => {
       const bytes = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data.buffer ?? data);
       window.__t8.wire.push({
         kind,
+        url: String(url),
         text: new TextDecoder().decode(bytes),
         hex: [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(" "),
         len: bytes.length,
@@ -243,7 +361,7 @@ window.addEventListener("securitypolicyviolation", (e) => {
     };
     const send = ws.send.bind(ws);
     ws.send = (data) => { log("out", data); return send(data); };
-    ws.addEventListener("message", (e) => { if (typeof e.data !== "string") log("in", e.data); });
+    ws.addEventListener("message", (e) => log("in", e.data));
     return ws;
   }
   Recording.prototype = Native.prototype;
@@ -285,6 +403,7 @@ async function main() {
   let server = null;
   let served = null;
   let browser = null;
+  let networkGate = null;
   const servedLog = [];
   const serverLog = [];
   const screenshot = (page, name) => page.screenshot({ path: join(EVIDENCE, `${name}.png`), fullPage: false });
@@ -296,6 +415,7 @@ async function main() {
       herdr: (await run(herdr, ["--version"], { env })).stdout.trim(),
       chromium: execFileSync(chrome, ["--version"], { encoding: "utf8" }).trim(),
       node: process.version,
+      executables: { node: process.execPath, herdr, chromium: chrome, rust: binary },
       timestamp: new Date().toISOString(),
       session: sessionName,
     };
@@ -367,13 +487,16 @@ async function main() {
     const card = (paneId) => `.pane-card[data-pane="${sessionName}/${paneId}"]`;
 
     // ---- the real Rust server over the production bundle --------------------------------
-    const bind = `127.0.0.1:${18000 + (process.pid % 20000)}`;
+    const rustBind = `127.0.0.1:${18000 + (process.pid % 20000)}`;
+    networkGate = await deliveryGate(Number(rustBind.split(":")[1]));
+    const bind = networkGate.bind;
     const origin = `http://${bind}`;
+    note("controlled delivery delay: native TCP gate holds the real Rust Attached frame and ordered suffix, never fabricates protocol success");
     const stateDir = join(root, "web-state");
     const pairOut = await run(binary, ["pair", "--bind", bind, "--origin", origin, "--state", stateDir], { env });
     const pairUrl = pairOut.stdout.split("\n")[0].trim();
     const startServed = async () => {
-      const child = spawn(binary, ["serve", "--bind", bind, "--origin", origin, "--static", dist, "--state", stateDir], {
+      const child = spawn(binary, ["serve", "--bind", rustBind, "--origin", origin, "--static", dist, "--state", stateDir], {
         env: Object.assign({}, env, { RUST_LOG: "info" }),
         stdio: ["ignore", "pipe", "pipe"],
         // Its own group, so cleanup can end it and every attach child it started in one signal
@@ -439,6 +562,8 @@ async function main() {
       if (m.type() === "error" && !cspNoise.test(text)) consoleErrors.push(text);
     });
     const responses = [];
+    const failedRequests = [];
+    page.on("requestfailed", (r) => failedRequests.push({ url: r.url(), error: r.failure()?.errorText }));
     page.on("response", (r) => responses.push({ url: r.url(), status: r.status(), type: r.request().resourceType() }));
     const cdp = await context.newCDPSession(page);
 
@@ -560,60 +685,46 @@ async function main() {
     /** The Pane's own screen, as the Pane reports it (not what the browser renders). */
     const paneScreen = async (paneId, lines = 60) => paneRead(paneId, lines);
 
-    // --- (a) a real query during settling ------------------------------------------------
-    // herdr 0.9.5 strips and answers its own startup probe inside core, so the production page
-    // never sees that one. What it CAN see is a query a Pane writes later, which herdr forwards:
-    // measured here, a Pane printing `ESC[c` after attach does reach the client's stream. So the
-    // query is produced by the Pane and the reply must come from xterm on the wire, while the
-    // lens still says Connecting.
-    let queryProbe = null;
-    let caughtSettling = null;
-    for (let attempt = 0; attempt < 8 && caughtSettling === null; attempt++) {
-      if (attempt > 0) {
-        await page.locator('button[aria-label="Back"]').first().tap();
-        await page.waitForSelector(".pane-card", { timeout: 60000 });
-      }
-      await page.evaluate(() => {
-        window.__t8.wire.length = 0;
-        window.__t8.events.length = 0;
-      });
-      await page.locator(card(queryPane.paneId)).first().tap();
-      await page.waitForSelector(".xterm-helper-textarea", { timeout: 60000 });
-      if ((await page.locator(".term-banner", { hasText: "Connecting…" }).count()) === 0) continue;
-      // The Pane writes the query itself; the CLI types it, so the request reaches the Pane at
-      // the same moment the browser is still settling.
-      const sentAt = Date.now();
-      await run(herdr, ["--session", sessionName, "pane", "run", queryPane.paneId, "query"], { env });
-      // The phase *before* any settling input, read at that instant rather than inferred later.
-      const focusBanner = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
-      // The settling inputs, delivered exactly as the positive control below delivers them.
-      const settlingPaste = await pasteDelivery(page, settleToken);
-      const settlingImeEvents = await imeDelivery(page, cdp, imeText);
-      const afterState = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
-      // Wait for the Pane's own marker to have been rendered, so the query really went out.
-      await page.waitForFunction(() => (document.querySelector(".xterm-rows")?.textContent ?? "").includes("QUERY-SENT"), null, { timeout: 30000 }).catch(() => {});
-      const wire = await page.evaluate(() => window.__t8.wire.slice());
-      const events = await page.evaluate(() => window.__t8.events.slice());
-      const replies = wire.filter((f) => f.kind === "out" && !f.text.startsWith("{") && /\x1b\[[?>]?[0-9;]*[cnR]/.test(f.text));
-      caughtSettling = {
-        sentAt,
-        focusBanner,
-        afterState,
-        paneId: queryPane.paneId,
-        terminalId: queryPane.terminalId,
-        settlingPaste,
-        settlingImeEvents,
-        events,
-        frames: wire.length,
-        paneOutput: await paneScreen(queryPane.paneId),
-      };
-      if (replies.length > 0) queryProbe = { replies, wire };
-    }
-    const settling = caughtSettling;
+    // --- (a) hold the real Attached boundary, without racing the server's 400ms window ---
+    // Real binary output before Attached still reaches xterm and is ACKed. No browser event
+    // handler, terminal parser, or client send path is replaced by this OS-network gate.
+    await page.evaluate(() => {
+      window.__t8.wire.length = 0;
+      window.__t8.events.length = 0;
+    });
+    await page.locator(card(queryPane.paneId)).first().tap();
+    await page.waitForSelector(".xterm-helper-textarea", { timeout: 60000 });
+    await waitFor("the real server Attached frame held at TCP boundary", 30000, () => networkGate.frames.some((f) => f.held && f.text === '{"type":"attached"}'));
+    await networkGate.attached;
+    await page.waitForFunction(() => (document.querySelector(".xterm-rows")?.textContent ?? "").includes("GOT:READY"), null, { timeout: 30000 });
+    const preAttached = await page.evaluate(() => ({
+      banner: document.querySelector(".term-banner")?.textContent,
+      rows: document.querySelector(".xterm-rows")?.textContent,
+      wire: window.__t8.wire.slice(),
+    }));
+    check("real xterm parses and ACKs raw pre-Attached output while Connecting",
+      preAttached.banner === "Connecting…" && preAttached.rows.includes("GOT:READY") &&
+        preAttached.wire.some((f) => f.kind === "in" && f.len > 0 && !f.text.startsWith("{")) &&
+        preAttached.wire.some((f) => f.kind === "out" && f.text.startsWith('{"type":"ack",')),
+      JSON.stringify(preAttached));
+    const sentAt = Date.now();
+    const queryRun = await run(herdr, ["--session", sessionName, "pane", "run", queryPane.paneId, "query"], { env });
+    if (queryRun.code !== 0) throw new Error(`Pane query failed: ${queryRun.stderr}`);
+    await waitFor("the real Pane query marker", 30000, async () => (await paneScreen(queryPane.paneId)).includes("QUERY-SENT"));
+    const focusBanner = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
+    const settlingPaste = await pasteDelivery(page, settleToken);
+    const settlingImeEvents = await imeDelivery(page, cdp, imeText);
+    const afterState = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
+    const settling = {
+      sentAt, focusBanner, afterState, paneId: queryPane.paneId, terminalId: queryPane.terminalId,
+      settlingPaste, settlingImeEvents,
+      events: await page.evaluate(() => window.__t8.events.slice()),
+      paneOutput: await paneScreen(queryPane.paneId),
+    };
     check("the lens was caught in its settling window to test it", settling !== null, JSON.stringify({ ...settling, paneOutput: undefined, events: undefined }));
     check(
       "the page reported Connecting… at both ends of the settling inputs",
-      settling !== null && /\bConnecting\b/.test(settling.focusBanner ?? "") && /\bConnecting\b/.test(settling.afterState ?? ""),
+      settling.focusBanner === "Connecting…" && settling.afterState === "Connecting…",
       JSON.stringify({ focus: settling?.focusBanner, after: settling?.afterState }),
     );
     check(
@@ -632,8 +743,8 @@ async function main() {
       settling !== null &&
         settlingPasteEvent !== null &&
         settling.settlingPaste.payload === settleToken &&
-        (settlingPasteEvent.data ?? "").includes(settleToken) &&
-        /\bConnecting\b/.test(settlingPasteEvent.banner ?? ""),
+        settlingPasteEvent.data === settleToken &&
+        settlingPasteEvent.banner === "Connecting…" && settling.settlingPaste.banner === "Connecting…",
       JSON.stringify({
         payload: settling?.settlingPaste?.payload,
         dispatched: settling?.settlingPaste?.dispatched,
@@ -642,9 +753,9 @@ async function main() {
     );
     check(
       "scripted IME really dispatched while Connecting, carrying the composed text",
-      settlingImeSaw.some((e) => e.ty === "compositionend" && (e.data ?? "").includes(settleToken)) &&
-        settlingImeSaw.some((e) => e.ty === "input" && (e.data ?? "").includes(settleToken)) &&
-        settlingImeSaw.every((e) => /\bConnecting\b/.test(e.banner ?? "")),
+      settlingImeSaw.some((e) => e.ty === "compositionend" && e.data === imeText) &&
+        settlingImeSaw.some((e) => e.ty === "input" && e.data === imeText) &&
+        settlingImeSaw.every((e) => e.banner === "Connecting…"),
       JSON.stringify(settlingImeSaw.map((e) => ({ ty: e.ty, data: e.data, banner: e.banner }))),
     );
 
@@ -658,7 +769,7 @@ async function main() {
     // probe, which `herdly-core`'s attach reader recognises and answers itself (PROBE/PROBE_REPLY),
     // by approved design from Task 2. So this assertion states what really happened; the
     // requirement itself stays OPEN — see the report.
-    const queryReachedPage = (queryProbe?.wire ?? (await page.evaluate(() => window.__t8.wire.slice()))).some(
+    const queryReachedPage = (await page.evaluate(() => window.__t8.wire.slice())).some(
       (f) => f.kind === "in" && /\x1b\[c/.test(f.text),
     );
     check(
@@ -681,8 +792,17 @@ async function main() {
     // not the echo one) is asked for input *after* it is Attached. A prefix stuck in its canonical
     // line buffer would be echoed by that flush, so the flush is both the reveal and the proof
     // that the buffer was read at all.
+    networkGate.release();
     await page.waitForFunction(() => !document.querySelector(".term-banner"), null, { timeout: 60000 });
-    await page.waitForTimeout(400);
+    await page.waitForFunction(() => (document.querySelector(".xterm-rows")?.textContent ?? "").includes("QUERY-SENT"), null, { timeout: 30000 });
+    const replay = await page.evaluate(() => window.__t8.wire.filter((f) => f.kind === "in" && f.url.endsWith("/ws/terminal")));
+    const boundaryFrames = networkGate.frames.filter((f) => f.opcode === 1 || f.opcode === 2);
+    check("real server frames replay once in order, including Attached and queued output",
+      replay.length >= boundaryFrames.length && boundaryFrames.every((f, i) => f.hex === replay[i].hex) &&
+        boundaryFrames.every((f) => replay.filter((r) => r.hex === f.hex).length === boundaryFrames.filter((r) => r.hex === f.hex).length) &&
+        replay.filter((f) => f.text === '{"type":"attached"}').length === 1 &&
+        boundaryFrames.some((f) => f.held && f.text === '{"type":"attached"}' && f.releasedAt >= sentAt),
+      JSON.stringify({ received: replay.length, forwarded: boundaryFrames.length }));
     // The controlled flush: an Attached-time line ending in Enter, so the Pane's line buffer is
     // really read and anything it held would be echoed back with it.
     const flushToken = `FLUSH_${process.pid}_${Date.now()}`;
@@ -762,7 +882,11 @@ async function main() {
           settling: {
             paste: settling?.settlingPaste,
             imeEvents: settlingImeSaw,
-            wire: (queryProbe?.wire ?? []).concat(settlingWire),
+            wire: settlingWire,
+            afterState: settling.afterState,
+            deliveryDelay: "real Attached + ordered suffix held at native TCP boundary",
+            boundaryFrames,
+            replay,
             flushToken,
             paneScreen: flushed,
           },
@@ -1055,8 +1179,8 @@ async function main() {
     await typeLine(resumed);
     check("scripted visibilitychange: the resumed attempt accepts trusted input again", true);
 
-    // Everything up to the deliberate disconnect must be clean; the disconnect itself is
-    // expected to make the page's next socket attempt fail, which Chromium logs.
+    // Everything up to the deliberate disconnect must be clean. Close1000 is final: there
+    // must be no next socket attempt, refused-reconnect console exception, or app-data send.
     const consoleErrorsBeforeDisconnect = consoleErrors.length;
     const pageErrorsBeforeDisconnect = pageErrors.length;
 
@@ -1066,8 +1190,11 @@ async function main() {
     await screenshot(page, "final");
 
     // ---- disconnect: the process ends, the page says so, no attach child survives ------
-    const eventsBefore = servedLog.length;
-    void eventsBefore;
+    const beforeClose = await page.evaluate(() => ({
+      rows: document.querySelector(".xterm-rows")?.textContent ?? "",
+      connections: window.__t8.connections.filter((f) => f.url.endsWith("/ws/terminal")).length,
+      sent: window.__t8.wire.filter((f) => f.kind === "out" && f.url.endsWith("/ws/terminal")).length,
+    }));
     const servedPid = served.pid;
     const termOfEcho = [echoPane.terminalId];
     check("an attach is live before the disconnect", attachChildren(sessionName, termOfEcho).length === 1, JSON.stringify(attachChildren(sessionName, termOfEcho)));
@@ -1080,7 +1207,28 @@ async function main() {
         return true;
       }
     });
-    await page.waitForFunction(() => /Disconnected|Connecting|reconnect/i.test(document.querySelector(".term-banner")?.textContent ?? "") || !document.querySelector(".term-banner"), null, { timeout: 60000 });
+    const closedText = "Connection closed (code 1000). Reattach to try again.";
+    await page.waitForFunction((expected) => document.querySelector(".term-banner > span")?.textContent === expected, closedText, { timeout: 60000 });
+    const reattach = page.getByRole("button", { name: "Reattach", exact: true });
+    check("close1000 shows exact Closed status and accessible enabled Reattach",
+      await reattach.count() === 1 && await reattach.isVisible() && await reattach.isEnabled() &&
+        await page.locator('.term-banner[role="status"] > span').textContent() === closedText);
+    // Observation beyond the first retry slot (1s); this is a negative retry oracle, not a
+    // settling race or a retry used to obtain green. Never type through a closed socket.
+    await page.waitForTimeout(1500);
+    const closed = await page.evaluate(() => ({
+      rows: document.querySelector(".xterm-rows")?.textContent ?? "",
+      banner: document.querySelector(".term-banner > span")?.textContent,
+      connections: window.__t8.connections.filter((f) => f.url.endsWith("/ws/terminal")),
+      closes: window.__t8.closes.filter((f) => f.url.endsWith("/ws/terminal")),
+      sent: window.__t8.wire.filter((f) => f.kind === "out" && f.url.endsWith("/ws/terminal")).length,
+    }));
+    check("close1000 retains output and makes no automatic retry or app-data send",
+      beforeClose.rows.trimEnd().length > 0 && closed.rows.trimEnd() === beforeClose.rows.trimEnd() && closed.banner === closedText &&
+        closed.connections.length === beforeClose.connections && closed.closes.at(-1)?.code === 1000 &&
+        closed.sent === beforeClose.sent,
+      JSON.stringify({ beforeClose, closed }));
+    await writeFile(join(EVIDENCE, "disconnect.json"), JSON.stringify({ beforeClose, closed }, null, 2));
     await waitFor("the attach child to go with the server", 60000, () => attachChildren(sessionName, termOfEcho).length === 0);
     check("SIGTERM on the served process closes its attach child", true);
     // The Pane process itself survives the server that was only attaching to it.
@@ -1093,9 +1241,21 @@ async function main() {
     // ---- evidence ----------------------------------------------------------------------
     check("the page raised no error before the deliberate disconnect", pageErrorsBeforeDisconnect === 0, JSON.stringify(pageErrors.slice(0, 3)));
     check("the page logged no unexpected console error before the deliberate disconnect", consoleErrorsBeforeDisconnect === 0, JSON.stringify(consoleErrors.slice(0, 3)));
-    // After the server is killed, only the refused reconnect may be logged, and only that.
-    const afterDisconnect = consoleErrors.slice(consoleErrorsBeforeDisconnect).filter((t) => !/ERR_CONNECTION_REFUSED|Failed to load resource/.test(t));
-    check("after the deliberate disconnect only the refused reconnect was logged", afterDisconnect.length === 0 && pageErrors.length === 0, JSON.stringify(afterDisconnect.concat(pageErrors).slice(0, 3)));
+    // The independent Machine/Chat /ws intentionally still reconnects (not this lens).
+    // Allow only its exact handshake error and /api/me network errors proven by requestfailed;
+    // never blanket-filter Failed to load resource, or any /ws/terminal error.
+    const afterDisconnect = consoleErrors.slice(consoleErrorsBeforeDisconnect);
+    const allowedNetwork = failedRequests.filter((r) => r.url === `${origin}/api/me` &&
+      /^net::ERR_(EMPTY_RESPONSE|CONNECTION_RESET|CONNECTION_REFUSED)$/.test(r.error ?? ""));
+    const remainingNetwork = allowedNetwork.map((r) => `Failed to load resource: ${r.error}`);
+    const unexpected = afterDisconnect.filter((t) => {
+      if (t === `WebSocket connection to 'ws://${bind}/ws' failed: Connection closed before receiving a handshake response`) return false;
+      const i = remainingNetwork.indexOf(t);
+      if (i >= 0) { remainingNetwork.splice(i, 1); return false; }
+      return true;
+    });
+    check("final close1000 has no unexpected error (only independently evidenced Machine/Chat network loss)", unexpected.length === 0 && pageErrors.length === 0, JSON.stringify({ unexpected, pageErrors, afterDisconnect, failedRequests }));
+    await writeFile(join(EVIDENCE, "disconnect-console.json"), JSON.stringify({ afterDisconnect, failedRequests, unexpected }, null, 2));
     const servedText = servedLog.join("");
     check("the served process logged the graceful shutdown and no panic", servedText.includes("shutting down: closing live terminal attempts") && !/panic/i.test(servedText), servedText.slice(-500));
     const bad = responses.filter((r) => r.status >= 400 && !r.url.endsWith("/favicon.ico"));
@@ -1106,6 +1266,12 @@ async function main() {
     await writeFile(join(EVIDENCE, "version.json"), JSON.stringify({ ...versions, bind, csp, userAgent: await page.evaluate(() => navigator.userAgent) }, null, 2));
     await writeFile(join(EVIDENCE, "checks.json"), JSON.stringify({ passed: step - failures.length, failed: failures, notes, requests: responses.length }, null, 2));
   } finally {
+    if (networkGate) {
+      await writeFile(join(EVIDENCE, "delivery-gate.json"), JSON.stringify({ label: "controlled delivery delay of real Rust frames at native TCP boundary", frames: networkGate.frames }, null, 2)).catch((e) => {
+        failures.push(`cannot save delivery-gate evidence: ${e.message}`);
+      });
+      await networkGate.close();
+    }
     if (browser) await browser.close().catch(() => {});
     // Every process this run started is its own group leader, so one signal per group ends it and
     // anything it spawned (the served process and its attach children, the herdr server and its
