@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Socket } from "../socket";
 import { useWeb } from "../store";
@@ -63,6 +63,23 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("PaneScreen Lens selector", () => {
+  it("puts More beside terminal keys only, and closes it when leaving Terminal", () => {
+    useWeb.setState({ machines: [machine("claude")] as never });
+    rig();
+    expect(screen.queryByLabelText("More")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    const bar = screen.getByRole("toolbar", { name: "Terminal keys" });
+    fireEvent.click(within(bar).getByLabelText("More"));
+    expect(screen.getByRole("menuitem", { name: "Send Ctrl+C" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Send Esc" })).toBeNull();
+    expect(within(bar).getByRole("button", { name: "Esc" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.queryByLabelText("More")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(screen.getByLabelText("More")).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("shows Chat and Terminal controls with the chosen Lens selected", () => {
     useWeb.setState({ machines: [machine("claude")] as never });
     rig();

@@ -4,8 +4,9 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWeb } from "../store";
-import type { MachineView, WebPane } from "../types";
+import { webKey, type MachineView, type WebPane } from "../types";
 import { KeyBar, type LogicalKey } from "./KeyBar";
+import { TerminalMenu } from "./TerminalMenu";
 import { controlCharacter, cursorKey, UserEntry } from "./input";
 import { TerminalSocket } from "./socket";
 import type { TerminalEvent, TerminalSize } from "./types";
@@ -645,7 +646,7 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
         onTakeOver={() => socket.current?.start(currentSize(), true)}
       />
       <div className="term-host" ref={host} data-testid="terminal-host" />
-      <KeyBar disabled={!canType(attempt, target, visible)} ctrl={ctrl} onCtrl={onCtrl} onKey={onKey} />
+      <KeyBar disabled={!canType(attempt, target, visible)} ctrl={ctrl} onCtrl={onCtrl} onKey={onKey} actions={<TerminalMenu key={webKey(pane)} pane={pane} />} />
     </div>
   );
 }

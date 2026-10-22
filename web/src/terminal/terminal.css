@@ -38,13 +38,23 @@
   display: flex;
   gap: 6px;
   padding: 6px 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  position: relative;
   background: var(--surface-1);
   border-top: 1px solid var(--line);
-  /* A swipe along the bar scrolls the bar, not the page. */
+}
+
+/* Only the keys scroll. More stays reachable and its popover is never clipped. */
+.term-keys-scroll {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+  overflow-x: auto;
   overscroll-behavior-x: contain;
 }
+.term-menu { flex: none; }
+.term-menu .term-key { display: grid; place-items: center; }
+.term-menu .term-menu-popover { top: auto; bottom: calc(100% + 6px); }
 
 .term-key {
   flex: none;

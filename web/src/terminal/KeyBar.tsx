@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 export type LogicalKey = "escape" | "tab" | "up" | "down" | "left" | "right";
 
 /**
@@ -11,11 +13,13 @@ export function KeyBar({
   ctrl,
   onCtrl,
   onKey,
+  actions,
 }: {
   disabled: boolean;
   ctrl: boolean;
   onCtrl(): void;
   onKey(key: LogicalKey): void;
+  actions?: ReactNode;
 }) {
   const keepFocus = (e: React.MouseEvent) => e.preventDefault();
   const keys: { key: LogicalKey; label: string; text: string }[] = [
@@ -28,43 +32,46 @@ export function KeyBar({
   ];
   return (
     <div className="term-keys" role="toolbar" aria-label="Terminal keys">
-      {keys.slice(0, 2).map((k) => (
+      <div className="term-keys-scroll">
+        {keys.slice(0, 2).map((k) => (
+          <button
+            key={k.key}
+            type="button"
+            className="term-key"
+            aria-label={k.label}
+            disabled={disabled}
+            onMouseDown={keepFocus}
+            onClick={() => onKey(k.key)}
+          >
+            {k.text}
+          </button>
+        ))}
         <button
-          key={k.key}
           type="button"
-          className="term-key"
-          aria-label={k.label}
+          className="term-key term-key-ctrl"
+          aria-label="Ctrl"
+          aria-pressed={ctrl}
           disabled={disabled}
           onMouseDown={keepFocus}
-          onClick={() => onKey(k.key)}
+          onClick={onCtrl}
         >
-          {k.text}
+          Ctrl
         </button>
-      ))}
-      <button
-        type="button"
-        className="term-key term-key-ctrl"
-        aria-label="Ctrl"
-        aria-pressed={ctrl}
-        disabled={disabled}
-        onMouseDown={keepFocus}
-        onClick={onCtrl}
-      >
-        Ctrl
-      </button>
-      {keys.slice(2).map((k) => (
-        <button
-          key={k.key}
-          type="button"
-          className="term-key"
-          aria-label={k.label}
-          disabled={disabled}
-          onMouseDown={keepFocus}
-          onClick={() => onKey(k.key)}
-        >
-          {k.text}
-        </button>
-      ))}
+        {keys.slice(2).map((k) => (
+          <button
+            key={k.key}
+            type="button"
+            className="term-key"
+            aria-label={k.label}
+            disabled={disabled}
+            onMouseDown={keepFocus}
+            onClick={() => onKey(k.key)}
+          >
+            {k.text}
+          </button>
+        ))}
+      </div>
+      {actions}
     </div>
   );
 }

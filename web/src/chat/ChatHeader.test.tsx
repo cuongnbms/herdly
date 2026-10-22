@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import { useWeb } from "../store";
@@ -50,45 +50,13 @@ describe("ChatHeader", () => {
     expect(screen.queryByLabelText(/need you/)).toBeNull();
   });
 
-  it("sends Esc from the menu at once and closes it", async () => {
-    render(<ChatHeader pane={pane} onBack={() => {}} />);
-    fireEvent.click(screen.getByLabelText("More"));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Send Esc" }));
-    await waitFor(() => expect(api.paneKeys).toHaveBeenCalledWith(pane, ["esc"]));
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  });
-
-  it("asks twice before Ctrl+C, and forgets the first tap after 3 s", async () => {
-    vi.useFakeTimers();
-    try {
-      render(<ChatHeader pane={pane} onBack={() => {}} />);
-      fireEvent.click(screen.getByLabelText("More"));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Send Ctrl+C" }));
-      expect(api.paneKeys).not.toHaveBeenCalled();
-      expect(screen.getByRole("menuitem", { name: "Tap again to send Ctrl+C" })).toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(3000));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Send Ctrl+C" }));
-      expect(api.paneKeys).not.toHaveBeenCalled();
-      await act(async () => fireEvent.click(screen.getByRole("menuitem", { name: "Tap again to send Ctrl+C" })));
-      expect(api.paneKeys).toHaveBeenCalledWith(pane, ["ctrl+c"]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("shows why a key failed, in the menu", async () => {
-    vi.mocked(api.paneKeys).mockRejectedValueOnce(new Error("pane gone"));
-    render(<ChatHeader pane={pane} onBack={() => {}} />);
-    fireEvent.click(screen.getByLabelText("More"));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Send Esc" }));
-    await waitFor(() => expect(within(screen.getByRole("menu")).getByRole("alert")).toHaveTextContent("pane gone"));
-  });
-
-  it("closes the menu on a tap outside it", () => {
-    render(<ChatHeader pane={pane} onBack={() => {}} />);
-    fireEvent.click(screen.getByLabelText("More"));
-    fireEvent.click(document.querySelector("[data-backdrop]")!);
-    expect(screen.queryByRole("menu")).toBeNull();
+  it("leaves terminal actions out of the header in either lens", () => {
+    const { rerender } = render(<ChatHeader pane={pane} onBack={() => {}} lens="chat" />);
+    expect(screen.getByLabelText("Back")).toBeInTheDocument();
+    expect(screen.queryByLabelText("More")).toBeNull();
+    rerender(<ChatHeader pane={pane} onBack={() => {}} lens="terminal" />);
+    expect(screen.getByLabelText("Back")).toBeInTheDocument();
+    expect(screen.queryByLabelText("More")).toBeNull();
   });
 
   it("opens the Pane sheet from the title; another Pane switches, the current one only closes", () => {

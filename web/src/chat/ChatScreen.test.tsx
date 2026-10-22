@@ -152,7 +152,7 @@ describe("ChatScreen", () => {
     expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("hello");
   });
 
-  it("replaces the Composer with the prompt card while blocked; Esc and Ctrl+C are in the menu", async () => {
+  it("replaces the Composer with the prompt card while blocked, without terminal actions", async () => {
     open([]);
     expect(render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />).container).toBeTruthy();
     expect(screen.getByLabelText("Message")).toBeInTheDocument();
@@ -163,9 +163,7 @@ describe("ChatScreen", () => {
     render(<ChatScreen pane={pane} onBack={() => {}} onRetry={() => {}} />);
     expect(screen.queryByLabelText("Message")).toBeNull();
     expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
-    fireEvent.click(screen.getByLabelText("More"));
-    expect(screen.getByRole("menuitem", { name: "Send Esc" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Send Ctrl+C" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("More")).toBeNull();
     await waitFor(() => expect(screen.getByText("Do you want to proceed?")).toBeInTheDocument());
   });
 
