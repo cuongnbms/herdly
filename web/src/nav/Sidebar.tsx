@@ -4,6 +4,7 @@ import { webKey, type WebPane } from "../types";
 import { ChevronIcon } from "../ui/icons";
 import { AgentMark } from "../list/PaneCard";
 import { markSeen } from "../list/seen";
+import { SessionSelect } from "./SessionSelect";
 
 function Branch({ label, count, expanded, onToggle, children }: {
   label: string;
@@ -40,7 +41,6 @@ export function Sidebar({ current, selectedSession, onSelectSession, expandedWor
   const defaultWorkspace = session?.workspaces.find((workspace) => current?.session === session.name
     && workspace.tabs.some((tab) => tab.panes.some((pane) => pane.pane_id === current.pane_id)))
     ?? session?.workspaces[0];
-  const selectorId = useId();
   useEffect(() => {
     if (session && session.name !== selectedSession) onSelectSession(session.name);
   }, [session?.name, selectedSession, onSelectSession]);
@@ -88,10 +88,7 @@ export function Sidebar({ current, selectedSession, onSelectSession, expandedWor
           <button type="button" className="icon-btn" aria-label="Close sidebar" onClick={onClose}>×</button>
         </header>
         {session && <div className="sidebar-session-picker">
-          <label htmlFor={selectorId}>Session</label>
-          <select id={selectorId} value={session.name} onChange={(e) => onSelectSession(e.target.value)}>
-            {machine?.sessions.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
-          </select>
+          <SessionSelect value={session.name} options={machine?.sessions.map((s) => s.name) ?? []} onChange={onSelectSession} />
         </div>}
         <nav className="sidebar-body" aria-label="Sessions and Workspaces">
           {!machine?.sessions.length && <p className="sidebar-empty">No Sessions</p>}
