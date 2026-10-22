@@ -58,7 +58,7 @@ The backend without Tauri is the `herdly-core` crate in `src-tauri/core/` (herdr
 transcripts, attach, git, files); the app in `src-tauri/src/` is the Tauri layer over it.
 `cargo test --workspace` and `cargo clippy --workspace` in `src-tauri` cover the app, `herdly-core` and `herdly-web`.
 
-Herdly Web (`src-tauri/web/`, `web/`) serves this Machine's Pane list and Chat lens to a phone; see [web/README.md](web/README.md).
+Herdly Web (`src-tauri/web/`, `web/`) serves this Machine's Pane list, Chat lens and mobile Terminal lens to a phone; see [web/README.md](web/README.md). Its manual phone checks are [docs/mobile-terminal-checklist.md](docs/mobile-terminal-checklist.md).
 
 To use a local build day to day, `mise run sign:setup` once, then `mise run install:app`. The
 install signs Herdly.app with that local identity: an ad-hoc signed build is a new app to macOS
@@ -82,5 +82,10 @@ The ignored integration tests start isolated sessions named `herdly-test-*` on t
 - Remote shells must be POSIX-compatible (no fish or nushell as login shell).
 - The Chat lens supports Claude Code and pi only; other agents open in the Terminal lens.
 - A terminal that is attached elsewhere is held: use Take over to attach it here.
+
+Herdly Web's mobile Terminal lens has its own limits, documented in [web/README.md](web/README.md):
+input typed while the page is backgrounded is gone, the reported exit code is the attach
+command's, an application's terminal modes are not mirrored, and it is meant for the trusted
+WireGuard network only.
 
 See `GLOSSARY.md` for the domain vocabulary, `docs/` for the design spec and ADRs, and `THIRD_PARTY_NOTICES.md` for upstream credits.
