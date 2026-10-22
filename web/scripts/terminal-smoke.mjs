@@ -978,10 +978,11 @@ async function main() {
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
     const scrollBefore = await page.evaluate(() => window.scrollY);
+    // Finger down: the natural gesture that reveals older output from the bottom.
     const swipe = async (x, y, steps) => {
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: y + 140 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: y - 140 }] });
       for (let i = 1; i <= steps; i++) {
-        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + 140 - i * 20 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y - 140 + i * 20 }] });
       }
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     };

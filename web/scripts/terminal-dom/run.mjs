@@ -368,28 +368,40 @@ async function main() {
       await window.feed("\x1b[?1000h\x1b[?1006h");
     });
     await page.waitForTimeout(400);
-    const before = await page.evaluate(() => {
-      const rows = document.querySelector(".xterm-rows");
-      return rows?.textContent ?? "";
-    });
+    /** The `line N` shown on the grid's top row: smaller is older scrollback. */
+    const topLine = () =>
+      page.evaluate(() => {
+        const match = /line (\d+)/.exec(document.querySelector(".xterm-rows")?.firstElementChild?.textContent ?? "");
+        return match ? Number(match[1]) : null;
+      });
     const box = await page.locator(".xterm-screen").boundingBox();
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
-    // A real one-finger swipe on a touch-enabled Chromium context.
+    // A real one-finger swipe on a touch-enabled Chromium context; `dy` is the finger's travel.
     await page.touchscreen.tap(cx, cy).catch(() => {});
     const client = await page.context().newCDPSession(page);
-    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy + 80 }] });
-    for (let step = 1; step <= 8; step++) {
-      await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy + 80 - step * 20 }] });
-    }
-    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-    await page.waitForTimeout(300);
-    const after = await page.evaluate(() => {
-      const rows = document.querySelector(".xterm-rows");
-      return rows?.textContent ?? "";
-    });
+    const swipe = async (dy) => {
+      const from = cy - dy / 2;
+      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: from }] });
+      for (let step = 1; step <= 8; step++) {
+        await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: from + (dy * step) / 8 }] });
+      }
+      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await page.waitForTimeout(300);
+    };
+    // Natural phone scrolling: the content follows the finger, so pulling down reveals older
+    // lines and, at the bottom, pushing up has nothing newer to show.
+    const atBottom = await topLine();
+    await swipe(-160);
+    const afterUp = await topLine();
+    check("finger up at the bottom stays on the newest output", afterUp === atBottom, `${atBottom} -> ${afterUp}`);
+    await swipe(160);
+    const afterDown = await topLine();
+    check("finger down scrolls into older scrollback", atBottom !== null && afterDown !== null && afterDown < atBottom, `${atBottom} -> ${afterDown}`);
+    await swipe(-160);
+    const afterBack = await topLine();
+    check("finger up scrolls back toward newer output", afterDown !== null && afterBack !== null && afterBack > afterDown, `${afterDown} -> ${afterBack}`);
     const touchLog = (await log()).filter((e) => e.kind === "input" || e.kind === "reply");
-    check("swipe scrolled scrollback", before !== after, `${JSON.stringify(before.slice(0, 40))} -> ${JSON.stringify(after.slice(0, 40))}`);
     check("swipe sent no pointer reports", touchLog.length === 0, JSON.stringify(touchLog));
 
     // A tap focuses without clicking a terminal target.
