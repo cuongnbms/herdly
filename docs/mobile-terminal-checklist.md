@@ -86,6 +86,12 @@ Status: **awaiting a real phone** (no Android device has run any row below).
   normal-mode form, and a TUI's mouse reporting is not driven from the phone. Verified in the
   smoke: with the Pane really setting `ESC[?1h`, the stream carries only cursor-visibility and
   synchronized-output modes and the Pane receives `ESC[A`.
+- **Terminal queries are answered by herdr, not by the browser's xterm.** herdr emulates each
+  Pane's terminal, so a query a program writes (`ESC[c`, `ESC[5n`, an OSC colour query) is answered
+  inside herdr; the client never sees the query. Measured: the Pane's own screen shows the answer
+  (`ESC[?62;22c`), and the browser's socket carries no query. The one query that does reach a
+  client is herdr's startup probe, answered by `herdly-core`'s attach reader by approved design.
+  Nothing in this checklist depends on the phone answering a terminal query.
 - **Same trusted network only.** The server speaks plain HTTP on the WireGuard address; the hub
   can read the traffic. Do not expose it to the internet or an untrusted LAN.
 - **The desktop app is unaffected.** The lens is a browser surface; no desktop UI or IPC changes

@@ -35,6 +35,13 @@ harmless: the Pane just follows its Agent again.
 - **Terminal modes are not mirrored.** herdr 0.9.5's attach stream carries the Pane's screen but
   not its DECSET modes, so the key bar's arrows always send the normal-mode cursor key and a TUI's
   mouse reporting is not driven from the phone.
+- **Terminal queries are answered by herdr, not by the browser.** herdr runs its own terminal
+  emulation for each Pane, so a query a program in the Pane writes (`ESC[c`, `ESC[5n`, a DECRQSS,
+  an OSC colour query) is answered inside herdr and only the answer reaches the Pane's screen. The
+  one query that reaches a client is herdr's own startup probe, which `herdly-core`'s attach reader
+  recognises and answers itself. Measured with herdr 0.9.5: a Pane printing `ESC[c` after attach
+  produces `ESC[?62;22c` in the Pane's own output, and the browser's stream never carries the
+  query.
 - **Inline styles only.** The CSP the server sends for HTML is `default-src 'self'; connect-src
   'self' ws://<origin>; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none';
   base-uri 'none'`. `'unsafe-inline'` is for xterm's runtime-generated styles and style
@@ -178,14 +185,17 @@ The Terminal lens has two automated proofs and one it cannot have:
 
 ```sh
 # The real production bundle through the real Rust middleware and a real herdr Session.
-# Builds `web/dist`, starts only temporary local fixtures, exits non-zero on a failed assertion.
-(cd web && node scripts/terminal-smoke.mjs)
+# Builds `web/dist` and `herdly-web`, starts only temporary local fixtures, and exits non-zero on
+# a failed assertion. Works from the repo root as well: node web/scripts/terminal-smoke.mjs
+node web/scripts/terminal-smoke.mjs
 
-# Real herdr lifecycle (attach, Held, takeover, resize, exit, SIGTERM with a live attach).
+# Real herdr lifecycle (attach, Held, takeover, resize, exit, slow-ACK exit, SIGTERM with a live attach).
 cargo test --manifest-path src-tauri/Cargo.toml -p herdly-web \
   --test terminal_herdr -- --ignored --test-threads=1
 ```
 
+The smoke builds `web/dist` itself (in `web/`, so it is that project's bundle) and builds
+`herdly-web` first, so it works from a fresh checkout and from either the repo root or `web/`.
 Both are opt-in because they need a `herdr` binary and start a server: set `HERDR_TEST_BIN` to
 the binary (else `herdr` from `PATH`), and `CHROMIUM` to a browser executable for the smoke (else
 the Playwright cache is used). They create a private Session, `HOME`, `XDG_CONFIG_HOME` and

@@ -34,8 +34,9 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
@@ -51,8 +52,20 @@ const EVIDENCE = join(RUNS, "browser-smoke");
  */
 const ECHO_SCRIPT = `while IFS= read -r line; do
   case "$line" in
-    size) set -- $(stty size); printf 'SIZE:%s:%s\\n' "$1" "$2" ;;
+    size*) set -- $(stty size); printf 'SIZE:%s:%s:%s\\n' "$1" "$2" "$(printf '%s' "$line" | cut -d' ' -f2-)" ;;
     spam) i=0; while [ $i -lt 200 ]; do printf 'ROW_%s\\n' "$i"; i=$((i+1)); done ;;
+    *) printf 'GOT:%s\\n' "$line" ;;
+  esac
+done`;
+/**
+ * The echo script plus a `query` request: it prints a real DA1 request (`ESC[c`) into its own
+ * output, so the *page's* xterm receives a terminal query over the real transport and has to
+ * answer it. `query` is answered with a marker so the test knows when it ran.
+ */
+const QUERY_SCRIPT = `while IFS= read -r line; do
+  case "$line" in
+    query) printf '\\033[c'; printf 'QUERY-SENT\\n' ;;
+    size*) set -- $(stty size); printf 'SIZE:%s:%s:%s\\n' "$1" "$2" "$(printf '%s' "$line" | cut -d' ' -f2-)" ;;
     *) printf 'GOT:%s\\n' "$line" ;;
   esac
 done`;
@@ -131,9 +144,9 @@ function fixtureEnv(root) {
   };
 }
 
-function run(program, args, { env } = {}) {
+function run(program, args, { env, cwd } = {}) {
   return new Promise((done) => {
-    const child = spawn(program, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(program, args, { env, cwd, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (b) => (stdout += b));
@@ -191,24 +204,61 @@ async function fetchJson(url, cookie) {
 
 /** Records securitypolicyviolation events and page-level errors for the checks. */
 const PAGE_PROBE = `
-window.__t8 = window.__t8 || { violations: [] };
+window.__t8 = window.__t8 || { violations: [], wire: [], events: [] };
+for (const ty of ["paste", "beforeinput", "input", "keydown", "compositionend"]) {
+  document.addEventListener(ty, (e) => {
+    window.__t8.events.push({ ty, cls: e.constructor.name, data: e.data ?? (e.clipboardData ? e.clipboardData.getData("text/plain") : null), key: e.key ?? null, prevented: e.defaultPrevented, attached: (document.querySelector(".term-banner")?.textContent ?? "attached") });
+  }, true);
+}
 window.addEventListener("securitypolicyviolation", (e) => {
   window.__t8.violations.push({ directive: e.violatedDirective, blocked: e.blockedURI });
 });
+// Record what the lens itself puts on the socket, with the phase the page was in at that
+// instant: this is the wire oracle, not a guess from rendered output.
+(() => {
+  const Native = window.WebSocket;
+  function Recording(url, protocols) {
+    const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
+    const log = (kind, data) => {
+      const bytes = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data.buffer ?? data);
+      window.__t8.wire.push({
+        kind,
+        text: new TextDecoder().decode(bytes),
+        hex: [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(" "),
+        len: bytes.length,
+        banner: document.querySelector(".term-banner")?.textContent ?? null,
+        at: Date.now(),
+      });
+    };
+    const send = ws.send.bind(ws);
+    ws.send = (data) => { log("out", data); return send(data); };
+    ws.addEventListener("message", (e) => { if (typeof e.data !== "string") log("in", e.data); });
+    return ws;
+  }
+  Recording.prototype = Native.prototype;
+  window.WebSocket = Recording;
+})();
 `;
 
 async function main() {
   const build = !process.argv.includes("--no-build");
+  if (process.platform !== "linux") {
+    throw new Error(`this smoke reads /proc to count attach children, so it runs on Linux only (platform: ${process.platform})`);
+  }
   const herdr = herdrPath();
   if (!herdr) throw new Error("no herdr binary: set HERDR_TEST_BIN or put herdr on PATH");
   const chrome = browserPath();
   if (!chrome) throw new Error("no Chromium: set CHROMIUM to a browser executable");
+  // The binary is built before it is looked for: a fresh checkout has no target/ directory, and
+  // refusing to start there would fail a run that could simply have built what it needs.
   const binary = process.env.T8_BIN ?? join(REPO, "src-tauri/target/debug/herdly-web");
-  if (!existsSync(binary)) throw new Error(`no herdly-web binary at ${binary}: build it first`);
-  // The fixture must serve the source under test, not a binary built before this run: an
-  // incremental rebuild here is seconds, and a stale server would silently prove nothing.
-  const built = await run("cargo", ["build", "--manifest-path", join(REPO, "src-tauri/Cargo.toml"), "-p", "herdly-web"], { env: process.env });
-  if (built.code !== 0) throw new Error(`cargo build -p herdly-web failed: ${built.stderr.slice(-2000)}`);
+  if (!process.env.T8_BIN) {
+    // The fixture must serve the source under test, not a binary built before this run: an
+    // incremental rebuild here is seconds, and a stale server would silently prove nothing.
+    const built = await run("cargo", ["build", "--manifest-path", join(REPO, "src-tauri/Cargo.toml"), "-p", "herdly-web"], { env: process.env });
+    if (built.code !== 0) throw new Error(`cargo build -p herdly-web failed: ${built.stderr.slice(-2000)}`);
+  }
+  if (!existsSync(binary)) throw new Error(`no herdly-web binary at ${binary} after the build`);
 
   await mkdir(EVIDENCE, { recursive: true });
   const root = await mkdtemp(join(tmpdir(), "herdr-web-smoke-"));
@@ -242,13 +292,36 @@ async function main() {
     note(`fixture root ${root}`);
 
     // ---- the production bundle, built by the real build command -------------------------
-    if (build) {
-      const built = await run(join(WEB, "node_modules/.bin/vite"), ["build", "--logLevel", "warn"], { env: process.env });
-      if (built.code !== 0) throw new Error(`vite build failed: ${built.stderr || built.stdout}`);
-    }
+    // Vite resolves its project from the process cwd, not from where its binary lives: run it
+    // inside `web/`, or from the repo root it would build the desktop app's own index.html into
+    // the root `dist/` while this smoke kept serving `web/dist` from a previous run. The bundle
+    // the server serves is therefore proven to be the one this run produced.
     const dist = join(WEB, "dist");
+    /** Milliseconds of the newest JavaScript asset in `web/dist/assets`. */
+    const newestAsset = () => {
+      const dir = join(dist, "assets");
+      if (!existsSync(dir)) return 0;
+      const files = readdirSync(dir).filter((f) => f.endsWith(".js"));
+      return files.length === 0 ? 0 : Math.max(...files.map((f) => statSync(join(dir, f)).mtimeMs));
+    };
+    // A build starting now must produce assets newer than this instant. That is what ties the
+    // served bundle to this invocation: an earlier `web/dist`, or one Vite wrote into the repo
+    // root because it was run from the wrong project, cannot satisfy it.
+    const buildStartedAt = Date.now();
+    const staleBefore = newestAsset();
+    if (build) {
+      const built = await run(join(WEB, "node_modules/.bin/vite"), ["build", "--logLevel", "warn"], { env: process.env, cwd: WEB });
+      if (built.code !== 0) throw new Error(`vite build in ${WEB} failed: ${built.stderr || built.stdout}`);
+      note(`vite build ran with cwd ${WEB}`);
+    }
     const indexHtml = await readFile(join(dist, "index.html"), "utf8");
-    check("production bundle built, with an HTML entry", indexHtml.includes('<div id="root">'), indexHtml.slice(0, 120));
+    check(
+      "the served bundle is the web app's, built by this run",
+      indexHtml.includes('<div id="root">') &&
+        readFileSync(join(WEB, "package.json"), "utf8").includes("herdly-web-ui") &&
+        (!build || (newestAsset() >= buildStartedAt - 1000 && newestAsset() >= staleBefore)),
+      `index=${indexHtml.length}B newest=${new Date(newestAsset()).toISOString()} buildStart=${new Date(buildStartedAt).toISOString()} staleBefore=${staleBefore ? new Date(staleBefore).toISOString() : "none"}`,
+    )
 
     // ---- a private herdr server with three Panes ----------------------------------------
     server = spawn(herdr, ["--session", sessionName, "server"], { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
@@ -257,7 +330,7 @@ async function main() {
     server.stderr.on("data", (b) => serverLog.push(String(b)));
     await waitFor("the fixture herdr server", 60000, async () => (await run(herdr, ["--session", sessionName, "api", "snapshot"], { env })).code === 0);
 
-    const scripts = { echo: ECHO_SCRIPT, raw: RAW_SCRIPT, mouse: MOUSE_SCRIPT, appkeys: APPKEYS_SCRIPT };
+    const scripts = { echo: ECHO_SCRIPT, query: QUERY_SCRIPT, raw: RAW_SCRIPT, mouse: MOUSE_SCRIPT, appkeys: APPKEYS_SCRIPT };
     /** Creates a Workspace whose root Pane runs `scriptName`, and waits until it answers. */
     const makePane = async (scriptName, boot) => {
       const file = join(root, `pane-${scriptName}-${randomBytes(2).toString("hex")}.sh`);
@@ -274,6 +347,7 @@ async function main() {
       return { paneId: json.pane_id, terminalId: json.terminal_id };
     };
     const echoPane = await makePane("echo", "BOOT");
+    const queryPane = await makePane("query", "READY");
     const mousePane = await makePane("mouse", "READY");
     const appPane = await makePane("appkeys", "READY");
     note(`fixture Session ${sessionName}: echo=${echoPane.paneId} mouse=${mousePane.paneId} appkeys=${appPane.paneId}`);
@@ -291,6 +365,9 @@ async function main() {
       const child = spawn(binary, ["serve", "--bind", bind, "--origin", origin, "--static", dist, "--state", stateDir], {
         env: Object.assign({}, env, { RUST_LOG: "info" }),
         stdio: ["ignore", "pipe", "pipe"],
+        // Its own group, so cleanup can end it and every attach child it started in one signal
+        // instead of racing them one by one.
+        detached: true,
       });
       children.push(child);
       child.stdout.on("data", (b) => servedLog.push(String(b)));
@@ -354,6 +431,54 @@ async function main() {
     page.on("response", (r) => responses.push({ url: r.url(), status: r.status(), type: r.request().resourceType() }));
     const cdp = await context.newCDPSession(page);
 
+  /**
+   * The Pane's own PTY grid, as it reports it, ordered `rows:cols` like `stty size`.
+   *
+   * It overloads the echo script's `size` request with a unique tag, answers with
+   * `SIZE:<rows>:<cols>:<tag>`, and waits in the *rendered* terminal for that tag, so a stale
+   * report from an earlier viewport can never satisfy this question.
+   */
+  let sizeSeq = 0;
+  const ptyGrid = async (paneId) => {
+    const tag = `g${++sizeSeq}x${randomBytes(2).toString("hex")}`;
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.type(`size ${tag}`, { delay: 6 });
+    await page.keyboard.press("Enter");
+    let last = "";
+    for (let i = 0; i < 120; i++) {
+      last = await page.evaluate(() => document.querySelector(".xterm-rows")?.textContent ?? "");
+      const m = last.match(new RegExp(`SIZE:(\\d+):(\\d+):${tag}`));
+      if (m) return { rows: Number(m[1]), cols: Number(m[2]), tag };
+      await page.waitForTimeout(200);
+    }
+    throw new Error(`no PTY size for ${tag}; last rows: ${JSON.stringify(last.slice(-200))}`);
+  };
+  /**
+   * The grid the browser's terminal actually has, measured from what xterm rendered.
+   *
+   * xterm keeps its cell size on the helper textarea (one cell wide, one cell tall) and sizes
+   * `.xterm-screen` to `cols × cellWidth` by `rows × cellHeight`, so the screen box divided by that
+   * cell size is the grid it is rendering. The rendered row elements are a cross-check: xterm
+   * writes one `<div>` per visible row. Neither number comes from what the lens says it sent.
+   */
+  const browserGrid = () =>
+    page.evaluate(() => {
+      const screen = document.querySelector(".xterm-screen");
+      const ta = document.querySelector(".xterm-helper-textarea");
+      const rows = document.querySelector(".xterm-rows");
+      if (!screen || !ta) return { cols: 0, rows: 0, why: "no xterm" };
+      const cellW = parseFloat(ta.style.width) || ta.getBoundingClientRect().width;
+      const cellH = parseFloat(ta.style.height) || ta.getBoundingClientRect().height;
+      const box = screen.getBoundingClientRect();
+      return {
+        cols: cellW > 0 ? Math.round(box.width / cellW) : 0,
+        rows: cellH > 0 ? Math.round(box.height / cellH) : 0,
+        cell: { w: Math.round(cellW * 1000) / 1000, h: Math.round(cellH * 1000) / 1000 },
+        screenPx: { w: Math.round(box.width), h: Math.round(box.height) },
+        domRows: rows ? rows.children.length : 0,
+      };
+    });
+
     await page.goto(origin, { waitUntil: "networkidle" });
 
     // A page-local inline script must be refused by the real CSP. The violation listener is
@@ -376,49 +501,155 @@ async function main() {
     const cspInBrowser = await page.evaluate(async () => (await fetch("/", { credentials: "same-origin" })).headers.get("content-security-policy") ?? "");
     check("the browser reads the same CSP the middleware sends", cspInBrowser === csp, cspInBrowser);
 
-    // ---- the settling window: no user paste or IME leak before Attached -----------------
-    // The window is real but short (herdr settles the attach for ~400 ms), so this retries the
-    // navigation until it catches the lens in `connecting`, and then proves through the Pane's
-    // own output that nothing the user typed, pasted or composed reached it.
+    // ---- the settling window: query/reply, and no user input before Attached ------------
+    // Three requirements meet here, and each is checked on the wire rather than in rendered text:
+    //   (a) xterm answers a terminal query while the attempt is still settling,
+    //   (b) a trusted IME composition and a trusted paste reach nothing while settling,
+    //   (c) the same composition and paste *do* reach the Pane once Attached — the positive
+    //       control that proves the harness can deliver them at all.
+    // `window.__t8.wire` records every frame the lens sent, with the banner text at that moment.
     const settleToken = `SETTLE_${process.pid}_${Date.now()}`;
+    const imeText = `ướ${settleToken}`;
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+
+    // --- (a) a real query during settling ------------------------------------------------
+    // herdr 0.9.5 strips and answers its own startup probe inside core, so the production page
+    // never sees that one. What it CAN see is a query a Pane writes later, which herdr forwards:
+    // measured here, a Pane printing `ESC[c` after attach does reach the client's stream. So the
+    // query is produced by the Pane and the reply must come from xterm on the wire, while the
+    // lens still says Connecting — the exact requirement, on the exact path.
+    let queryProbe = null;
     let caughtSettling = null;
-    for (let attempt = 0; attempt < 6 && caughtSettling === null; attempt++) {
+    for (let attempt = 0; attempt < 8 && caughtSettling === null; attempt++) {
       if (attempt > 0) {
         await page.locator('button[aria-label="Back"]').first().tap();
         await page.waitForSelector(".pane-card", { timeout: 60000 });
       }
-      await page.locator(card(echoPane.paneId)).first().tap();
+      await page.evaluate(() => (window.__t8.wire.length = 0));
+      await page.locator(card(queryPane.paneId)).first().tap();
       await page.waitForSelector(".xterm-helper-textarea", { timeout: 60000 });
-      const connecting = await page.locator(".term-banner", { hasText: "Connecting…" }).count();
-      if (connecting === 0) continue;
-      // The clipboard text ends with Enter: a leak would make the Pane's echo script print it
-      // immediately, so the check below can see a leak rather than only its absence.
+      if ((await page.locator(".term-banner", { hasText: "Connecting…" }).count()) === 0) continue;
+      // The Pane writes the query itself; the CLI types it, so the request reaches the Pane at
+      // the same moment the browser is still settling.
+      const sentAt = Date.now();
+      await run(herdr, ["--session", sessionName, "pane", "run", queryPane.paneId, "query"], { env });
       await page.evaluate((text) => navigator.clipboard.writeText(`${text}\r`), settleToken);
       await page.locator(".xterm-helper-textarea").focus();
-      // trusted: a real modifier-key chord reaches the browser's own paste path.
-      await page.keyboard.press("Control+V");
-      // scripted: an IME composition, which Chromium cannot be driven into headlessly.
-      await page.evaluate(() => {
-        const ta = document.querySelector(".xterm-helper-textarea");
-        ta.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
-        ta.dispatchEvent(new CompositionEvent("compositionupdate", { data: "ướ" }));
-        ta.dispatchEvent(new CompositionEvent("compositionend", { data: "ướ" }));
-      });
-      caughtSettling = { connectingAt: Date.now() };
+      const focusState = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: 2, commands: ["paste"] });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: 2 });
+      await cdp.send("Input.imeSetComposition", { text: imeText, selectionStart: imeText.length, selectionEnd: imeText.length });
+      await cdp.send("Input.insertText", { text: imeText });
+      const afterState = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
+      // Wait for the Pane's own marker to have been rendered, so the query really went out.
+      await page.waitForFunction(() => (document.querySelector(".xterm-rows")?.textContent ?? "").includes("QUERY-SENT"), null, { timeout: 30000 }).catch(() => {});
+      const wire = await page.evaluate(() => window.__t8.wire.slice());
+      // A reply is an OUT frame that is not a JSON command and contains a terminal response
+      // sequence. herdr's redraw echoes the Pane's own stream back as text, so only OUT frames
+      // count: the browser's socket send is the only thing that can be a reply from xterm.
+      const replies = wire.filter((f) => f.kind === "out" && !f.text.startsWith("{") && /\x1b\[[?>]?[0-9;]*[cnR]/.test(f.text));
+      caughtSettling = { focusState, afterState, frames: wire.length, sentAt, paneOutput: await paneRead(queryPane.paneId, 20) };
+      if (replies.length > 0) queryProbe = { replies, wire };
     }
-    check("the lens was caught in its settling window to test it", caughtSettling !== null, JSON.stringify(caughtSettling));
+    check("the lens was caught in its settling window to test it", caughtSettling !== null, JSON.stringify({ ...caughtSettling, paneOutput: undefined }));
+    check(
+      "the page reported Connecting… at both ends of the settling inputs",
+      caughtSettling !== null && caughtSettling.focusState?.includes("Connecting") && caughtSettling.afterState?.includes("Connecting"),
+      JSON.stringify({ focus: caughtSettling?.focusState, after: caughtSettling?.afterState }),
+    );
+    check(
+      "the Pane really wrote its DA1 query during the settling window",
+      caughtSettling !== null && /QUERY-SENT/.test(caughtSettling.paneOutput),
+      JSON.stringify(caughtSettling?.paneOutput?.slice(-200)),
+    );
+    writeFileSync(
+      join(EVIDENCE, "settling-wire.json"),
+      JSON.stringify({ settleToken, imeText, caughtSettling, queryProbe, wire: (queryProbe?.wire ?? []).concat(await page.evaluate(() => window.__t8.wire.slice())) }, null, 2),
+    );
+    // MEASURED LIMITATION, and an open requirement rather than a covered one.
+    //
+    // The brief asks for a real xterm query/reply during settling. On this transport it cannot
+    // happen: herdr 0.9.5 runs its own terminal emulation for the Pane, so a query the Pane writes
+    // (`ESC[c`, measured above) is answered *inside herdr* and only the answer appears in the
+    // Pane's screen — the client's own stream never carries the query, and therefore xterm is
+    // never asked and never replies. The one query that does reach a client is herdr's startup
+    // probe, which `herdly-core`'s attach reader recognises and answers itself (PROBE/PROBE_REPLY),
+    // by approved design from Task 2. So this assertion states what really happened; the
+    // requirement itself stays open in the report for a controller ruling.
+    const queryReachedPage = (queryProbe?.wire ?? (await page.evaluate(() => window.__t8.wire.slice()))).some(
+      (f) => f.kind === "in" && /\x1b\[c/.test(f.text),
+    );
+    check(
+      "herdr's emulation answers the Pane's query itself: it never reaches xterm (open requirement)",
+      caughtSettling !== null && /\^\[\[\?62;22c|\[\?62;22c/.test(await paneRead(queryPane.paneId, 20)) && !queryReachedPage,
+      JSON.stringify({ paneAnswered: (await paneRead(queryPane.paneId, 20)).slice(-160), queryReachedPage }),
+    );
+    note("I3 OPEN: a production xterm query/reply during settling is not observable through herdr 0.9.5's attach stream; see the report");
+
+    // Nothing the user did during settling may appear on the wire except protocol replies.
+    const settlingWire = await page.evaluate(() => window.__t8.wire.slice());
+    const settlingLeaks = settlingWire.filter((f) => f.kind === "out" && !/^\{/.test(f.text) && !/^\x1b\[/.test(f.text));
+    check(
+      "scripted IME and trusted paste put no user text on the wire while settling",
+      settlingLeaks.length === 0 && settlingWire.length > 0,
+      JSON.stringify(settlingWire.map((f) => f.text)),
+    );
     await page.waitForFunction(() => !document.querySelector(".term-banner"), null, { timeout: 60000 });
-    await page.waitForTimeout(1500);
-    // The pasted text ends in Enter, so a leak would already be a printed line in the Pane by
-    // now; no extra input is needed to make the absence observable.
+    await page.waitForTimeout(1200);
     const settledOutput = await paneRead(echoPane.paneId, 40);
     check(
-      "no user paste or IME text leaked into the Pane while settling",
-      !settledOutput.includes(settleToken) && !settledOutput.includes("ướ"),
+      "nothing from the settling window reached the Pane's line buffer",
+      !settledOutput.includes(settleToken) && !settledOutput.includes(imeText.slice(0, 3)),
       settledOutput.slice(-300),
     );
-    await screenshot(page, "390x844-attached");
+
+    // --- (c) positive control: the same IME commit and paste DO reach the Pane once Attached ---
+    // The Pane for this control runs the raw `cat -v` reader, so bytes are echoed back as text
+    // with no line buffering and no shell interpretation: the oracle is the byte itself.
+    await page.locator('button[aria-label="Back"]').first().tap();
+    await page.waitForSelector(card(mousePane.paneId), { timeout: 60000 });
+    await page.locator(card(mousePane.paneId)).first().tap();
+    await page.waitForFunction(() => !document.querySelector(".term-banner"), null, { timeout: 60000 });
+    await page.waitForTimeout(600);
+    const controlIme = `CTRL_IME_${Date.now()}`;
+    const controlPaste = `CTRL_PASTE_${Date.now()}`;
+    await page.locator(".xterm-helper-textarea").focus();
+    // Paste first: Chromium refuses a paste command while an IME composition is open, so the
+    // controlled order is paste, then composition, each measured before the next.
+    await page.evaluate((text) => navigator.clipboard.writeText(text), controlPaste);
+    // Measured: on xterm's textarea Chromium's Ctrl+V is consumed by xterm as the raw byte
+    // `0x16` (the Pane receives `^V`), so the keyboard chord is not the paste path this UI has.
+    // A phone pastes from the OS menu, which delivers a `paste` event carrying the clipboard
+    // payload; that is reproduced here — the payload is read from the real clipboard, and only
+    // the delivery is scripted at the exact boundary the OS menu uses. Labelled scripted paste.
+    await page.evaluate(async () => {
+      const text = await navigator.clipboard.readText();
+      const dt = new DataTransfer();
+      dt.setData("text/plain", text);
+      const ta = document.querySelector(".xterm-helper-textarea");
+      ta.focus();
+      ta.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    let afterPaste = "";
+    for (let i = 0; i < 40; i++) {
+      afterPaste = await paneRead(mousePane.paneId, 30);
+      if (afterPaste.includes(controlPaste)) break;
+      await page.waitForTimeout(200);
+    }
+    await cdp.send("Input.imeSetComposition", { text: controlIme, selectionStart: controlIme.length, selectionEnd: controlIme.length });
+    await cdp.send("Input.insertText", { text: controlIme });
+    await page.waitForTimeout(600);
+    const afterIme = await paneRead(mousePane.paneId, 30);
+    check(
+      "positive control: a trusted IME commit reaches the Pane after Attached",
+      afterIme.includes(controlIme),
+      JSON.stringify(afterIme.slice(-200)),
+    );
+    check(
+      "positive control: a scripted paste carrying the real clipboard payload reaches the Pane",
+      afterPaste.includes(controlPaste),
+      JSON.stringify(afterPaste.slice(-200)),
+    );
 
     // ---- xterm's own runtime styling and the self-hosted font under the real CSP --------
     const xtermInline = await page.evaluate(() => {
@@ -437,6 +668,13 @@ async function main() {
     check("the self-hosted terminal font loads under the real CSP", fontFaces.count > 0 && fontFaces.loaded > 0 && fontFaces.check === true, JSON.stringify(fontFaces));
 
     // ---- input through the real socket -------------------------------------------------
+    // Back to the echo Pane: it answers each typed line with `GOT:`, which the earlier settling
+    // and control sections left behind on other Panes.
+    await page.locator('button[aria-label="Back"]').first().tap();
+    await page.waitForSelector(card(echoPane.paneId), { timeout: 60000 });
+    await page.locator(card(echoPane.paneId)).first().tap();
+    await page.waitForFunction(() => !document.querySelector(".term-banner"), null, { timeout: 60000 });
+    await page.waitForTimeout(600);
     const typeLine = async (text) => {
       await page.locator(".xterm-helper-textarea").focus();
       await page.keyboard.type(text, { delay: 8 });
@@ -563,10 +801,18 @@ async function main() {
     note("herdr 0.9.5's attach stream forwards no DECCKM/mouse modes, so xterm cannot track them on the real path");
 
     // ---- layout at phone sizes, and after rotation --------------------------------------
+    // Each viewport is checked twice over: the DOM fits with no overflow, and the Pane's own PTY
+    // reports exactly the grid the browser's terminal has. Each PTY answer is requested with a
+    // fresh tag, so an older `SIZE:` line cannot satisfy it, and the expected value is the
+    // browser grid itself rather than a "positive number" stand-in.
+    // The measuring Pane is the echo one: the previous section left the app-cursor-mode Pane
+    // open, so open the echo Pane again before asking either side for a grid.
     await page.locator('button[aria-label="Back"]').first().tap();
     await page.waitForSelector(card(echoPane.paneId), { timeout: 60000 });
     await page.locator(card(echoPane.paneId)).first().tap();
     await page.waitForFunction(() => !document.querySelector(".term-banner"), null, { timeout: 60000 });
+    await waitFor("the echo Pane's attach for the grid checks", 30000, () => attachChildren(sessionName, [echoPane.terminalId]).length === 1);
+    const sizesSeen = [];
     for (const size of [
       { width: 320, height: 640 },
       { width: 390, height: 844 },
@@ -574,7 +820,7 @@ async function main() {
       { width: 640, height: 320 },
     ]) {
       await page.setViewportSize(size);
-      await page.waitForTimeout(700);
+      await page.waitForTimeout(900);
       const dims = await page.evaluate(() => {
         const host = document.querySelector(".term-host");
         const screen = document.querySelector(".xterm-screen");
@@ -592,18 +838,47 @@ async function main() {
       const fits = dims.screen && dims.host && dims.screen.w > 0 && dims.screen.h > 0 && dims.screen.w <= dims.host.w + 1 && dims.screen.h <= dims.host.h + 1;
       check(`${label}: terminal fits its host with no page overflow`, !!fits && !dims.overflowX && !dims.overflowY, JSON.stringify(dims));
       check(`${label}: key-bar targets stay at least 44px`, dims.keyHeights.length > 0 && dims.keyHeights.every((h) => h >= 44), JSON.stringify(dims.keyHeights));
+      const grid = await browserGrid();
+      const pty = await ptyGrid(echoPane.paneId);
+      sizesSeen.push({ label, grid, pty });
+      check(
+        `${label}: the Pane's PTY grid equals the browser's (${pty.rows} rows x ${pty.cols} cols)`,
+        grid.cols > 0 && grid.rows > 0 && pty.cols === grid.cols && pty.rows === grid.rows,
+        JSON.stringify({ label, grid, pty }),
+      );
       await screenshot(page, `layout-${label}`);
     }
-
-    // A real resize after rotation reached the Pane's PTY.
+    // The grid has to move with the viewport: a smoke that never resized would report one grid.
+    const grids = sizesSeen.map((s) => `${s.pty.rows}x${s.pty.cols}`);
+    check(
+      "the PTY grid follows the viewport (resize frames really reach it)",
+      new Set(grids).size >= 2,
+      JSON.stringify(sizesSeen.map((s, i) => `${s.label}=${grids[i]}`)),
+    );
+    // Rotation is a real change and a real change back, each measured on both sides.
+    const portraitBefore = sizesSeen.find((s) => s.label === "390x844");
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.waitForTimeout(900);
+    const landscapeGrid = await browserGrid();
+    const landscapePty = await ptyGrid(echoPane.paneId);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(900);
-    await page.locator(".xterm-helper-textarea").focus();
-    await page.keyboard.type("size", { delay: 8 });
-    await page.keyboard.press("Enter");
-    await page.waitForFunction(() => /SIZE:\d+:\d+/.test(document.querySelector(".xterm-rows")?.textContent ?? ""), null, { timeout: 60000 });
-    const sizeLine = (await page.evaluate(() => document.querySelector(".xterm-rows")?.textContent ?? "")).match(/SIZE:(\d+):(\d+)/);
-    check("a real resize reached the Pane's PTY grid", !!sizeLine && Number(sizeLine[1]) > 0 && Number(sizeLine[2]) > 0, JSON.stringify(sizeLine?.slice(0, 3)));
+    const backGrid = await browserGrid();
+    const backPty = await ptyGrid(echoPane.paneId);
+    check(
+      "rotating to landscape and back changes then restores the PTY grid",
+      landscapePty.cols === landscapeGrid.cols &&
+        landscapePty.rows === landscapeGrid.rows &&
+        landscapePty.cols > portraitBefore.pty.cols &&
+        backPty.cols === portraitBefore.pty.cols &&
+        backPty.rows === portraitBefore.pty.rows &&
+        backGrid.cols === portraitBefore.grid.cols,
+      JSON.stringify({
+        portrait: `${portraitBefore.pty.rows}x${portraitBefore.pty.cols}`,
+        landscape: `${landscapePty.rows}x${landscapePty.cols} vs browser ${landscapeGrid.rows}x${landscapeGrid.cols}`,
+        back: `${backPty.rows}x${backPty.cols}`,
+      }),
+    );
 
     // ---- back and pane switching release the attachment --------------------------------
     const echoLive = () => attachChildren(sessionName, [echoPane.terminalId]).length;
@@ -628,6 +903,9 @@ async function main() {
     await page.locator(card(echoPane.paneId)).first().tap();
     await page.waitForFunction(() => !document.querySelector(".term-banner"), null, { timeout: 60000 });
     await waitFor("the echo attach before backgrounding", 30000, () => echoLive() === 1);
+    // SCRIPTED: `document.hidden` is overridden and `visibilitychange` is dispatched from the
+    // page. This exercises the lens's visibility handler; it is not OS/browser backgrounding
+    // evidence, which stays on the manual phone checklist.
     const hide = (hidden) =>
       page.evaluate((h) => {
         Object.defineProperty(document, "hidden", { configurable: true, get: () => h });
@@ -636,13 +914,13 @@ async function main() {
       }, hidden);
     await hide(true);
     await waitFor("the backgrounded page to release its attach", 30000, () => echoLive() === 0);
-    check("a backgrounded page releases its own attachment", true);
+    check("scripted visibilitychange: hiding the page releases its own attachment", true);
     await hide(false);
     await waitFor("the foregrounded page to attach again", 30000, () => echoLive() === 1);
     await page.waitForFunction(() => !document.querySelector(".term-banner"), null, { timeout: 60000 });
     const resumed = `RESUMED_${process.pid}_${Date.now()}`;
     await typeLine(resumed);
-    check("the resumed attempt accepts trusted input again", true);
+    check("scripted visibilitychange: the resumed attempt accepts trusted input again", true);
 
     // Everything up to the deliberate disconnect must be clean; the disconnect itself is
     // expected to make the page's next socket attempt fail, which Chromium logs.
@@ -696,20 +974,42 @@ async function main() {
     await writeFile(join(EVIDENCE, "checks.json"), JSON.stringify({ passed: step - failures.length, failed: failures, notes, requests: responses.length }, null, 2));
   } finally {
     if (browser) await browser.close().catch(() => {});
+    // Every process this run started is its own group leader, so one signal per group ends it and
+    // anything it spawned (the served process and its attach children, the herdr server and its
+    // Panes) instead of leaving an orphan behind.
     for (const child of children) {
       try {
-        if (child.pid && child.exitCode === null) {
-          if (child === server) process.kill(-child.pid, "SIGKILL");
-          else child.kill("SIGKILL");
+        if (child.pid) {
+          process.kill(-child.pid, "SIGKILL");
         }
       } catch {
         /* already gone */
       }
+      try {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
     }
-    // Only this fixture's Session, by name.
+    // Only this fixture's Session, by name; then its directory.
     await run(herdr, ["--session", sessionName, "session", "stop"], { env }).catch(() => {});
     await run(herdr, ["--session", sessionName, "session", "delete"], { env }).catch(() => {});
+    // Report any survivor rather than silently leaking it: a leftover process would mean the
+    // cleanup contract ("only its own children, all of them") did not hold.
+    const leftover = [];
+    for (const pid of readdirSync("/proc").filter((n) => /^[0-9]+$/.test(n))) {
+      try {
+        const argv = readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
+        if (argv.some((a) => a === sessionName) || argv.some((a) => a.includes(root))) leftover.push(`${pid} ${argv.slice(0, 3).join(" ")}`);
+      } catch {
+        /* exited meanwhile */
+      }
+    }
     await rm(root, { recursive: true, force: true }).catch(() => {});
+    if (leftover.length > 0) {
+      failures.push(`cleanup left ${leftover.length} process(es): ${leftover.join("; ")}`);
+      console.log(`  FAIL cleanup: ${leftover.length} process(es) survived`);
+    }
   }
 
   if (failures.length > 0) {

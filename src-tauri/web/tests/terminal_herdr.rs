@@ -17,7 +17,10 @@
 //! directories; the user's Session, server and service are never named or signalled.
 //!
 //! The binary is `HERDR_TEST_BIN` when set, otherwise `herdr` from `PATH`.
-#![cfg(unix)]
+// The attach-child oracle reads `/proc/<pid>/cmdline` (no `ps` dependency), so these tests are
+// gated to Linux: on another Unix the oracle would return nothing and every "one attach child"
+// assertion would fail for the wrong reason. Skipping loudly beats a misleading result.
+#![cfg(target_os = "linux")]
 
 use futures_util::{SinkExt, StreamExt};
 use herdly_web::app::router;
@@ -261,8 +264,18 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// The marker Pane script: `size` reports the real grid, `panic-now` exits with a known code,
+    /// anything else is echoed back with a `GOT:` prefix.
+    const MARKER_SCRIPT: &'static str = "while IFS= read -r line; do\n  case \"$line\" in\n    size) set -- $(stty size); printf 'SIZE:%s:%s\\n' \"$1\" \"$2\" ;;\n    panic-now) printf 'FATAL:%s\\n' \"$T8_TOKEN\"; sleep 0.2; exit 9 ;;\n    *) printf 'GOT:%s\\n' \"$line\" ;;\n  esac\ndone\n";
+
     /// Starts a headless herdr server for a new Session and runs the marker script in a Pane.
     async fn start(tag: &str) -> Fixture {
+        Fixture::start_with(tag, Fixture::MARKER_SCRIPT).await
+    }
+
+    /// The same, with a Pane script of the caller's choosing. The slow-ACK case needs a Pane that
+    /// floods its own output on demand, which the marker script cannot express.
+    async fn start_with(tag: &str, pane_script: &str) -> Fixture {
         let shared = shared();
         install_cleanup_hook();
         let dir = tempfile::Builder::new()
@@ -322,11 +335,7 @@ impl Fixture {
         // A line handler: `size` reports the real PTY grid, the fatal trigger makes the Pane exit
         // with a known code, and anything else is echoed back with a `GOT` prefix. The trigger is
         // only reachable from inside the attach, never from the CLI the bootstrap uses.
-        std::fs::write(
-            &script,
-            "while IFS= read -r line; do\n  case \"$line\" in\n    size) set -- $(stty size); printf 'SIZE:%s:%s\\n' \"$1\" \"$2\" ;;\n    panic-now) printf 'FATAL:%s\\n' \"$T8_TOKEN\"; exit 9 ;;\n    *) printf 'GOT:%s\\n' \"$line\" ;;\n  esac\ndone\n",
-        )
-        .unwrap();
+        std::fs::write(&script, pane_script).unwrap();
         let created = herdr_out(
             fixture.shared,
             &[
@@ -896,29 +905,34 @@ async fn a_pane_that_exits_reports_its_code_and_still_delivers_its_last_output()
     .await;
 }
 
-/// Runs the fixture's web server as a real `herdly-web serve` child process.
+/// A spawned `herdly-web serve` child, guarded from the instant it exists.
 ///
-/// The guard kills its own child on every exit path, including a panic or a timeout before the
-/// `SIGTERM` case reaches its assertions, so a failed run can never leave a server behind.
+/// Built immediately after `spawn`, before the first `await`, assertion or fallible parse of the
+/// served process's output, so a failure *during* startup (a readiness timeout, a `pair` error, a
+/// missing pairing token, a Machine that never lists the Pane) cannot leak the process. `Served`
+/// holds the guard and never takes the child out of it.
+struct ServeGuard(std::process::Child);
+
+impl Drop for ServeGuard {
+    fn drop(&mut self) {
+        // Only this fixture's own child, and only if it is still there.
+        if self.0.try_wait().ok().flatten().is_none() {
+            // SAFETY: `pid` is this test's own freshly spawned child.
+            unsafe {
+                libc::kill(self.0.id() as i32, libc::SIGKILL);
+            }
+            let _ = self.0.wait();
+        }
+    }
+}
+
+/// A live served process plus the pairing it produced: only built once startup succeeded.
 struct Served {
-    child: std::process::Child,
+    child: ServeGuard,
     addr: String,
     origin: String,
     cookie: String,
     log: PathBuf,
-}
-
-impl Drop for Served {
-    fn drop(&mut self) {
-        // Only this fixture's own child, and only if it is still there.
-        if self.child.try_wait().ok().flatten().is_none() {
-            // SAFETY: `pid` is this test's own freshly spawned child.
-            unsafe {
-                libc::kill(self.child.id() as i32, libc::SIGKILL);
-            }
-            let _ = self.child.wait();
-        }
-    }
 }
 
 impl Served {
@@ -959,7 +973,9 @@ impl Served {
             .stdin(Stdio::null())
             .stdout(out.try_clone().unwrap())
             .stderr(out);
-        let child = child.spawn().expect("the real server starts");
+        // The guard exists before the first await: everything below may fail, and the child is
+        // already owned. Only a successful startup moves it into `Served`.
+        let child = ServeGuard(child.spawn().expect("the real server starts"));
         let origin = format!("http://{addr}");
         wait_for_async("the served process to listen", 60, || {
             let addr = format!("{addr}/api/me");
@@ -1035,7 +1051,7 @@ impl Served {
 
     /// Sends SIGTERM to this fixture's own served child, as a service manager would.
     fn sigterm(&self) -> i32 {
-        let pid = self.child.id() as i32;
+        let pid = self.child.0.id() as i32;
         // SAFETY: `pid` is this test's own freshly spawned child.
         unsafe { libc::kill(pid, libc::SIGTERM) }
     }
@@ -1120,6 +1136,7 @@ async fn a_real_sigterm_with_a_live_attach_closes_the_child_and_exits_cleanly() 
         loop {
             let exited = served
                 .child
+                .0
                 .try_wait()
                 .unwrap_or_else(|e| panic!("wait on the served child: {e}"));
             if let Some(status) = exited {
@@ -1278,4 +1295,92 @@ async fn fc_marker(fx: &mut Fixture, ws: &mut Ws, label: &str) {
         .await
         .unwrap();
     read_until(ws, &wanted, |t| t.contains(&wanted)).await;
+}
+
+/// A real PTY child that exits while its reader is still waiting on unacknowledged output must
+/// finish bounded: the exit is reported and the attempt cleans up, without one ACK being sent.
+///
+/// This is the slow-ACK exit case the Spec requires (verification item 2), and it is a real PTY
+/// with a real wedged reader rather than a fake grace timer: the socket never sends an ACK frame,
+/// so the attach reader pauses for want of credit once output passes its high-water mark, and the
+/// child exits underneath it. The assertion is bounded completion — never full-output retention.
+#[tokio::test]
+#[ignore]
+async fn a_real_pty_child_that_exits_under_a_slow_ack_reader_completes_bounded() {
+    // The flood starts only when the socket types `go`, so it happens while the client is
+    // attached and refusing to acknowledge, not before the attach exists.
+    let fx = Fixture::start_with(
+        "slowack",
+        "while IFS= read -r line; do\n  case \"$line\" in\n    go*)\n      i=0\n      while [ $i -lt 40000 ]; do\n        printf 'SLOWACKLINE-%s-%s\\n' \"$i\" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n        i=$((i+1))\n      done\n      printf 'SLOWACK-DONE\\n'\n      exit 7\n      ;;\n    *)\n      printf 'GOT:%s\\n' \"$line\"\n      ;;\n  esac\ndone\n",
+    )
+    .await;
+
+    let web = fx.web().await;
+    let mut ws = web.connect().await;
+    ws.send(open_frame(&fx.session, &fx.pane_id, 80, 24, false))
+        .await
+        .unwrap();
+    assert_eq!(next_event_of(&mut ws, "attached").await["type"], "attached");
+    ws.send(Message::Binary(b"go\r".to_vec().into()))
+        .await
+        .unwrap();
+
+    // Read output but never acknowledge any of it: flow control pauses the reader at its high
+    // water mark — the state a slow or absent browser leaves it in — while the child exits.
+    let started = Instant::now();
+    let mut bytes = 0usize;
+    let mut exited = None;
+    while started.elapsed() < Duration::from_secs(120) && exited.is_none() {
+        match tokio::time::timeout(Duration::from_secs(20), ws.next()).await {
+            Ok(Some(Ok(Message::Binary(data)))) => bytes += data.len(),
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let e: Value = serde_json::from_str(&text).unwrap();
+                if e["type"] == "exited" {
+                    exited = Some(e);
+                }
+            }
+            Ok(Some(Ok(_))) => continue,
+            // A close is also a bounded completion; an exit event may have preceded it.
+            Ok(None) | Ok(Some(Err(_))) => break,
+            Err(_) => panic!("the exit under an unacknowledging reader hung after {bytes} bytes"),
+        }
+    }
+    let elapsed = started.elapsed();
+    // The oracle: real output really flowed (so the reader really had output to be slow about),
+    // and the exit was reported inside the bound with no ACK ever sent.
+    assert!(
+        bytes > 0,
+        "real output must reach the browser before the exit is judged"
+    );
+    let exited = exited.expect("the exit is reported under a slow reader");
+    assert_eq!(exited["type"], "exited", "{exited}");
+
+    // The server must end the attempt itself after reporting the exit: the grace, the seal and
+    // the bounded drain are what turn an exited PTY into a closed socket. This client sends no
+    // Close, so a server that never seals would leave the browser waiting forever.
+    let ended_at = Instant::now();
+    let close_code = loop {
+        match tokio::time::timeout(Duration::from_secs(20), ws.next()).await {
+            Ok(Some(Ok(Message::Close(Some(frame))))) => break Some(u16::from(frame.code)),
+            Ok(Some(Ok(_))) => continue,
+            Ok(None) | Ok(Some(Err(_))) => break None,
+            Err(_) => panic!(
+                "the server never ended the attempt after the exit: {bytes} unacked bytes, exit after {elapsed:?}"
+            ),
+        }
+    };
+    assert_eq!(
+        close_code,
+        Some(1000),
+        "an exited PTY ends as a normal close, {} ms after the exit event ({bytes} bytes read unacked)",
+        ended_at.elapsed().as_millis()
+    );
+    wait_for("the slow-ack attach child to exit", 60, || {
+        fx.attach_children().is_empty()
+    })
+    .await;
+    eprintln!(
+        "SLOWACK: read {bytes} unacked bytes; exited code={:?}; elapsed {elapsed:?}",
+        exited["code"]
+    );
 }
