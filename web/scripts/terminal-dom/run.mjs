@@ -359,13 +359,12 @@ async function main() {
     await page.waitForTimeout(100);
     check("arrow in application mode", JSON.stringify(sentTexts(await log())) === JSON.stringify(["\x1bOD"]), JSON.stringify(await log()));
 
-    // --- Touch scrolling while the terminal has mouse reporting on --------------------------
-    // Fill scrollback so there is something to scroll, then turn on SGR mouse reporting.
+    // --- Touch scrolling of the browser's own scrollback --------------------------------------
+    // No mouse reporting: the swipe scrolls xterm's buffer and sends nothing.
     await clear();
     await page.evaluate(async () => {
       const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\r\n") + "\r\n";
       await window.feed(lines);
-      await window.feed("\x1b[?1000h\x1b[?1006h");
     });
     await page.waitForTimeout(400);
     /** The `line N` shown on the grid's top row: smaller is older scrollback. */
@@ -402,7 +401,32 @@ async function main() {
     const afterBack = await topLine();
     check("finger up scrolls back toward newer output", afterDown !== null && afterBack !== null && afterBack > afterDown, `${afterDown} -> ${afterBack}`);
     const touchLog = (await log()).filter((e) => e.kind === "input" || e.kind === "reply");
-    check("swipe sent no pointer reports", touchLog.length === 0, JSON.stringify(touchLog));
+    check("a local swipe sends nothing", touchLog.length === 0, JSON.stringify(touchLog));
+
+    // --- Touch scrolling when the scrollback lives upstream ----------------------------------
+    // herdr's attach stream paints the Pane in the alternate screen and turns on SGR mouse
+    // reporting: the browser holds no history, and herdr scrolls its own on a wheel report.
+    await page.evaluate(async () => {
+      await window.feed("\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[2J\x1b[1;1Hherdr screen");
+    });
+    await page.waitForTimeout(200);
+    await clear();
+    const wheelReports = async () => sentTexts(await log());
+    await swipe(160);
+    const downSent = await wheelReports();
+    check(
+      "finger down sends wheel-up reports only",
+      downSent.length > 0 && downSent.every((t) => /^\x1b\[<64;\d+;\d+M$/.test(t)),
+      JSON.stringify(downSent),
+    );
+    await clear();
+    await swipe(-160);
+    const upSent = await wheelReports();
+    check(
+      "finger up sends wheel-down reports only",
+      upSent.length > 0 && upSent.every((t) => /^\x1b\[<65;\d+;\d+M$/.test(t)),
+      JSON.stringify(upSent),
+    );
 
     // A tap focuses without clicking a terminal target.
     await clear();
@@ -415,6 +439,7 @@ async function main() {
         (await log()).length === 0,
       JSON.stringify(await log()),
     );
+    await page.evaluate(() => window.feed("\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1049l"));
 
     // --- Layout: 320px and rotation ---------------------------------------------------------
     for (const size of [{ width: 320, height: 568 }, { width: 568, height: 320 }]) {

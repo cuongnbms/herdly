@@ -968,11 +968,11 @@ async function main() {
     check("Ctrl then c sends exactly one U+0003", (rawAfterCtrl.match(/\^C/g) ?? []).length === 1, JSON.stringify(rawAfterCtrl.slice(-120)));
 
     // ---- touch scrolling ----------------------------------------------------------------
-    // The Pane is in the mouse-reporting fixture's raw mode, which also makes any stray pointer
-    // report visible as text. Measured limit: herdr 0.9.5's attach stream forwards no DECSET
-    // modes to the client, so xterm never learns the Pane's application enabled mouse
-    // reporting. What this path can prove is below (no report is emitted, the page does not
-    // scroll), and the scrollback that follows proves the touch handler still scrolls xterm.
+    // The Pane is in the mouse-reporting fixture's raw mode, which also makes any pointer report
+    // visible as text. herdr's attach stream turns on mouse reporting in the browser, and a swipe
+    // goes up as wheel reports, which herdr hands to an application that asked for the mouse, as
+    // a desktop wheel does. What this path proves is below (wheel reports only, never a click, the
+    // page does not scroll); the scrollback that follows proves herdr scrolls its own history.
     const beforeSwipe = await paneRead(mousePane.paneId, 20);
     const box = await page.locator(".xterm-screen").boundingBox();
     const cx = box.x + box.width / 2;
@@ -991,8 +991,9 @@ async function main() {
     const afterSwipe = await paneRead(mousePane.paneId, 20);
     const scrollAfter = await page.evaluate(() => window.scrollY);
     check(
-      "trusted swipe emits no pointer report",
-      !/\^\[\[<?[0-9;]*M/.test(afterSwipe) && afterSwipe.replace(/\s+/g, " ") === beforeSwipe.replace(/\s+/g, " "),
+      "trusted swipe emits wheel-up reports only, never a click",
+      /\^\[\[<64;\d+;\d+M/.test(afterSwipe) &&
+        afterSwipe.replace(/\^\[\[<64;\d+;\d+M/g, "").replace(/\s+/g, " ") === beforeSwipe.replace(/\s+/g, " "),
       JSON.stringify(afterSwipe.slice(-160)),
     );
     check("trusted swipe does not scroll the page", scrollBefore === scrollAfter, `${scrollBefore} -> ${scrollAfter}`);
@@ -1000,7 +1001,7 @@ async function main() {
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await page.waitForTimeout(500);
     const afterTap = await paneRead(mousePane.paneId, 20);
-    check("a trusted tap focuses without sending a click", afterTap.replace(/\s+/g, " ") === beforeSwipe.replace(/\s+/g, " "), JSON.stringify(afterTap.slice(-160)));
+    check("a trusted tap focuses without sending a click", afterTap.replace(/\s+/g, " ") === afterSwipe.replace(/\s+/g, " "), JSON.stringify(afterTap.slice(-160)));
     // Ctrl still reaches a raw Pane after a gesture, exactly once.
     const ctrlBefore = (beforeSwipe.match(/\^C/g) ?? []).length;
     await keyButton("Ctrl").tap();
@@ -1023,15 +1024,23 @@ async function main() {
     await page.keyboard.type("spam", { delay: 8 });
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => (document.querySelector(".xterm-rows")?.textContent ?? "").includes("ROW_199"), null, { timeout: 60000 });
-    const rowsBefore = await page.evaluate(() => document.querySelector(".xterm-rows")?.textContent ?? "");
+    // The oldest ROW_ on screen: herdr paints the Pane in the alternate screen and keeps the
+    // history itself, so a swipe proves itself only by herdr repainting older rows.
+    const oldestRow = () =>
+      page.evaluate(() => {
+        const rows = [...(document.querySelector(".xterm-rows")?.textContent ?? "").matchAll(/ROW_(\d+)/g)].map((m) => Number(m[1]));
+        return rows.length ? Math.min(...rows) : null;
+      });
+    await page.waitForTimeout(600);
+    const rowBefore = await oldestRow();
     const box2 = await page.locator(".xterm-screen").boundingBox();
     await swipe(box2.x + box2.width / 2, box2.y + box2.height / 2, 12);
     await page.waitForTimeout(900);
-    const rowsAfter = await page.evaluate(() => document.querySelector(".xterm-rows")?.textContent ?? "");
+    const rowAfter = await oldestRow();
     check(
-      "trusted swipe scrolls the terminal's own scrollback",
-      rowsBefore !== rowsAfter && rowsAfter.includes("ROW_"),
-      JSON.stringify({ before: rowsBefore.slice(0, 40), after: rowsAfter.slice(0, 40) }),
+      "trusted finger-down swipe scrolls herdr's history to older rows",
+      rowBefore !== null && rowAfter !== null && rowAfter < rowBefore,
+      JSON.stringify({ before: rowBefore, after: rowAfter }),
     );
 
     // The application cursor key mode cannot be observed over this transport: herdr's attach
