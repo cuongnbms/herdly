@@ -509,6 +509,17 @@ async function main() {
       });
       check(`${size.width}x${size.height}: terminal fits the viewport`, !!dims && dims.screenWidth > 0 && dims.screenHeight > 0 && !dims.overflow, JSON.stringify(dims));
       check(`${size.width}x${size.height}: key buttons are 44px targets`, !!dims && dims.keyHeight.every((h) => h >= 44), JSON.stringify(dims?.keyHeight));
+      const more = page.getByRole("button", { name: "More", exact: true });
+      const before = await more.boundingBox();
+      await page.locator(".term-keys-scroll").evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+      const after = await more.boundingBox();
+      check(`${size.width}x${size.height}: More stays pinned inside viewport`,
+        !!before && !!after && before.x === after.x && after.x >= 0 && after.x + after.width <= size.width);
+      await more.click();
+      const menu = await page.getByRole("menu").boundingBox();
+      check(`${size.width}x${size.height}: menu opens above keys without clipping`,
+        !!menu && !!after && menu.y >= 0 && menu.y + menu.height <= after.y && menu.x >= 0 && menu.x + menu.width <= size.width);
+      await page.locator("[data-backdrop]").click({ position: { x: 2, y: 2 } });
     }
 
     // Each resize must not resend an identical grid.
