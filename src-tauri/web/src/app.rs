@@ -49,6 +49,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/chat/page", get(api::chat_page));
     // Layers added last run first: Origin (403), then the cookie (401).
     let writes = Router::new()
+        .route("/api/tab/create", post(api::tab_create))
+        .route("/api/tab/close", post(api::tab_close))
         .route("/api/pane/read", post(api::pane_read))
         .route("/api/pane/prompt", post(api::pane_prompt))
         .route("/api/pane/keys", post(api::pane_keys))

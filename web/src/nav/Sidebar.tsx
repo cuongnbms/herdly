@@ -1,9 +1,8 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { useWeb } from "../store";
-import { webKey, type WebPane } from "../types";
+import type { WebPane } from "../types";
 import { ChevronIcon } from "../ui/icons";
-import { AgentMark } from "../list/PaneCard";
-import { markSeen } from "../list/seen";
+import { WorkspaceTabs } from "./WorkspaceTabs";
 import { SessionSelect } from "./SessionSelect";
 
 function Branch({ label, count, expanded, onToggle, children }: {
@@ -100,18 +99,7 @@ export function Sidebar({ current, selectedSession, onSelectSession, expandedWor
                 return <Branch key={workspace.workspace_id} label={workspace.label}
                   count={workspace.tabs.reduce((count, tab) => count + tab.panes.length, 0)}
                   expanded={expanded} onToggle={() => onToggleWorkspace(key, !expanded)}>
-                  {workspace.tabs.flatMap((tab) => tab.panes.map((pane) => {
-                    const target = { session: session.name, pane_id: pane.pane_id };
-                    return (
-                      <button type="button" key={`${tab.tab_id}/${pane.pane_id}`} className="sidebar-pane"
-                        aria-current={current && webKey(current) === webKey(target) ? "true" : undefined}
-                        disabled={!session.running}
-                        onClick={() => { if (pane.status === "done") markSeen(webKey(target)); onOpen(target); }}>
-                        <AgentMark agent={pane.agent} /><span className="sidebar-pane-title" title={pane.title}>{pane.title}</span>
-                        <span className="status" data-status={pane.status} title={`Status: ${pane.status}`}>{pane.status}</span>
-                      </button>
-                    );
-                  }))}
+                  <WorkspaceTabs session={session.name} running={session.running} workspace={workspace} current={current} onOpen={onOpen} />
                 </Branch>;
               })}
           </div>}

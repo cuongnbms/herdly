@@ -62,6 +62,18 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for Body<T> {
 }
 
 #[derive(Deserialize)]
+pub struct TabCreateBody {
+    session: String,
+    workspace_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct TabCloseBody {
+    session: String,
+    tab_id: String,
+}
+
+#[derive(Deserialize)]
 pub struct PaneBody {
     session: String,
     pane_id: String,
@@ -110,6 +122,31 @@ pub async fn chat_page(
         Some(items) => Ok(Json(items).into_response()),
         None => Err(ApiError(AppError::new("not_found", "no open chat")).into_response()),
     }
+}
+
+pub async fn tab_create(
+    State(st): St,
+    Body(b): Body<TabCreateBody>,
+) -> Result<Json<Value>, ApiError> {
+    let result = st
+        .backend
+        .call(
+            &b.session,
+            "tab.create",
+            json!({"workspace_id": b.workspace_id, "focus": false}),
+        )
+        .await?;
+    Ok(Json(result))
+}
+
+pub async fn tab_close(
+    State(st): St,
+    Body(b): Body<TabCloseBody>,
+) -> Result<Json<Value>, ApiError> {
+    st.backend
+        .call(&b.session, "tab.close", json!({"tab_id": b.tab_id}))
+        .await?;
+    Ok(Json(json!({})))
 }
 
 pub async fn pane_read(State(st): St, Body(b): Body<PaneBody>) -> Result<Json<Value>, ApiError> {
