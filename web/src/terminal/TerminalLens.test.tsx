@@ -177,6 +177,50 @@ async function mounted(p: WebPane = pane) {
   return { ...r, view };
 }
 
+describe("TerminalLens visual viewport OS boundary", () => {
+  it("constrains the Pane screen on visual-only resize and cleans styles/listeners on Lens switch", async () => {
+    const viewport = Object.assign(new EventTarget(), { height: 768, offsetTop: 0 });
+    const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return { x: 0, y: Number.parseFloat(this.style.getPropertyValue("--terminal-viewport-top")) || 0,
+        top: Number.parseFloat(this.style.getPropertyValue("--terminal-viewport-top")) || 0,
+        bottom: 0, left: 0, right: 0, width: 0, height: 0, toJSON() {} };
+    });
+    vi.stubGlobal("visualViewport", viewport);
+    const r = rig();
+    const view = render(<div className="pane-screen"><TerminalLens pane={pane} transport={r.factory} /></div>);
+    const container = view.container.querySelector<HTMLElement>(".pane-screen")!;
+    try {
+      await act(async () => {
+        viewport.height = 400;
+        viewport.offsetTop = 40;
+        viewport.dispatchEvent(new Event("resize"));
+      });
+      expect(container.style.getPropertyValue("--terminal-viewport-height")).toBe("400px");
+      expect(container.style.getPropertyValue("--terminal-viewport-top")).toBe("40px");
+      expect(textarea()).not.toHaveFocus();
+      expect(r.last.inputs).toEqual([]);
+      await act(async () => {
+        viewport.offsetTop = 20;
+        viewport.dispatchEvent(new Event("scroll"));
+      });
+      expect(container.style.getPropertyValue("--terminal-viewport-top")).toBe("20px");
+      await act(async () => {
+        viewport.height = 768; viewport.offsetTop = 0;
+        viewport.dispatchEvent(new Event("resize"));
+      });
+      expect(container.style.getPropertyValue("--terminal-viewport-height")).toBe("768px");
+      expect(container.style.getPropertyValue("--terminal-viewport-top")).toBe("0px");
+      view.rerender(<div className="pane-screen"><div>Chat</div></div>);
+      expect(container.style.getPropertyValue("--terminal-viewport-height")).toBe("");
+      expect(container.style.getPropertyValue("--terminal-viewport-top")).toBe("");
+      viewport.height = 300;
+      viewport.dispatchEvent(new Event("resize"));
+      viewport.dispatchEvent(new Event("scroll"));
+      expect(container.style.getPropertyValue("--terminal-viewport-height")).toBe("");
+    } finally { view.unmount(); vi.unstubAllGlobals(); bounds.mockRestore(); }
+  });
+});
+
 describe("TerminalLens attempt", () => {
   it("opens once with the measured grid, normal takeover only, and shows Connecting", async () => {
     const r = await mounted();
@@ -557,6 +601,12 @@ describe("TerminalLens Ctrl at the real text-entry boundary", () => {
 });
 
 describe("TerminalLens banners", () => {
+  it("offers accessible manual recovery for a final close without claiming a retry", async () => {
+    const r = await mounted();
+    await act(async () => { r.last.attach(); r.last.handlers.event({ type: "closed", code: 1000 }); });
+    expect(screen.getByRole("status")).toHaveTextContent("Connection closed (code 1000). Reattach to try again.");
+  });
+
   it("shows Held and takes over only when asked", async () => {
     const r = await mounted();
     await act(async () => { r.last.handlers.event({ type: "held" }); });

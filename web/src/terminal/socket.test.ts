@@ -160,10 +160,21 @@ describe("TerminalSocket", () => {
     expect(binaries(w)).toEqual([]);
   });
 
-  it("retries a transient close with the web backoff and the same grid", async () => {
+  it("reports retrying only after the pairing check arms a retry timer", async () => {
     const r = rig();
     r.s.start({ cols: 80, rows: 24 });
     r.wires[0].onclose!({ code: 1006 });
+    expect(r.events.at(-1)).toEqual({ type: "disconnected" });
+    expect(r.time.delays()).toEqual([]);
+    await Promise.resolve();
+    expect(r.events.at(-1)).toEqual({ type: "retrying" });
+    expect(r.time.delays()).toEqual([1000]);
+  });
+
+  it.each([1006, 4000])("retries transient close %i with the web backoff and the same grid", async (code) => {
+    const r = rig();
+    r.s.start({ cols: 80, rows: 24 });
+    r.wires[0].onclose!({ code });
     await Promise.resolve();
     await Promise.resolve();
     expect(r.time.delays()).toEqual([1000]);
@@ -177,7 +188,7 @@ describe("TerminalSocket", () => {
       rows: 24,
       takeover: false,
     });
-    expect(r.events).toEqual([{ type: "connecting" }, { type: "disconnected" }, { type: "connecting" }]);
+    expect(r.events).toEqual([{ type: "connecting" }, { type: "disconnected" }, { type: "retrying" }, { type: "connecting" }]);
     // Every fresh attempt begins with a fresh screen: a retry must not concatenate onto the
     // previous attempt's terminal (Spec: "reset output state so a restarted terminal screen is
     // not concatenated with an old one"). One reset for the start, one for the retry.
@@ -208,13 +219,13 @@ describe("TerminalSocket", () => {
     await Promise.resolve();
     await Promise.resolve();
     // Disconnected: the previous output stays on screen until a new attempt starts.
-    expect(order).toEqual(["reset", "event", "output", "event"]);
+    expect(order).toEqual(["reset", "event", "output", "event", "event"]);
     r.time.run(0);
     // The retry resets before it can deliver its own output: no concatenated screen.
-    expect(order).toEqual(["reset", "event", "output", "event", "reset", "event"]);
+    expect(order).toEqual(["reset", "event", "output", "event", "event", "reset", "event"]);
     r.wires[1].onopen!();
     r.wires[1].onmessage!({ data: new Uint8Array([0x42]).buffer });
-    expect(order).toEqual(["reset", "event", "output", "event", "reset", "event", "output"]);
+    expect(order).toEqual(["reset", "event", "output", "event", "event", "reset", "event", "output"]);
   });
 
   it("ignores the second of onerror and onclose on one attempt", async () => {
@@ -225,7 +236,7 @@ describe("TerminalSocket", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(r.time.delays()).toEqual([1000]);
-    expect(r.events).toEqual([{ type: "connecting" }, { type: "disconnected" }]);
+    expect(r.events).toEqual([{ type: "connecting" }, { type: "disconnected" }, { type: "retrying" }]);
   });
 
   it("backs off 1s, 2s, 4s, 8s, 15s, 15s and starts again after an open", async () => {
@@ -270,6 +281,14 @@ describe("TerminalSocket", () => {
     });
   });
 
+  it("reports a final closed event instead of promising a retry on normal close", () => {
+    const r = rig();
+    r.s.start({ cols: 80, rows: 24 });
+    r.wires[0].onopen!();
+    r.wires[0].onclose!({ code: 1000 });
+    expect(r.events.at(-1)).toEqual({ type: "closed", code: 1000 });
+  });
+
   it.each([[1000], [1008], [1009]])("does not retry the terminal close code %i", async (code) => {
     const r = rig();
     r.s.start({ cols: 80, rows: 24 });
@@ -279,7 +298,7 @@ describe("TerminalSocket", () => {
     await Promise.resolve();
     expect(r.meCalls).toEqual([]);
     expect(r.time.delays()).toEqual([]);
-    expect(r.events).toEqual([{ type: "connecting" }, { type: "disconnected" }]);
+    expect(r.events).toEqual([{ type: "connecting" }, { type: "closed", code }]);
   });
 
   it("does not retry after an application error, and takes no more input", async () => {
@@ -409,7 +428,7 @@ describe("TerminalSocket", () => {
     staleMessage({ data: new Uint8Array([0x42]).buffer });
     staleMessage({ data: JSON.stringify({ type: "held" }) });
     expect(r.output).toEqual([]);
-    expect(r.events).toEqual([{ type: "connecting" }, { type: "attached" }, { type: "disconnected" }]);
+    expect(r.events).toEqual([{ type: "connecting" }, { type: "attached" }, { type: "disconnected" }, { type: "retrying" }]);
     // The armed retry still runs, as a normal open.
     r.time.run(0);
     r.wires[1].onopen!();

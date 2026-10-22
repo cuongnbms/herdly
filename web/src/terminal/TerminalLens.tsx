@@ -36,7 +36,7 @@ export interface LensTransport {
 
 export type TransportFactory = (pane: WebPane, on: LensHandlers) => LensTransport;
 
-type Phase = "connecting" | "attached" | "held" | "exited" | "detached" | "error" | "disconnected";
+type Phase = "connecting" | "attached" | "held" | "exited" | "detached" | "error" | "disconnected" | "retrying" | "closed";
 
 interface Attempt {
   phase: Phase;
@@ -232,9 +232,10 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
           setConn("unpaired");
           return;
         case "disconnected":
+        case "retrying":
           typing.current = false;
           syncCtrl(false);
-          setAttempt({ phase: "disconnected", code: null, message: null });
+          setAttempt({ phase: e.type, code: null, message: null });
           return;
         default:
           // Held, Exited, Detached and application errors end user entry for this attempt while
@@ -243,7 +244,7 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
           syncCtrl(false);
           setAttempt({
             phase: e.type,
-            code: e.type === "exited" ? e.code : null,
+            code: e.type === "exited" || e.type === "closed" ? e.code : null,
             message: e.type === "error" ? e.error.message : null,
           });
       }
@@ -445,6 +446,26 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
     };
     box.addEventListener("focusout", onFocusOut);
 
+    // The keyboard may shrink only the visual viewport (layout viewport / 100dvh unchanged).
+    // Constrain the entire Pane, including its header and key bar, not just xterm's host.
+    const viewport = window.visualViewport;
+    const frame = box.closest<HTMLElement>(".pane-screen") ?? box.parentElement!;
+    let viewportShift = 0;
+    const updateViewport = () => {
+      if (viewport) {
+        // Undo our previous relative offset before measuring the natural layout origin. The
+        // visible bounds are layout-viewport coordinates, so offsetTop must not be ignored.
+        const naturalTop = frame.getBoundingClientRect().top - viewportShift;
+        viewportShift = Math.max(0, viewport.offsetTop - naturalTop);
+        const height = Math.max(0, viewport.height - Math.max(0, naturalTop - viewport.offsetTop));
+        frame.dataset.terminalViewport = "";
+        frame.style.setProperty("--terminal-viewport-height", `${height}px`);
+        frame.style.setProperty("--terminal-viewport-top", `${viewportShift}px`);
+      }
+      refit();
+    };
+    updateViewport();
+
     newTerminal();
     const wire = transport(pane, { output, event, reset });
     socket.current = wire;
@@ -456,8 +477,10 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
     // Refit once layout settles (rotation, virtual keyboard, split); a repeated size never leaves.
     const ro = new ResizeObserver(refit);
     ro.observe(box);
-    window.addEventListener("resize", refit);
-    window.addEventListener("orientationchange", refit);
+    window.addEventListener("resize", updateViewport);
+    window.addEventListener("orientationchange", updateViewport);
+    viewport?.addEventListener("resize", updateViewport);
+    viewport?.addEventListener("scroll", updateViewport);
 
     return () => {
       live = false;
@@ -467,8 +490,13 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
       if (keyBar.current === keyEntry) keyBar.current = null;
       if (timer !== undefined) clearTimeout(timer);
       ro.disconnect();
-      window.removeEventListener("resize", refit);
-      window.removeEventListener("orientationchange", refit);
+      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("orientationchange", updateViewport);
+      viewport?.removeEventListener("resize", updateViewport);
+      viewport?.removeEventListener("scroll", updateViewport);
+      frame.style.removeProperty("--terminal-viewport-height");
+      frame.style.removeProperty("--terminal-viewport-top");
+      delete frame.dataset.terminalViewport;
       box.removeEventListener("focusout", onFocusOut);
       box.removeEventListener("touchstart", onTouchStart);
       box.removeEventListener("touchmove", onTouchMove);
@@ -570,7 +598,22 @@ function Banner({
     case "disconnected":
       return (
         <div role="status" className="banner banner-warn term-banner">
+          <span>Disconnected, checking pairing…</span>
+        </div>
+      );
+    case "retrying":
+      return (
+        <div role="status" className="banner banner-warn term-banner">
           <span>Disconnected, reconnecting…</span>
+        </div>
+      );
+    case "closed":
+      return (
+        <div role="status" className="banner banner-warn term-banner">
+          <span>Connection closed (code {attempt.code}). Reattach to try again.</span>
+          <button type="button" className="btn" onClick={onReattach}>
+            Reattach
+          </button>
         </div>
       );
     case "held":

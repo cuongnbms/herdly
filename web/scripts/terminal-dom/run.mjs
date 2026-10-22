@@ -13,7 +13,7 @@
  */
 
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { chromium } from "playwright-core";
@@ -35,9 +35,18 @@ function browserPath() {
 }
 
 const failures = [];
+const checks = [];
+const evidence = { caveat: "Real Chromium layout with EMULATED visualViewport API; not a physical keyboard, Safari, or Android hardware acceptance.", geometry: [] };
+const evidenceDir = process.env.TERMINAL_DOM_EVIDENCE;
+async function saveEvidence() {
+  if (!evidenceDir) return;
+  await mkdir(evidenceDir, { recursive: true });
+  await writeFile(join(evidenceDir, "viewport-browser.json"), JSON.stringify({ ...evidence, checks, failures }, null, 2));
+}
 /** Wire text the lens sent, ignoring acknowledgements (which the fixture records separately). */
 const sentTexts = (log) => log.filter((e) => e.kind === "input" || e.kind === "reply").map((e) => e.text);
 function check(name, condition, detail) {
+  checks.push({ name, passed: !!condition, detail });
   if (condition) {
     console.log(`  ok   ${name}`);
     return;
@@ -80,6 +89,8 @@ async function main() {
   const executablePath = browserPath();
   if (!executablePath) throw new Error("no Chromium build found; set CHROMIUM to a browser executable");
   const browser = await chromium.launch({ executablePath, args: ["--no-sandbox"] });
+  evidence.executablePath = executablePath;
+  evidence.browserVersion = browser.version();
 
   try {
     // A phone-sized viewport with a coarse pointer: touch is what the lens has to handle.
@@ -420,8 +431,126 @@ async function main() {
     const resizes = await page.evaluate(() => window.wire.log.filter((e) => e.kind === "resize").map((e) => e.text));
     check("no duplicate resize is sent", new Set(resizes).size === resizes.length, JSON.stringify(resizes));
 
+    // --- EMULATED OS visualViewport boundary, real Chromium client/layout geometry -----------
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction(() => !!document.querySelector(".xterm-helper-textarea"));
+    await page.evaluate(() => {
+      const vv = Object.assign(new EventTarget(), { height: window.innerHeight, offsetTop: 0 });
+      const listeners = new Map();
+      const add = vv.addEventListener.bind(vv);
+      const remove = vv.removeEventListener.bind(vv);
+      vv.addEventListener = (type, listener, options) => {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type).add(listener);
+        add(type, listener, options);
+      };
+      vv.removeEventListener = (type, listener, options) => {
+        listeners.get(type)?.delete(listener);
+        remove(type, listener, options);
+      };
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: vv });
+      window.viewportFixture = { vv, listeners };
+      window.visible(true); // remount onto the emulated OS API, not an emulated renderer
+    });
+    await page.waitForTimeout(400);
+    await page.evaluate(() => window.attach());
+    await page.waitForTimeout(400); // Attached removes the banner, so compare the settled grid.
+    const geometry = async (label) => {
+      const result = await page.evaluate(() => {
+        const rect = (selector) => {
+          const el = document.querySelector(selector);
+          const r = el.getBoundingClientRect();
+          return { top: r.top, bottom: r.bottom, width: r.width, height: r.height, clientHeight: el.clientHeight };
+        };
+        return {
+          innerHeight: window.innerHeight, layoutHeight: document.documentElement.clientHeight,
+          dvh: getComputedStyle(document.querySelector(".pane-screen")).height,
+          viewport: { height: window.visualViewport.height, top: window.visualViewport.offsetTop },
+          pane: rect(".pane-screen"), host: rect(".term-host"), screen: rect(".xterm-screen"), keys: rect(".term-keys"),
+          resizes: window.wire.log.filter((e) => e.kind === "resize").map((e) => JSON.parse(e.text)),
+          starts: window.wire.starts,
+          focused: document.activeElement?.classList.contains("xterm-helper-textarea"),
+        };
+      });
+      evidence.geometry.push({ label, ...result });
+      return result;
+    };
+    const full = await geometry("full");
+    const fullGrid = full.resizes.at(-1) ?? full.starts.at(-1);
+    await clear();
+    await page.evaluate(() => {
+      const { vv } = window.viewportFixture;
+      vv.height = 440;
+      vv.offsetTop = 36;
+      vv.dispatchEvent(new Event("resize"));
+      vv.dispatchEvent(new Event("scroll"));
+    });
+    await page.waitForTimeout(400);
+    const shrunk = await geometry("visual-only shrink and pan");
+    if (evidenceDir) await page.screenshot({ path: join(evidenceDir, "viewport-shrunk.png") });
+    check("EMULATED visual-only keyboard keeps actual host/keybar within visible bounds and changes grid",
+      shrunk.innerHeight === full.innerHeight && shrunk.layoutHeight === full.layoutHeight &&
+      shrunk.pane.top >= 36 && shrunk.host.top >= 36 && shrunk.keys.bottom <= 476 &&
+      shrunk.screen.bottom <= shrunk.keys.top && shrunk.host.clientHeight < full.host.clientHeight &&
+      shrunk.resizes.length === 1 && shrunk.resizes[0].rows < fullGrid.rows,
+      JSON.stringify({ full, shrunk }));
+    await page.evaluate(() => {
+      const { vv } = window.viewportFixture;
+      vv.dispatchEvent(new Event("resize")); vv.dispatchEvent(new Event("scroll"));
+    });
+    await page.waitForTimeout(400);
+    const repeated = await geometry("repeat unchanged");
+    check("EMULATED viewport duplicate events send no duplicate size or input and never focus",
+      repeated.resizes.length === 1 && !repeated.focused && sentTexts(await log()).length === 0,
+      JSON.stringify(repeated));
+    await page.evaluate(() => {
+      const { vv } = window.viewportFixture;
+      vv.height = window.innerHeight; vv.offsetTop = 0; vv.dispatchEvent(new Event("resize"));
+    });
+    await page.waitForTimeout(400);
+    const restored = await geometry("restored");
+    check("EMULATED keyboard dismiss restores actual geometry and original grid once",
+      restored.host.clientHeight === full.host.clientHeight && restored.keys.bottom === full.keys.bottom &&
+      restored.resizes.length === 2 && restored.resizes[1].rows === fullGrid.rows,
+      JSON.stringify(restored));
+    // Browser already resizes content: absolute visible bounds, never subtract keyboard twice.
+    await page.evaluate(() => {
+      const { vv } = window.viewportFixture;
+      vv.height = 440; vv.offsetTop = 0;
+    });
+    await page.setViewportSize({ width: 390, height: 440 });
+    await page.waitForTimeout(400);
+    const contentResized = await geometry("layout and visual viewport both resized");
+    check("EMULATED already-resized content is not shrunk twice",
+      contentResized.innerHeight === 440 && contentResized.pane.height === 440 && contentResized.keys.bottom === 440,
+      JSON.stringify(contentResized));
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    const cleaned = await page.evaluate(() => {
+      const pane = document.querySelector(".pane-screen");
+      const { vv, listeners } = window.viewportFixture;
+      vv.height = 300; vv.dispatchEvent(new Event("resize")); vv.dispatchEvent(new Event("scroll"));
+      return { style: pane.getAttribute("style"), marker: pane.hasAttribute("data-terminal-viewport"), listeners: [...listeners].map(([type, set]) => [type, set.size]) };
+    });
+    check("EMULATED viewport listeners and owned CSS clean up on real Lens switch",
+      !cleaned.style && !cleaned.marker && cleaned.listeners.every(([, count]) => count === 0), JSON.stringify(cleaned));
+    evidence.cleanup = cleaned;
+    await page.evaluate(() => Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined }));
+    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await page.waitForTimeout(400);
+    await page.evaluate(() => window.attach());
+    await page.waitForTimeout(400);
+    const fallback = await page.evaluate(() => {
+      const pane = document.querySelector(".pane-screen");
+      return { height: pane.clientHeight, marker: pane.hasAttribute("data-terminal-viewport"), host: document.querySelector(".term-host").clientHeight, innerHeight };
+    });
+    check("no visualViewport API falls back to normal layout and fitting",
+      !fallback.marker && fallback.height === fallback.innerHeight && fallback.host > 0, JSON.stringify(fallback));
+    evidence.fallback = fallback;
+    if (evidenceDir) await page.screenshot({ path: join(evidenceDir, "viewport-chat-cleanup.png") });
     check("no page errors", errors.length === 0, JSON.stringify(errors.slice(0, 3)));
   } finally {
+    await saveEvidence();
     await browser.close();
     await new Promise((done) => server.close(done));
   }

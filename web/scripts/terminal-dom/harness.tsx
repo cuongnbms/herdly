@@ -12,9 +12,12 @@
 
 import { createRoot } from "react-dom/client";
 import { StrictMode, useState } from "react";
-import { TerminalLens, type LensHandlers, type LensTransport } from "../../src/terminal/TerminalLens";
+import { type LensHandlers, type LensTransport } from "../../src/terminal/TerminalLens";
 import type { WebPane } from "../../src/types";
 import { useWeb } from "../../src/store";
+import { PaneScreen } from "../../src/pane/PaneScreen";
+import { saveLens } from "../../src/pane/lens";
+import "../../src/styles.css";
 
 export interface Wire {
   /** Frames the lens sent, in order, tagged with the API it used. */
@@ -67,7 +70,7 @@ function machineFor(): unknown {
                 label: "t",
                 number: 1,
                 status: "idle",
-                panes: [{ pane_id: "p1", terminal_id: "tid", title: "alpha", cwd: null, agent: null, status: "idle" }],
+                panes: [{ pane_id: "p1", terminal_id: "tid", title: "alpha", cwd: null, agent: "claude", status: "idle" }],
               },
             ],
           },
@@ -118,9 +121,10 @@ window.feed = (text: string) =>
 function App() {
   const [generation, setGeneration] = useState(0);
   window.visible = () => setGeneration((g) => g + 1);
-  return <TerminalLens key={generation} pane={pane} transport={factory} />;
+  return <PaneScreen key={generation} pane={pane} transport={factory} onBack={() => {}} onSwitch={() => {}} onMenu={() => {}} />;
 }
 
+saveLens(pane, "terminal");
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />

@@ -13,4 +13,6 @@ export type TerminalEvent =
   | { type: "error"; error: { code: string; message: string } }
   | { type: "connecting" }
   | { type: "disconnected" }
+  | { type: "retrying" }
+  | { type: "closed"; code: number }
   | { type: "unpaired" };

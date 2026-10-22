@@ -341,6 +341,64 @@ describe("App", () => {
     expect(document.querySelectorAll(".xterm")).toHaveLength(0);
   });
 
+  it.each([1000, 1008, 1009])("recovers terminal close %i manually through App without changing pairing", async (code) => {
+    const wires: BrowserWire[] = [];
+    class BrowserWire {
+      binaryType = "blob";
+      onopen: (() => void) | null = null;
+      onmessage: ((e: { data: string | ArrayBuffer }) => void) | null = null;
+      onclose: ((e: { code: number }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      sent: (string | ArrayBufferView)[] = [];
+      constructor(readonly url: string) { wires.push(this); }
+      send(data: string | ArrayBufferView) { this.sent.push(data); }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", BrowserWire);
+    localStorage.clear();
+    useWeb.setState({ conn: "open", authLost: false, machines: [shellMachine] as never, open: { session: "s", pane_id: "p2" } });
+    try {
+      const view = render(<App />);
+      expect(wires[0].url).toBe(`ws://${location.host}/ws/terminal`);
+      act(() => {
+        wires[0].onopen!();
+        wires[0].onmessage!({ data: JSON.stringify({ type: "attached" }) });
+        wires[0].onmessage!({ data: new TextEncoder().encode("retained screen").buffer });
+      });
+      await act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+      const old = document.querySelector(".xterm");
+      const rendered = old!.querySelector(".xterm-rows")!.textContent;
+      expect(rendered).toContain("retained screen");
+      act(() => wires[0].onclose!({ code }));
+      expect(screen.getByRole("status")).toHaveTextContent(`Connection closed (code ${code}). Reattach to try again.`);
+      expect(document.querySelector(".xterm")).toBe(old);
+      expect(old!.querySelector(".xterm-rows")!.textContent).toBe(rendered);
+      expect(screen.queryByText("Disconnected, reconnecting…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Esc" })).toBeDisabled();
+      expect(useWeb.getState().conn).toBe("open");
+      expect(useWeb.getState().authLost).toBe(false);
+      const reattach = screen.getByRole("button", { name: "Reattach" });
+      reattach.focus();
+      expect(reattach).toHaveFocus();
+      fireEvent.click(reattach);
+      expect(wires).toHaveLength(2);
+      expect(document.querySelector(".xterm")).not.toBe(old);
+      expect(old!.isConnected).toBe(false);
+      expect(document.querySelector(".xterm-rows")!.textContent).not.toContain("retained screen");
+      expect(screen.getByRole("status")).toHaveTextContent("Connecting…");
+      act(() => wires[1].onopen!());
+      expect(JSON.parse(wires[1].sent[0] as string)).toMatchObject({ type: "open", pane: { session: "s", pane_id: "p2" }, takeover: false });
+      act(() => wires[1].onmessage!({ data: JSON.stringify({ type: "attached" }) }));
+      expect(screen.getByRole("button", { name: "Esc" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+      expect([...new Uint8Array((wires[1].sent[1] as ArrayBufferView).buffer)]).toEqual([27]);
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows a Pane that disappeared as unavailable instead of attaching to it", () => {
     localStorage.clear();
     const a = { session: "s", pane_id: "p1" };

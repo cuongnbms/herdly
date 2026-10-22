@@ -166,8 +166,11 @@ export class TerminalSocket {
         this.unpair(ws);
         return;
       }
+      if (code !== CLOSE_LAGGED && code !== undefined && code !== 1006) {
+        this.on.event({ type: "closed", code });
+        return;
+      }
       this.on.event({ type: "disconnected" });
-      if (code !== CLOSE_LAGGED && code !== undefined && code !== 1006) return;
       void this.deps.me().then(
         (status) => {
           if (gen !== this.gen) return;
@@ -208,6 +211,7 @@ export class TerminalSocket {
       if (gen !== this.gen) return;
       this.connect(false);
     }, ms);
+    this.on.event({ type: "retrying" });
   }
 
   private disarm(): void {
