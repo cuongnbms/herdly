@@ -80,6 +80,19 @@ describe("PaneScreen Lens selector", () => {
     expect(screen.getByLabelText("More")).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("shows icon-only Lens buttons in the header with accessible names", () => {
+    useWeb.setState({ machines: [machine("claude")] as never });
+    rig();
+    const selector = screen.getByRole("group", { name: "Lens" });
+    expect(selector.closest("header")).not.toBeNull();
+    for (const name of ["Chat", "Terminal"]) {
+      const button = within(selector).getByRole("button", { name });
+      expect(button.textContent).toBe("");
+      expect(button.querySelector("svg")).not.toBeNull();
+      expect(button).toHaveAttribute("title", name);
+    }
+  });
+
   it("shows Chat and Terminal controls with the chosen Lens selected", () => {
     useWeb.setState({ machines: [machine("claude")] as never });
     rig();
