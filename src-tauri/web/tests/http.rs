@@ -81,6 +81,114 @@ async fn a_post_from_another_origin_is_refused_before_any_herdr_call() {
 }
 
 #[tokio::test]
+async fn tab_create_targets_the_workspace_without_stealing_desktop_focus() {
+    let (_d, fake, app, cookie) = setup();
+    let created = json!({"tab_id": "t-new", "root_pane": {"pane_id": "p-new"}});
+    *fake.call_result.lock().unwrap() = Some(Ok(created.clone()));
+    let (status, _, body) = send(
+        &app,
+        post(
+            "/api/tab/create",
+            Some(&cookie),
+            Some(ORIGIN),
+            json!({"session": "dev", "workspace_id": "w2"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap(), created);
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        vec![(
+            "dev".into(),
+            "tab.create".into(),
+            json!({"workspace_id": "w2", "focus": false})
+        )]
+    );
+}
+
+#[tokio::test]
+async fn tab_close_targets_the_tab_and_propagates_herdr_failure() {
+    let (_d, fake, app, cookie) = setup();
+    *fake.call_result.lock().unwrap() = Some(Err(herdly_core::error::AppError::new(
+        "herdr_error",
+        "cannot close",
+    )));
+    let (status, _, body) = send(
+        &app,
+        post(
+            "/api/tab/close",
+            Some(&cookie),
+            Some(ORIGIN),
+            json!({"session": "other", "tab_id": "t2"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({"code": "herdr_error", "message": "cannot close"})
+    );
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        vec![("other".into(), "tab.close".into(), json!({"tab_id": "t2"}))]
+    );
+    *fake.call_result.lock().unwrap() = Some(Ok(json!({})));
+    let (status, _, body) = send(
+        &app,
+        post(
+            "/api/tab/close",
+            Some(&cookie),
+            Some(ORIGIN),
+            json!({"session": "other", "tab_id": "t2"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap(), json!({}));
+}
+
+#[tokio::test]
+async fn tab_routes_require_pairing_origin_and_typed_bodies() {
+    let (_d, fake, app, cookie) = setup();
+    for (path, body) in [
+        (
+            "/api/tab/create",
+            json!({"session": "dev", "workspace_id": "w1"}),
+        ),
+        ("/api/tab/close", json!({"session": "dev", "tab_id": "t1"})),
+    ] {
+        for origin in [None, Some("http://evil.example")] {
+            assert_eq!(
+                send(&app, post(path, Some(&cookie), origin, body.clone()))
+                    .await
+                    .0,
+                StatusCode::FORBIDDEN
+            );
+        }
+        for auth in [None, Some("invalid-cookie")] {
+            assert_eq!(
+                send(&app, post(path, auth, Some(ORIGIN), body.clone()))
+                    .await
+                    .0,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        let (status, _, response) = send(
+            &app,
+            post(path, Some(&cookie), Some(ORIGIN), json!({"session": "dev"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap()["code"],
+            "invalid"
+        );
+    }
+    assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn pane_routes_build_the_herdr_calls() {
     let (_d, fake, app, cookie) = setup();
     let c = Some(cookie.as_str());

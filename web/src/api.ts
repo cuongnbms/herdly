@@ -29,6 +29,14 @@ export const getMe = () => call<{ device_id: string; name: string }>("/api/me");
 
 export const getMachines = () => call<MachineView[]>("/api/machines");
 
+export function tabCreate(session: string, workspace_id: string) {
+  return call<{ root_pane: { pane_id: string } }>("/api/tab/create", { session, workspace_id });
+}
+
+export async function tabClose(session: string, tab_id: string): Promise<void> {
+  await call("/api/tab/close", { session, tab_id });
+}
+
 export function chatPage(p: WebPane, before: number, limit = CHAT_PAGE): Promise<ChatItem[]> {
   const q = new URLSearchParams({ session: p.session, pane_id: p.pane_id, before: String(before), limit: String(limit) });
   return call<ChatItem[]>(`/api/chat/page?${q}`);
