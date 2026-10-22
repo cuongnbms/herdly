@@ -22,6 +22,8 @@ function NotPaired() {
 export function App({ socket }: { socket?: Socket }) {
   useAttention();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarSession, setSidebarSession] = useState<string | null>(null);
+  const [sidebarWorkspaces, setSidebarWorkspaces] = useState<Record<string, boolean>>({});
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const conn = useWeb((s) => s.conn);
   const lost = useWeb((s) => s.lost);
@@ -47,7 +49,15 @@ export function App({ socket }: { socket?: Socket }) {
       {(conn === "down" || (conn === "connecting" && lost)) && <div role="status" className="banner banner-warn reconnect">Disconnected, reconnecting…</div>}
       {open ? <PaneScreen key={openKey} pane={open} socket={socket} onBack={() => back(open)} onSwitch={switchTo} onMenu={() => setSidebarOpen(true)} /> : <PaneList onOpen={openChat} onMenu={() => setSidebarOpen(true)} />}
       </div>
-      {sidebarOpen && <Sidebar current={open} onClose={closeSidebar} onOpen={(p) => { closeSidebar(); if (!open || webKey(p) !== openKey) switchTo(p); }} />}
+      {sidebarOpen && <Sidebar
+        current={open}
+        selectedSession={sidebarSession}
+        onSelectSession={setSidebarSession}
+        expandedWorkspaces={sidebarWorkspaces}
+        onToggleWorkspace={(key, expanded) => setSidebarWorkspaces((previous) => ({ ...previous, [key]: expanded }))}
+        onClose={closeSidebar}
+        onOpen={(p) => { closeSidebar(); if (!open || webKey(p) !== openKey) switchTo(p); }}
+      />}
     </>
   );
 }

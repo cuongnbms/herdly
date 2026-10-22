@@ -27,26 +27,93 @@ describe("App", () => {
     expect(menu).toHaveFocus();
   });
 
-  it("shows collapsible Sessions and Workspaces, and opens a Pane from its Workspace", () => {
-    useWeb.setState({ machines: [twoPanes] as never });
+  it("selects one Session, keeps its Workspaces collapsible, and opens a Pane", () => {
+    const other = { ...twoPanes.sessions[0], name: "other", workspaces: [{ ...twoPanes.sessions[0].workspaces[0], label: "Other", tabs: [{ ...twoPanes.sessions[0].workspaces[0].tabs[0], panes: [pv("p3", "gamma")] }] }] };
+    useWeb.setState({ machines: [{ ...twoPanes, sessions: [...twoPanes.sessions, other] }] as never });
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
     const drawer = within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
-    const session = drawer.getByRole("button", { name: "Session s" });
+    const session = drawer.getByRole("combobox", { name: "Session" });
+    expect(session).toHaveValue("s");
+    expect(drawer.queryByRole("group", { name: "Workspace Other" })).not.toBeInTheDocument();
+    fireEvent.change(session, { target: { value: "other" } });
+    expect(drawer.getByRole("group", { name: "Workspace Other" })).toBeInTheDocument();
+    expect(drawer.getByRole("button", { name: /gamma/ })).toBeInTheDocument();
+    expect(drawer.queryByRole("group", { name: "Workspace w" })).not.toBeInTheDocument();
+    expect(useWeb.getState().open).toBeNull();
+    fireEvent.change(session, { target: { value: "s" } });
     const workspace = drawer.getByRole("button", { name: "Workspace w" });
-    expect(session).toHaveAttribute("aria-expanded", "true");
     expect(workspace).toHaveAttribute("aria-expanded", "true");
     expect(within(drawer.getByRole("group", { name: "Workspace w" })).getByRole("button", { name: /beta/ })).toBeInTheDocument();
     fireEvent.click(workspace);
     expect(drawer.queryByRole("button", { name: /beta/ })).not.toBeInTheDocument();
     fireEvent.click(workspace);
-    fireEvent.click(session);
-    expect(drawer.queryByRole("button", { name: "Workspace w" })).not.toBeInTheDocument();
-    fireEvent.click(session);
     fireEvent.click(drawer.getByRole("button", { name: /beta/ }));
     expect(screen.queryByRole("dialog", { name: "Sessions and Workspaces" })).not.toBeInTheDocument();
     expect(useWeb.getState().open).toEqual({ session: "s", pane_id: "p2" });
     expect(screen.getByLabelText("Message")).toBeInTheDocument();
+  });
+
+  it("starts with only the current Workspace expanded and remembers toggles after reopening", () => {
+    const session = twoPanes.sessions[0];
+    const workspace = session.workspaces[0];
+    const other = { ...workspace, workspace_id: "w2", label: "Other", tabs: [{ ...workspace.tabs[0], panes: [pv("p3", "gamma")] }] };
+    useWeb.setState({ machines: [{ ...twoPanes, sessions: [{ ...session, workspaces: [workspace, other] }] }] as never, open: { session: "s", pane_id: "p3" } });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    let drawer = within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
+    expect(drawer.getByRole("button", { name: "Workspace w" })).toHaveAttribute("aria-expanded", "false");
+    expect(drawer.getByRole("button", { name: "Workspace Other" })).toHaveAttribute("aria-expanded", "true");
+    expect(drawer.getByRole("button", { name: /gamma/ })).toHaveAttribute("aria-current", "true");
+    expect(within(drawer.getByRole("group", { name: "Workspace w" })).getByText("2 panes")).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "Workspace w" }));
+    expect(drawer.getByRole("button", { name: /alpha/ })).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "Workspace Other" }));
+    fireEvent.click(drawer.getByRole("button", { name: "Close sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    drawer = within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
+    expect(drawer.getByRole("button", { name: "Workspace w" })).toHaveAttribute("aria-expanded", "true");
+    expect(drawer.getByRole("button", { name: /alpha/ })).toBeInTheDocument();
+    expect(drawer.getByRole("button", { name: "Workspace Other" })).toHaveAttribute("aria-expanded", "false");
+    expect(drawer.queryByRole("button", { name: /gamma/ })).not.toBeInTheDocument();
+  });
+
+  it("starts at the current Session, remembers a different selection, and recovers if it disappears", () => {
+    const other = { ...twoPanes.sessions[0], name: "other", workspaces: [{ ...twoPanes.sessions[0].workspaces[0], label: "Other", tabs: [{ ...twoPanes.sessions[0].workspaces[0].tabs[0], panes: [pv("p3", "gamma")] }] }] };
+    const current = { session: "other", pane_id: "p3" };
+    useWeb.setState({ machines: [{ ...twoPanes, sessions: [...twoPanes.sessions, other] }] as never, open: current });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    let drawer = within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
+    expect(drawer.getByRole("combobox", { name: "Session" })).toHaveValue("other");
+    expect(drawer.getByRole("button", { name: /gamma/ })).toHaveAttribute("aria-current", "true");
+    fireEvent.click(drawer.getByRole("button", { name: "Workspace Other" }));
+    fireEvent.change(drawer.getByRole("combobox", { name: "Session" }), { target: { value: "s" } });
+    // Same workspace_id in another Session must not inherit the collapsed state.
+    expect(drawer.getByRole("button", { name: "Workspace w" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(drawer.getByRole("button", { name: "Close sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    drawer = within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
+    expect(drawer.getByRole("combobox", { name: "Session" })).toHaveValue("s");
+    expect(useWeb.getState().open).toEqual(current);
+    act(() => useWeb.setState({ machines: [{ ...twoPanes, sessions: [other] }] as never }));
+    expect(drawer.getByRole("combobox", { name: "Session" })).toHaveValue("other");
+    expect(drawer.getByRole("button", { name: "Workspace Other" })).toHaveAttribute("aria-expanded", "false");
+    act(() => useWeb.setState({ machines: [] }));
+    expect(drawer.getByText("No Sessions")).toBeInTheDocument();
+    expect(drawer.queryByRole("combobox", { name: "Session" })).not.toBeInTheDocument();
+  });
+
+  it("includes the Session selector in the focus trap when the Session has no Workspaces", () => {
+    useWeb.setState({ machines: [{ ...twoPanes, sessions: [{ ...twoPanes.sessions[0], workspaces: [] }] }] as never });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    const drawer = within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
+    const selector = drawer.getByRole("combobox", { name: "Session" });
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(selector).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(drawer.getByRole("button", { name: "Close sidebar" })).toHaveFocus();
   });
 
   it("opens the sidebar from Chat, marks the current Pane and switches without losing drafts", () => {
@@ -89,6 +156,16 @@ describe("App", () => {
     fireEvent.click(close);
     expect(container.querySelector(".app-content")).not.toHaveAttribute("inert");
     expect(document.body.style.overflow).not.toBe("hidden");
+  });
+
+  it("exposes readable status and the full Pane title in the compact sidebar", () => {
+    useWeb.setState({ machines: [twoPanes] as never });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    const drawer = within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
+    const pane = within(drawer.getByRole("button", { name: /alpha/ }));
+    expect(pane.getByText("idle")).toHaveAttribute("title", "Status: idle");
+    expect(pane.getByText("alpha")).toHaveAttribute("title", "alpha");
   });
 
   it("shows an empty state when there are no Sessions", () => {
@@ -143,6 +220,8 @@ describe("App", () => {
     const first = within(drawer.getByRole("group", { name: "Workspace w" }));
     expect(first.getByRole("button", { name: /alpha/ })).toBeInTheDocument();
     expect(first.getByRole("button", { name: /gamma/ })).toBeInTheDocument();
+    // Inactive Workspaces now start collapsed; their Panes remain reachable on expand.
+    fireEvent.click(drawer.getByRole("button", { name: "Workspace Other" }));
     const other = within(drawer.getByRole("group", { name: "Workspace Other" }));
     expect(other.getByRole("button", { name: /shell/ })).not.toBeDisabled();
     expect(first.queryByRole("button", { name: /shell/ })).not.toBeInTheDocument();

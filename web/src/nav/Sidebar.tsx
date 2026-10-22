@@ -1,25 +1,49 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { useWeb } from "../store";
 import { webKey, type WebPane } from "../types";
 import { ChevronIcon } from "../ui/icons";
 import { AgentMark } from "../list/PaneCard";
 import { markSeen } from "../list/seen";
 
-function Branch({ label, children }: { label: string; children: ReactNode }) {
-  const [expanded, setExpanded] = useState(true);
+function Branch({ label, count, expanded, onToggle, children }: {
+  label: string;
+  count: number;
+  expanded: boolean;
+  onToggle(): void;
+  children: ReactNode;
+}) {
   const id = useId();
   return (
-    <div className="sidebar-branch" role="group" aria-label={label}>
-      <button type="button" className="sidebar-branch-toggle" aria-label={label} aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
-        <ChevronIcon className="chev" /><span>{label}</span>
+    <div className="sidebar-branch" role="group" aria-label={`Workspace ${label}`}>
+      <button type="button" className="sidebar-branch-toggle" aria-label={`Workspace ${label}`} aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
+        <ChevronIcon className="chev" /><span className="sidebar-workspace-label">{label}</span>
+        <span className="sidebar-pane-count">{count} {count === 1 ? "pane" : "panes"}</span>
       </button>
       <div id={id} hidden={!expanded} className="sidebar-children">{children}</div>
     </div>
   );
 }
 
-export function Sidebar({ current, onOpen, onClose }: { current: WebPane | null; onOpen(p: WebPane): void; onClose(): void }) {
+export function Sidebar({ current, selectedSession, onSelectSession, expandedWorkspaces, onToggleWorkspace, onOpen, onClose }: {
+  current: WebPane | null;
+  selectedSession: string | null;
+  onSelectSession(name: string): void;
+  expandedWorkspaces: Record<string, boolean>;
+  onToggleWorkspace(key: string, expanded: boolean): void;
+  onOpen(p: WebPane): void;
+  onClose(): void;
+}) {
   const machine = useWeb((s) => s.machines[0]);
+  const session = machine?.sessions.find((s) => s.name === selectedSession)
+    ?? machine?.sessions.find((s) => s.name === current?.session)
+    ?? machine?.sessions[0];
+  const defaultWorkspace = session?.workspaces.find((workspace) => current?.session === session.name
+    && workspace.tabs.some((tab) => tab.panes.some((pane) => pane.pane_id === current.pane_id)))
+    ?? session?.workspaces[0];
+  const selectorId = useId();
+  useEffect(() => {
+    if (session && session.name !== selectedSession) onSelectSession(session.name);
+  }, [session?.name, selectedSession, onSelectSession]);
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -32,7 +56,7 @@ export function Sidebar({ current, onOpen, onClose }: { current: WebPane | null;
         onClose();
       }
       if (e.key !== "Tab") return;
-      const buttons = [...(panel.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])]
+      const buttons = [...(panel.current?.querySelectorAll<HTMLElement>("button:not(:disabled), select:not(:disabled)") ?? [])]
         .filter((button) => !button.closest("[hidden]"));
       const first = buttons[0];
       const last = buttons[buttons.length - 1];
@@ -63,13 +87,22 @@ export function Sidebar({ current, onOpen, onClose }: { current: WebPane | null;
           <h2>Sessions and Workspaces</h2>
           <button type="button" className="icon-btn" aria-label="Close sidebar" onClick={onClose}>×</button>
         </header>
+        {session && <div className="sidebar-session-picker">
+          <label htmlFor={selectorId}>Session</label>
+          <select id={selectorId} value={session.name} onChange={(e) => onSelectSession(e.target.value)}>
+            {machine?.sessions.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+          </select>
+        </div>}
         <nav className="sidebar-body" aria-label="Sessions and Workspaces">
           {!machine?.sessions.length && <p className="sidebar-empty">No Sessions</p>}
-          {machine?.sessions.map((session) => (
-            <Branch key={session.name} label={`Session ${session.name}`}>
+          {session && <div key={session.name}>
               {!session.running && <p className="sidebar-session-note">Stopped</p>}
-              {session.workspaces.map((workspace) => (
-                <Branch key={workspace.workspace_id} label={`Workspace ${workspace.label}`}>
+              {session.workspaces.map((workspace) => {
+                const key = JSON.stringify([machine?.id, session.name, workspace.workspace_id]);
+                const expanded = expandedWorkspaces[key] ?? workspace.workspace_id === defaultWorkspace?.workspace_id;
+                return <Branch key={workspace.workspace_id} label={workspace.label}
+                  count={workspace.tabs.reduce((count, tab) => count + tab.panes.length, 0)}
+                  expanded={expanded} onToggle={() => onToggleWorkspace(key, !expanded)}>
                   {workspace.tabs.flatMap((tab) => tab.panes.map((pane) => {
                     const target = { session: session.name, pane_id: pane.pane_id };
                     return (
@@ -77,15 +110,14 @@ export function Sidebar({ current, onOpen, onClose }: { current: WebPane | null;
                         aria-current={current && webKey(current) === webKey(target) ? "true" : undefined}
                         disabled={!session.running}
                         onClick={() => { if (pane.status === "done") markSeen(webKey(target)); onOpen(target); }}>
-                        <AgentMark agent={pane.agent} /><span className="sidebar-pane-title">{pane.title}</span>
-                        <span className="status" data-status={pane.status}>{pane.status}</span>
+                        <AgentMark agent={pane.agent} /><span className="sidebar-pane-title" title={pane.title}>{pane.title}</span>
+                        <span className="status" data-status={pane.status} title={`Status: ${pane.status}`}>{pane.status}</span>
                       </button>
                     );
                   }))}
-                </Branch>
-              ))}
-            </Branch>
-          ))}
+                </Branch>;
+              })}
+          </div>}
         </nav>
       </div>
     </div>
