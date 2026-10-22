@@ -50,7 +50,7 @@ Status: **awaiting a real phone** (no iOS device has run any row below).
 | 6 | Safe area | No control sits under the notch or the home indicator in portrait or landscape | awaiting a real phone |
 | 7 | Rotation | The terminal refits, the Pane's `stty size` changes to the new grid, scrollback reflows | awaiting a real phone |
 | 8 | Key bar | Esc, Tab, Ctrl and the four arrows send once; Ctrl+C interrupts a running command | awaiting a real phone |
-| 9 | Touch scroll in a TUI with mouse reporting on | One-finger swipe scrolls scrollback; a tap does not click a TUI target | awaiting a real phone |
+| 9 | Touch scroll in a TUI with mouse reporting on | Pulling down shows older output (herdr's history, or the TUI's own view); a tap does not click a TUI target | awaiting a real phone |
 | 10 | Backgrounding (lock screen, app switch) | Returning shows a fresh attempt and **input typed while away is gone** (see "Known loss" below) | awaiting a real phone |
 | 11 | Held by the desktop | With the same Terminal open in Herdly on the Machine, the phone shows "Another device is attached" and **Take over** moves it to the phone | awaiting a real phone |
 | 12 | Desktop interruption from the phone | After taking over on the phone, the desktop's terminal shows it was taken over and stops mirroring | awaiting a real phone |
@@ -73,7 +73,7 @@ Status: **awaiting a real phone** (no Android device has run any row below).
 | 7 | Safe area and cutout | Nothing under the cutout or gesture bar, portrait and landscape | awaiting a real phone |
 | 8 | Rotation | Refits, Pane grid changes, scrollback reflows | awaiting a real phone |
 | 9 | Key bar | Esc, Tab, Ctrl and arrows send once; Ctrl+C interrupts | awaiting a real phone |
-| 10 | Touch scroll in a TUI with mouse reporting on | Swipe scrolls; tap does not click a TUI target | awaiting a real phone |
+| 10 | Touch scroll in a TUI with mouse reporting on | Pulling down shows older output (herdr's history or the TUI's view); tap does not click a TUI target | awaiting a real phone |
 | 11 | Backgrounding (app switch, screen off) | Returning shows a fresh attempt; input typed while away is gone | awaiting a real phone |
 | 12 | Held / Take over against the desktop | Held banner, **Take over** wins, the desktop stops mirroring | awaiting a real phone |
 | 13 | Reconnect after Wi-Fi to mobile data | The banner reports reconnecting and the terminal comes back | awaiting a real phone |
@@ -92,9 +92,13 @@ Status: **awaiting a real phone** (no Android device has run any row below).
 - **An application's terminal modes do not reach the browser.** herdr 0.9.5's attach stream
   carries the Pane's screen, not its DECSET modes, so xterm never learns the Pane set application
   cursor keys or enabled mouse reporting. Consequence: the key bar's arrows always send the
-  normal-mode form, and a TUI's mouse reporting is not driven from the phone. Verified in the
-  smoke: with the Pane really setting `ESC[?1h`, the stream carries only cursor-visibility and
-  synchronized-output modes and the Pane receives `ESC[A`.
+  normal-mode form. Verified in the smoke: with the Pane really setting `ESC[?1h`, the stream
+  carries only cursor-visibility and synchronized-output modes and the Pane receives `ESC[A`.
+- **Scrollback lives in herdr, not in the browser.** On attach, herdr turns on the alternate
+  screen and SGR mouse reporting in the client and paints only the visible grid, so the browser's
+  xterm has no history. A swipe therefore goes up as wheel reports (one per three lines of
+  travel), the same as a desktop wheel: herdr scrolls its own history, or hands the wheel to an
+  application that asked for the mouse. A tap still sends no click.
 - **Terminal queries are answered by herdr, not by the browser's xterm.** herdr emulates each
   Pane's terminal, so a query a program writes (`ESC[c`, `ESC[5n`, an OSC colour query) is answered
   inside herdr; the client never sees the query. Measured: the Pane's own screen shows the answer

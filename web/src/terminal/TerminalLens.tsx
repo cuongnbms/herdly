@@ -16,6 +16,8 @@ const RESIZE_SETTLE_MS = 150;
 /** A finger that moved less than this, and lifted quickly, was a tap rather than a scroll. */
 const TAP_SLOP_PX = 10;
 const TAP_MAX_MS = 500;
+/** Lines herdr scrolls its own history per wheel report (measured on herdr 0.9.5). */
+const WHEEL_LINES = 3;
 /** Self-hosted face, so cells measure the same on every device. */
 const FONT_FAMILY = '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace';
 
@@ -395,8 +397,8 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
       }, RESIZE_SETTLE_MS);
     };
 
-    // Touch: a swipe scrolls scrollback with no pointer reports, a tap only focuses. Without
-    // this, a mouse-reporting app turns each touch into a click at the touch point.
+    // Touch: a swipe scrolls (locally, or as wheel reports when mouse reporting is on), a tap
+    // only focuses. Without this, a mouse-reporting app turns each touch into a click.
     let touch: { x: number; y: number; at: number; lastY: number; moved: boolean } | null = null;
     const cellHeight = (): number => {
       const screen = box.querySelector<HTMLElement>(".xterm-screen");
@@ -413,17 +415,40 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
       const point = e.touches[0];
       touch = { x: point.clientX, y: point.clientY, at: Date.now(), lastY: point.clientY, moved: false };
     };
+    /** Wheel reports through xterm's own encoder, at the finger, exactly as a desktop wheel. */
+    const wheel = (notches: number, point: Touch) => {
+      const screen = box.querySelector<HTMLElement>(".xterm-screen");
+      if (!screen || !typing.current) return;
+      for (let i = 0; i < Math.abs(notches); i++) {
+        screen.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: Math.sign(notches),
+            deltaMode: WheelEvent.DOM_DELTA_LINE,
+            clientX: point.clientX,
+            clientY: point.clientY,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+    };
     const onTouchMove = (e: TouchEvent) => {
       if (!touch || e.touches.length !== 1) return;
       const point = e.touches[0];
       if (Math.abs(point.clientX - touch.x) > TAP_SLOP_PX || Math.abs(point.clientY - touch.y) > TAP_SLOP_PX) touch.moved = true;
+      const t = term.current;
       const cell = cellHeight();
-      if (cell > 0) {
+      if (t && cell > 0) {
+        // herdr paints the Pane in the alternate screen with mouse reporting on and keeps the
+        // history itself: the browser has nothing to scroll, so the swipe goes up as wheel reports.
+        const upstream = t.modes.mouseTrackingMode !== "none";
+        const step = upstream ? cell * WHEEL_LINES : cell;
         // Content follows the finger: pulling down reveals older lines (a negative scroll).
-        const lines = Math.trunc((touch.lastY - point.clientY) / cell);
+        const lines = Math.trunc((touch.lastY - point.clientY) / step);
         if (lines !== 0) {
-          term.current?.scrollLines(lines);
-          touch.lastY -= lines * cell;
+          if (upstream) wheel(lines, point);
+          else t.scrollLines(lines);
+          touch.lastY -= lines * step;
         }
       }
       // Keep the page and the compat-mouse path out of the gesture.
