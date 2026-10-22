@@ -1,28 +1,8 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useRef } from "react";
 import { useWeb } from "../store";
 import type { WebPane } from "../types";
-import { ChevronIcon } from "../ui/icons";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { SessionSelect } from "./SessionSelect";
-
-function Branch({ label, count, expanded, onToggle, children }: {
-  label: string;
-  count: number;
-  expanded: boolean;
-  onToggle(): void;
-  children: ReactNode;
-}) {
-  const id = useId();
-  return (
-    <div className="sidebar-branch" role="group" aria-label={`Workspace ${label}`}>
-      <button type="button" className="sidebar-branch-toggle" aria-label={`Workspace ${label}`} aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
-        <ChevronIcon className="chev" /><span className="sidebar-workspace-label">{label}</span>
-        <span className="sidebar-pane-count">{count} {count === 1 ? "pane" : "panes"}</span>
-      </button>
-      <div id={id} hidden={!expanded} className="sidebar-children">{children}</div>
-    </div>
-  );
-}
 
 export function Sidebar({ current, selectedSession, onSelectSession, expandedWorkspaces, onToggleWorkspace, onOpen, onClose }: {
   current: WebPane | null;
@@ -96,11 +76,9 @@ export function Sidebar({ current, selectedSession, onSelectSession, expandedWor
               {session.workspaces.map((workspace) => {
                 const key = JSON.stringify([machine?.id, session.name, workspace.workspace_id]);
                 const expanded = expandedWorkspaces[key] ?? workspace.workspace_id === defaultWorkspace?.workspace_id;
-                return <Branch key={workspace.workspace_id} label={workspace.label}
-                  count={workspace.tabs.reduce((count, tab) => count + tab.panes.length, 0)}
-                  expanded={expanded} onToggle={() => onToggleWorkspace(key, !expanded)}>
-                  <WorkspaceTabs session={session.name} running={session.running} workspace={workspace} current={current} onOpen={onOpen} />
-                </Branch>;
+                return <WorkspaceTabs key={workspace.workspace_id} session={session.name} running={session.running}
+                  workspace={workspace} current={current} onOpen={onOpen}
+                  expanded={expanded} onToggle={() => onToggleWorkspace(key, !expanded)} />;
               })}
           </div>}
         </nav>

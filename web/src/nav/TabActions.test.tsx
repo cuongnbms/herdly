@@ -28,6 +28,69 @@ function openSidebar() {
   return within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
 }
 
+it("creates from the workspace header even while its contents are collapsed", async () => {
+  const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    expect(url).toBe("/api/tab/create");
+    expect(JSON.parse(init?.body as string)).toEqual({ session: "dev", workspace_id: "w2" });
+    return new Response(JSON.stringify({ root_pane: { pane_id: "p-new" } }));
+  });
+  vi.stubGlobal("fetch", fetch);
+  const drawer = openSidebar();
+  const workspace = within(drawer.getByRole("group", { name: "Workspace Empty" }));
+  expect(workspace.getByRole("button", { name: "Workspace Empty" })).toHaveAttribute("aria-expanded", "false");
+  const create = workspace.getByRole("button", { name: "New tab in Empty" });
+  expect(create).not.toHaveTextContent("New tab");
+  fireEvent.click(create);
+  await waitFor(() => expect(useWeb.getState().open).toEqual({ session: "dev", pane_id: "p-new" }));
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("dismisses a tab menu on Escape, outside press, and collapsing its workspace", () => {
+  const drawer = openSidebar();
+  const trigger = drawer.getByRole("button", { name: "Tab actions for Logs" });
+  fireEvent.click(trigger);
+  const menu = drawer.getByRole("menu", { name: "Tab actions for Logs" });
+  fireEvent.keyDown(within(menu).getByRole("menuitem"), { key: "Escape" });
+  expect(drawer.queryByRole("menu")).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+  expect(screen.getByRole("dialog", { name: "Sessions and Workspaces" })).toBeInTheDocument();
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  expect(drawer.getByRole("menuitem", { name: "Close tab" })).toHaveFocus();
+  fireEvent.pointerDown(drawer.getByRole("button", { name: "Workspace Project" }));
+  expect(drawer.queryByRole("menu")).not.toBeInTheDocument();
+  fireEvent.click(trigger);
+  expect(drawer.getByRole("menu")).toBeInTheDocument();
+  fireEvent.click(drawer.getByRole("button", { name: "Workspace Project" }));
+  fireEvent.click(drawer.getByRole("button", { name: "Workspace Project" }));
+  expect(drawer.queryByRole("menu")).not.toBeInTheDocument();
+  expect(drawer.getByRole("button", { name: "Tab actions for Logs" })).toHaveAttribute("aria-expanded", "false");
+});
+
+it("uses one row for a single-Pane tab and puts closing behind its actions menu", async () => {
+  const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    expect(url).toBe("/api/tab/close");
+    expect(JSON.parse(init?.body as string)).toEqual({ session: "dev", tab_id: "t2" });
+    return new Response("{}");
+  });
+  vi.stubGlobal("fetch", fetch);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const drawer = openSidebar();
+  const pane = drawer.getByRole("button", { name: /p3/ });
+  expect(pane).toBeInTheDocument();
+  expect(drawer.queryByText("Logs")).not.toBeInTheDocument();
+  expect(drawer.queryByRole("button", { name: "Close tab Logs" })).not.toBeInTheDocument();
+  expect(drawer.queryByRole("menuitem", { name: "Close tab" })).not.toBeInTheDocument();
+  const actions = drawer.getByRole("button", { name: "Tab actions for Logs" });
+  expect(pane.parentElement).toBe(actions.parentElement?.parentElement);
+  fireEvent.click(actions);
+  const close = drawer.getByRole("menuitem", { name: "Close tab" });
+  expect(close).toHaveFocus();
+  fireEvent.click(close);
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  expect(confirm).toHaveBeenCalledWith('Close tab "Logs" and all its panes?');
+  expect(useWeb.getState().open).toBeNull();
+});
+
 it("confirms closing all tab Panes and returns the current Pane to the list", async () => {
   useWeb.setState({ open: { session: "dev", pane_id: "p2" } });
   useWeb.getState().apply({ type: "chat_opened", pane: { session: "dev", pane_id: "p2" }, located: { agent: "claude", path: "/chat", ambiguous: false, candidates: [], pending: false } });
@@ -43,7 +106,8 @@ it("confirms closing all tab Panes and returns the current Pane to the list", as
   const tab = within(drawer.getByRole("group", { name: "Tab Build" }));
   expect(tab.getByRole("button", { name: /p1/ })).toBeInTheDocument();
   expect(tab.getByRole("button", { name: /p2/ })).toBeInTheDocument();
-  fireEvent.click(tab.getByRole("button", { name: "Close tab Build" }));
+  fireEvent.click(tab.getByRole("button", { name: "Tab actions for Build" }));
+  fireEvent.click(tab.getByRole("menuitem", { name: "Close tab" }));
   expect(confirm).toHaveBeenCalledWith('Close tab "Build" and all its panes?');
   await waitFor(() => expect(useWeb.getState().open).toBeNull());
   expect(fetch).toHaveBeenCalledTimes(1);
@@ -60,10 +124,11 @@ it("keeps the selected Pane on a failed close, reports the error, and allows ret
   const fetch = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; }));
   vi.stubGlobal("fetch", fetch);
   const drawer = openSidebar();
-  const close = drawer.getByRole("button", { name: "Close tab Build" });
+  const close = drawer.getByRole("button", { name: "Tab actions for Build" });
   fireEvent.click(close);
+  fireEvent.click(drawer.getByRole("menuitem", { name: "Close tab" }));
   expect(close).toBeDisabled();
-  expect(within(drawer.getByRole("group", { name: "Workspace Project" })).getByRole("button", { name: "New tab" })).toBeDisabled();
+  expect(drawer.getByRole("button", { name: "New tab in Project" })).toBeDisabled();
   fireEvent.click(close);
   expect(fetch).toHaveBeenCalledTimes(1);
   await act(async () => { finish(new Response(JSON.stringify({ code: "herdr_error", message: "Session unavailable" }), { status: 502 })); });
@@ -77,9 +142,10 @@ it("does not call the server when closing is cancelled", () => {
   vi.stubGlobal("fetch", fetch);
   vi.spyOn(window, "confirm").mockReturnValue(false);
   const drawer = openSidebar();
-  fireEvent.click(drawer.getByRole("button", { name: "Close tab Logs" }));
+  fireEvent.click(drawer.getByRole("button", { name: "Tab actions for Logs" }));
+  fireEvent.click(drawer.getByRole("menuitem", { name: "Close tab" }));
   expect(fetch).not.toHaveBeenCalled();
-  expect(drawer.getByRole("group", { name: "Tab Logs" })).toBeInTheDocument();
+  expect(drawer.getByRole("button", { name: /p3/ })).toBeInTheDocument();
 });
 
 it.each(["stopped", "disconnected"])("disables tab mutations while %s", (condition) => {
@@ -88,8 +154,8 @@ it.each(["stopped", "disconnected"])("disables tab mutations while %s", (conditi
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
   const drawer = openSidebar();
-  expect(drawer.getByRole("button", { name: "New tab" })).toBeDisabled();
-  expect(drawer.getByRole("button", { name: "Close tab Build" })).toBeDisabled();
+  expect(drawer.getByRole("button", { name: "New tab in Project" })).toBeDisabled();
+  expect(drawer.getByRole("button", { name: "Tab actions for Build" })).toBeDisabled();
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -97,7 +163,7 @@ it("does not reopen a Pane if the sidebar was dismissed during creation", async 
   let finish!: (r: Response) => void;
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; })));
   const drawer = openSidebar();
-  fireEvent.click(drawer.getByRole("button", { name: "New tab" }));
+  fireEvent.click(drawer.getByRole("button", { name: "New tab in Project" }));
   fireEvent.click(drawer.getByRole("button", { name: "Close sidebar" }));
   expect(screen.queryByRole("dialog", { name: "Sessions and Workspaces" })).not.toBeInTheDocument();
   await act(async () => { finish(new Response(JSON.stringify({ root_pane: { pane_id: "p-new" } }))); });
@@ -112,7 +178,8 @@ it("preserves a different selection when a close reply arrives after a live view
   let finish!: (r: Response) => void;
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; })));
   const drawer = openSidebar();
-  fireEvent.click(drawer.getByRole("button", { name: "Close tab Build" }));
+  fireEvent.click(drawer.getByRole("button", { name: "Tab actions for Build" }));
+  fireEvent.click(drawer.getByRole("menuitem", { name: "Close tab" }));
   fireEvent.click(drawer.getByRole("button", { name: /p3/ }));
   const updated = { ...machine, sessions: [{ ...machine.sessions[0], workspaces: [{ ...machine.sessions[0].workspaces[0], tabs: [machine.sessions[0].workspaces[0].tabs[1]] }] }] };
   act(() => useWeb.getState().apply({ type: "machine", view: updated }));
@@ -131,7 +198,7 @@ it("creates a tab in an empty workspace and opens its root Pane", async () => {
   vi.stubGlobal("fetch", fetch);
   const drawer = openSidebar();
   fireEvent.click(drawer.getByRole("button", { name: "Workspace Empty" }));
-  fireEvent.click(within(drawer.getByRole("group", { name: "Workspace Empty" })).getByRole("button", { name: "New tab" }));
+  fireEvent.click(drawer.getByRole("button", { name: "New tab in Empty" }));
   await waitFor(() => expect(useWeb.getState().open).toEqual({ session: "dev", pane_id: "p-new" }));
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("dialog", { name: "Sessions and Workspaces" })).not.toBeInTheDocument();

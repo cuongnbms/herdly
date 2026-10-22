@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:terminal-dom": "node scripts/terminal-dom/run.mjs",
+    "test:sidebar-dom": "node scripts/sidebar-dom/run.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

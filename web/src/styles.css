@@ -703,7 +703,10 @@ button:disabled { opacity: 0.45; cursor: default; }
 .session-select-option[aria-selected="true"] { color: var(--accent); }
 .session-select-check { flex: none; width: 18px; text-align: center; color: var(--accent); }
 .sidebar-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
+.sidebar-workspace-header { display: flex; align-items: center; }
 .sidebar-branch-toggle {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -718,13 +721,18 @@ button:disabled { opacity: 0.45; cursor: default; }
 .sidebar-workspace-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .sidebar-pane-count { flex: none; color: var(--fg-2); font-size: 11px; font-weight: 400; }
 .sidebar-children { padding-left: 4px; border-left: 1px solid var(--line); margin-left: 17px; }
-.sidebar-new-tab { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 8px; border-radius: var(--r-sm); color: var(--accent); text-align: left; }
+.sidebar-new-tab { flex: none; min-width: 44px; min-height: 44px; color: var(--fg-2); font-size: 20px; }
+.sidebar-pane-row { display: flex; align-items: center; }
+.sidebar-pane-row .sidebar-pane { flex: 1; min-width: 0; }
 .sidebar-tab { margin-bottom: 4px; }
 .sidebar-tab-header { display: flex; align-items: center; gap: 8px; min-height: 44px; padding-left: 8px; }
 .sidebar-tab-label { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; color: var(--fg-2); }
-.sidebar-tab-close { flex: none; min-width: 44px; min-height: 44px; color: var(--fg-2); }
+.sidebar-tab-actions { position: relative; flex: none; }
+.sidebar-tab-more { min-width: 44px; min-height: 44px; color: var(--fg-2); }
+.sidebar-tab-menu { position: absolute; z-index: 2; right: 0; top: calc(100% + 4px); min-width: 144px; padding: 4px; border: 1px solid var(--line-2); border-radius: var(--r-md); background: var(--surface-2); box-shadow: var(--shadow-pop); }
+.sidebar-tab-menu button { width: 100%; min-height: 44px; padding: 8px 12px; border-radius: var(--r-sm); text-align: left; font-size: 13px; color: var(--err-fg); }
 .sidebar-tab-error { margin: 4px 8px 8px; color: var(--err-fg); font-size: 13px; overflow-wrap: anywhere; }
-.sidebar-new-tab:active, .sidebar-tab-close:active { background: var(--active); }
+.sidebar-new-tab:active, .sidebar-tab-more:active, .sidebar-tab-menu button:active { background: var(--active); }
 .sidebar-pane {
   width: 100%;
   min-height: 44px;

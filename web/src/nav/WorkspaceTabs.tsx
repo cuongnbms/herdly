@@ -1,18 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { tabClose, tabCreate } from "../api";
 import { useWeb } from "../store";
 import { webKey, type WebPane } from "../types";
 import type { TabView, WorkspaceView } from "@desktop/lib/types";
 import { AgentMark } from "../list/PaneCard";
 import { markSeen } from "../list/seen";
+import { ChevronIcon } from "../ui/icons";
+import { TabMenu } from "./TabMenu";
 
-export function WorkspaceTabs({ session, running, workspace, current, onOpen }: {
+export function WorkspaceTabs({ session, running, workspace, current, onOpen, expanded, onToggle }: {
   session: string;
   running: boolean;
   workspace: WorkspaceView;
   current: WebPane | null;
   onOpen(p: WebPane): void;
+  expanded: boolean;
+  onToggle(): void;
 }) {
+  const id = useId();
+  const count = workspace.tabs.reduce((n, tab) => n + tab.panes.length, 0);
   const connected = useWeb((s) => s.conn === "open");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,29 +56,42 @@ export function WorkspaceTabs({ session, running, workspace, current, onOpen }: 
       if (mounted.current) setPending(false);
     }
   };
-  return <>
-    <button type="button" className="sidebar-new-tab" disabled={!running || !connected || pending} onClick={() => void create()}>
-      <span aria-hidden="true">＋</span> New tab
-    </button>
+  return <div className="sidebar-branch" role="group" aria-label={`Workspace ${workspace.label}`}>
+    <div className="sidebar-workspace-header">
+      <button type="button" className="sidebar-branch-toggle" aria-label={`Workspace ${workspace.label}`} aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
+        <ChevronIcon className="chev" /><span className="sidebar-workspace-label">{workspace.label}</span>
+        <span className="sidebar-pane-count">{count} {count === 1 ? "pane" : "panes"}</span>
+      </button>
+      <button type="button" className="icon-btn sidebar-new-tab" aria-label={`New tab in ${workspace.label}`}
+        title="New tab" disabled={!running || !connected || pending} onClick={() => void create()}>＋</button>
+    </div>
     {error && <p role="alert" className="sidebar-tab-error">{error}</p>}
-    {workspace.tabs.map((tab) => <div key={tab.tab_id} role="group" aria-label={`Tab ${tab.label}`} className="sidebar-tab">
-      <div className="sidebar-tab-header">
-        <span className="sidebar-tab-label" title={tab.label}>{tab.label}</span>
-        <button type="button" className="icon-btn sidebar-tab-close" aria-label={`Close tab ${tab.label}`}
-          disabled={!running || !connected || pending} onClick={() => void close(tab)}>×</button>
-      </div>
-      {tab.panes.map((pane) => {
-        const target = { session, pane_id: pane.pane_id };
-        return (
-          <button type="button" key={pane.pane_id} className="sidebar-pane"
-            aria-current={current && webKey(current) === webKey(target) ? "true" : undefined}
-            disabled={!running}
-            onClick={() => { if (pane.status === "done") markSeen(webKey(target)); onOpen(target); }}>
-            <AgentMark agent={pane.agent} /><span className="sidebar-pane-title" title={pane.title}>{pane.title}</span>
-            <span className="status" data-status={pane.status} title={`Status: ${pane.status}`}>{pane.status}</span>
-          </button>
-        );
+    <div id={id} hidden={!expanded} className="sidebar-children">
+      {expanded && workspace.tabs.map((tab) => {
+        const single = tab.panes.length === 1;
+        const actions = <TabMenu label={tab.label}
+          disabled={!running || !connected || pending} onClose={() => void close(tab)} />;
+        return <div key={tab.tab_id} role={single ? undefined : "group"}
+          aria-label={single ? undefined : `Tab ${tab.label}`} className={single ? "sidebar-pane-row" : "sidebar-tab"}>
+          {!single && <div className="sidebar-tab-header">
+            <span className="sidebar-tab-label" title={tab.label}>{tab.label}</span>
+            {actions}
+          </div>}
+          {tab.panes.map((pane) => {
+            const target = { session, pane_id: pane.pane_id };
+            return (
+              <button type="button" key={pane.pane_id} className="sidebar-pane"
+                aria-current={current && webKey(current) === webKey(target) ? "true" : undefined}
+                disabled={!running}
+                onClick={() => { if (pane.status === "done") markSeen(webKey(target)); onOpen(target); }}>
+                <AgentMark agent={pane.agent} /><span className="sidebar-pane-title" title={pane.title}>{pane.title}</span>
+                <span className="status" data-status={pane.status} title={`Status: ${pane.status}`}>{pane.status}</span>
+              </button>
+            );
+          })}
+          {single && actions}
+        </div>;
       })}
-    </div>)}
-  </>;
+    </div>
+  </div>;
 }
