@@ -1506,6 +1506,15 @@ const FLOOD_BYTES: usize = 64 * 65536;
 #[cfg(target_os = "linux")]
 const HIGH_WATER: usize = 1 << 20;
 
+/// The other two core constants this test reasons with: the debt a paused reader must be brought
+/// *under* before it forwards again (`LOW_WATER`), and the largest read it forwards per batch,
+/// which is the most it can overshoot a threshold by (`READ_CHUNK`). Both are mirror images of
+/// `core/src/attach.rs`, used only to bound what a pause can mean.
+#[cfg(target_os = "linux")]
+const LOW_WATER: usize = 512 * 1024;
+#[cfg(target_os = "linux")]
+const READ_CHUNK: usize = 64 * 1024;
+
 /// Bytes `pid` has written so far, from `/proc/<pid>/io`. A writer blocked on a full PTY has
 /// written less than it means to; that is what makes "paused reader" observable rather than
 /// assumed.
@@ -1525,19 +1534,23 @@ fn written_bytes(pid: u32) -> Option<u64> {
 #[derive(Debug)]
 enum Wire {
     Data,
-    Exited(Value),
+    Event(Value),
     Closed(Option<u16>),
 }
 
-/// Two consecutive stable samples of both numbers: nothing new on the wire while the still-live
-/// Pane has also written nothing new. Either half alone proves nothing (a finished Pane is quiet
-/// too, and a Pane between writes looks briefly quiet), and both are read from outside the code
-/// under test: the socket's own frames, and the Pane's `/proc/<pid>/io`.
+/// Measures a pause from outside the code under test: two consecutive stable samples of the
+/// wire count above `floor` while a Pane that has already written at least `min_written` bytes of
+/// its own output has also gone quiet. Every part matters — a finished Pane is quiet too, a Pane
+/// between writes looks briefly quiet, and without `min_written` the bytes an attempt emits before
+/// it is Attached would let a "pause" be reported before the flood had even started. Both numbers
+/// are read from outside the code under test: the socket's own frames, and the Pane's
+/// `/proc/<pid>/io`.
 #[cfg(target_os = "linux")]
 async fn wait_paused(
     wire: &std::sync::atomic::AtomicUsize,
     child: u32,
     floor: usize,
+    min_written: u64,
     deadline: Instant,
 ) -> Option<(usize, u64, Duration)> {
     let started = Instant::now();
@@ -1547,7 +1560,7 @@ async fn wait_paused(
             wire.load(std::sync::atomic::Ordering::SeqCst),
             written_bytes(child).unwrap_or(u64::MAX),
         );
-        if sample.0 > floor && last == Some(sample) {
+        if sample.0 > floor && sample.1 >= min_written && last == Some(sample) {
             return Some((sample.0, sample.1, started.elapsed()));
         }
         if !std::path::Path::new(&format!("/proc/{child}")).exists() {
@@ -1559,6 +1572,19 @@ async fn wait_paused(
     None
 }
 
+/// A real PTY whose writer is still blocked in its own write when this test releases its exit,
+/// underneath a reader that has been paused on unacknowledged credit twice.
+///
+/// The recorder owns the socket from the attempt's **first** frame, so the bytes the Pane writes
+/// before `Attached` are part of the wire count too: the peer is exposed to them, and core charges
+/// them to the same debt. What the count measures is the total the peer has been handed; what an
+/// ACK discharges is exactly the total that ACK names, so the bytes forwarded after it are the
+/// difference between two measured totals, never core's private debt.
+///
+/// The `Data` notifications are deliberately withheld until after the second pause has been
+/// observed: that makes the schedule where this task looks at the resumed reader only *after* it
+/// has already stopped again a schedule this test forces, rather than a race it hopes to miss.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_real_pty_that_exits_while_its_reader_is_paused_past_the_high_water() {
     let dir = tempfile::tempdir().unwrap();
@@ -1568,30 +1594,31 @@ async fn a_real_pty_that_exits_while_its_reader_is_paused_past_the_high_water() 
     ws.send(open_frame(&server.session, "p1", 80, 24, false))
         .await
         .unwrap();
-    assert_eq!(next_event(&mut ws).await["type"], "attached");
-    wait_until("the attach child to start", || server.live_children() == 1).await;
-    let child = server.live_child_pids()[0];
 
     // Two halves, so no read is ever cancelled mid-frame: the reading task owns the stream, this
-    // test owns the sink it sends ACKs on. Every byte that arrives is counted, including any that
-    // arrive after `Attached`: the count is the *wire* count, which is what the peer is credited
-    // for, and no frame is dropped from it by the helper that reads it.
+    // test owns the sink it sends ACKs on. Every binary frame is counted from the first one on,
+    // including the ones that arrive before `Attached`: nothing here is thrown away by a helper
+    // waiting for an event.
     let (mut sink, mut stream) = ws.split();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Wire>();
     let wire_total = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = wire_total.clone();
+    let hold_data = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let held = hold_data.clone();
     let reader = tokio::spawn(async move {
         loop {
             match stream.next().await {
                 Some(Ok(Message::Binary(data))) => {
+                    // Counted on arrival, never on delivery to this test: the count is the wire,
+                    // not how fast the test task keeps up.
                     counter.fetch_add(data.len(), std::sync::atomic::Ordering::SeqCst);
-                    let _ = tx.send(Wire::Data);
+                    if !held.load(std::sync::atomic::Ordering::SeqCst) {
+                        let _ = tx.send(Wire::Data);
+                    }
                 }
                 Some(Ok(Message::Text(text))) => {
                     let e: Value = serde_json::from_str(&text).unwrap();
-                    if e["type"] == "exited" {
-                        let _ = tx.send(Wire::Exited(e));
-                    }
+                    let _ = tx.send(Wire::Event(e));
                 }
                 Some(Ok(Message::Close(frame))) => {
                     let _ = tx.send(Wire::Closed(frame.map(|f| u16::from(f.code))));
@@ -1606,6 +1633,31 @@ async fn a_real_pty_that_exits_while_its_reader_is_paused_past_the_high_water() 
         }
     });
 
+    // `Attached` comes through the recorder, so it is ordered behind every byte that preceded it.
+    let attach_by = Instant::now() + Duration::from_secs(10);
+    loop {
+        let left = attach_by.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(left, rx.recv()).await {
+            Ok(Some(Wire::Event(e))) if e["type"] == "attached" => break,
+            Ok(Some(Wire::Data)) | Ok(Some(Wire::Event(_))) => continue,
+            Ok(Some(Wire::Closed(code))) => {
+                panic!("the attempt closed {code:?} before it was Attached")
+            }
+            Ok(None) => panic!("the attempt ended before it was Attached"),
+            Err(_) => panic!("no Attached within 10 s"),
+        }
+    }
+    // The Pane's `READY` is written before the flood gate, so a recorder that starts counting
+    // only once `Attached` has been read would still be at zero here.
+    let wire_at_attach = wire_total.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        wire_at_attach > 0,
+        "the wire count must include the attempt's startup output, not start after Attached: \
+         {wire_at_attach} bytes counted when Attached arrived"
+    );
+    wait_until("the attach child to start", || server.live_children() == 1).await;
+    let child = server.live_child_pids()[0];
+
     // Release the flood and never acknowledge: the state a slow or absent browser leaves the
     // attach reader in. The bound is absolute and is never reset by the frames that keep coming.
     std::fs::write(&gate, b"go").unwrap();
@@ -1613,16 +1665,17 @@ async fn a_real_pty_that_exits_while_its_reader_is_paused_past_the_high_water() 
     let deadline = started + Duration::from_secs(120);
 
     // --- 1. the reader really pauses, past core's high water mark ----------------------
-    let (wire_1, written_1, paused_1) = wait_paused(&wire_total, child, 0, deadline)
-        .await
-        .unwrap_or_else(|| {
-            panic!(
-                "the reader never paused: {} bytes on the wire, Pane wrote {} after {:?}",
-                wire_total.load(std::sync::atomic::Ordering::SeqCst),
-                written_bytes(child).unwrap_or(u64::MAX),
-                started.elapsed()
-            )
-        });
+    let (wire_1, written_1, paused_1) =
+        wait_paused(&wire_total, child, 0, READ_CHUNK as u64, deadline)
+            .await
+            .unwrap_or_else(|| {
+                panic!(
+                    "the reader never paused: {} bytes on the wire, Pane wrote {} after {:?}",
+                    wire_total.load(std::sync::atomic::Ordering::SeqCst),
+                    written_bytes(child).unwrap_or(u64::MAX),
+                    started.elapsed()
+                )
+            });
     eprintln!(
         "SLOWACK2: paused at {wire_1} bytes on the wire, Pane wrote {written_1} of {FLOOD_BYTES} \
          at {paused_1:?} (core high water {HIGH_WATER})"
@@ -1644,54 +1697,64 @@ async fn a_real_pty_that_exits_while_its_reader_is_paused_past_the_high_water() 
     // matters too: core forwards at most one read chunk past the threshold, so the wire count
     // pins the pause to that boundary instead of any large number.
     assert!(
-        wire_1 <= HIGH_WATER + 65536,
+        wire_1 <= HIGH_WATER + READ_CHUNK,
         "a paused reader stops within one read chunk of {HIGH_WATER}; {wire_1} bytes crossed the wire"
     );
 
     // --- 2. what the reader is waiting for is credit, not a dead peer -----------------
     // Acknowledging exactly what crossed the wire ends the pause: the reader forwards again and
-    // then pauses a *second* time, a full threshold later. A reader that had stopped for any
-    // other reason (EOF, a wedged sink, a lost child) would not resume on an ACK, and one that
-    // was not accounting credit would not stop again one threshold further on.
+    // then pauses a *second* time, a threshold of *new* credit later. A reader that had stopped
+    // for any other reason (EOF, a wedged sink, a lost child) would not resume on an ACK.
     sink.send(Message::Text(
         json!({"type": "ack", "bytes": wire_1}).to_string().into(),
     ))
     .await
     .unwrap();
-    let mut resumed_at = None;
-    let resume_by = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < resume_by && resumed_at.is_none() {
-        match tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
-            Ok(Some(Wire::Data)) => {
-                let now = wire_total.load(std::sync::atomic::Ordering::SeqCst);
-                if now > wire_1 {
-                    resumed_at = Some(now);
-                }
-            }
-            Ok(Some(Wire::Exited(_))) => continue,
-            Ok(Some(Wire::Closed(code))) => {
-                panic!("the ACK for the whole wire was refused: closed {code:?}")
-            }
-            Ok(None) => break,
-            Err(_) => continue,
-        }
-    }
-    let resumed_at = resumed_at.expect("an ACK for the wire's own byte count ends the pause");
-    eprintln!("SLOWACK2: the ACK resumed the reader past {resumed_at} wire bytes");
 
-    // --- 3. the exit is released only while the reader is paused again ----------------
-    let (wire_2, written_2, paused_2) = wait_paused(&wire_total, child, resumed_at, deadline)
-        .await
-        .unwrap_or_else(|| {
-            panic!(
-                "the reader did not pause again: {} bytes on the wire, Pane wrote {}",
-                wire_total.load(std::sync::atomic::Ordering::SeqCst),
-                written_bytes(child).unwrap_or(u64::MAX)
-            )
-        });
+    // --- 3. the second pause is detected from the pre-ACK baseline --------------------
+    // The floor is the wire total *before* the ACK, never a snapshot taken after it. The reading
+    // task owns the socket and runs on its own, so by the time this task looks it may already have
+    // consumed the whole next threshold and stopped again; a pause that has already happened is
+    // still a pause, and its position is necessarily above the acknowledged one. `Data`
+    // notifications are still withheld here, so this task provably has not kept up with the
+    // reader and nothing below depends on it doing so.
+    let second_pause = wait_paused(&wire_total, child, wire_1, READ_CHUNK as u64, deadline).await;
+    hold_data.store(false, std::sync::atomic::Ordering::SeqCst);
+    let (wire_2, written_2, paused_2) = second_pause.unwrap_or_else(|| {
+        let mut closed = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let Wire::Closed(code) = msg {
+                closed = Some(code);
+            }
+        }
+        panic!(
+            "the reader did not pause again after the ACK for {wire_1} bytes: {} bytes on the \
+             wire, Pane wrote {}, socket closed {closed:?}",
+            wire_total.load(std::sync::atomic::Ordering::SeqCst),
+            written_bytes(child).unwrap_or(u64::MAX)
+        )
+    });
+    // The bytes forwarded in the second round only: the credit the reader spent after that ACK.
+    let after_ack = wire_2 - wire_1;
     eprintln!(
-        "SLOWACK2: paused again at {wire_2} bytes on the wire, Pane wrote {written_2} of \
-         {FLOOD_BYTES} at {paused_2:?}"
+        "SLOWACK2: paused again at {wire_2} bytes on the wire, {after_ack} of them after the ACK \
+         for {wire_1}, Pane wrote {written_2} of {FLOOD_BYTES} at {paused_2:?}"
+    );
+    // A pause is a threshold away from the acknowledged position, not just "quiet later": the
+    // resume loop leaves a debt under `LOW_WATER`, and the reader stops again only past
+    // `HIGH_WATER`, so the second round must forward more than their difference, and cannot
+    // overshoot by more than one read chunk. This bounds the observable wire delta; it does not
+    // claim to read core's private debt.
+    assert!(
+        after_ack > HIGH_WATER - LOW_WATER,
+        "after an ACK for {wire_1} bytes the reader must forward more than {} bytes of new \
+         credit before pausing; only {after_ack} crossed the wire ({wire_2} in total)",
+        HIGH_WATER - LOW_WATER
+    );
+    assert!(
+        after_ack <= HIGH_WATER + READ_CHUNK,
+        "the second pause lands within one read chunk of {HIGH_WATER} past the acknowledged \
+         position; {after_ack} bytes were forwarded after it ({wire_2} in total)"
     );
     assert!(
         (written_2 as usize) < FLOOD_BYTES,
@@ -1707,7 +1770,8 @@ async fn a_real_pty_that_exits_while_its_reader_is_paused_past_the_high_water() 
     while Instant::now() < deadline && (exited.is_none() || code.is_none()) {
         let left = deadline.saturating_duration_since(Instant::now());
         match tokio::time::timeout(left, rx.recv()).await {
-            Ok(Some(Wire::Exited(e))) => exited = exited.or(Some(e)),
+            Ok(Some(Wire::Event(e))) if e["type"] == "exited" => exited = exited.or(Some(e)),
+            Ok(Some(Wire::Event(_))) => continue,
             Ok(Some(Wire::Closed(c))) => code = code.or(Some(c)),
             Ok(Some(Wire::Data)) => continue,
             Ok(None) => break,
