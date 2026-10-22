@@ -8,14 +8,23 @@ DOM contract, not a phone.
 
 Two things are already proven automatically, and this file does not repeat them:
 
-- `web/scripts/terminal-smoke.mjs` (46 checks) drives real Chromium over the production bundle
+- `web/scripts/terminal-smoke.mjs` (59 checks) drives real Chromium over the production bundle
   served by the real Rust middleware, attached through a real `/ws/terminal` to a real isolated
-  herdr Session: CSP, fonts, render, sizes 320x640/390x844 and rotation, the settling window
-  (trusted paste and a scripted IME composition reach nothing), UTF-8, input-once, Ctrl, arrows,
-  touch swipe and tap, Back and Pane switching, backgrounding, resize, and the SIGTERM path.
-- `src-tauri/web/tests/terminal_herdr.rs` (8 ignored tests) proves the real herdr lifecycle:
+  herdr Session: CSP, fonts, render, sizes 320x640/390x844 and rotation (each compared with the
+  Pane's own PTY grid), the settling window (a scripted paste and a trusted IME composition reach
+  nothing while Connecting, and a controlled Attached-time flush proves the Pane's line buffer is
+  empty), the same two deliveries reaching the Pane once Attached, UTF-8, input-once, Ctrl, arrows,
+  touch swipe and tap, Back and Pane switching, backgrounding, resize, and the SIGTERM path. Its
+  `settling-window.json` records each delivery's payload and the phase at dispatch.
+  One requirement stays **open**, not passed: a production xterm query/reply during settling is
+  not observable through herdr 0.9.5, which answers a Pane's query in its own emulation.
+- `src-tauri/web/tests/terminal_herdr.rs` (10 ignored tests) proves the real herdr lifecycle:
   attach, exclusivity, Held, explicit takeover, delayed cleanup, Pane survival, resize, exit,
-  shutdown, and SIGTERM with a live attach.
+  shutdown, SIGTERM with a live attach, an attach whose child exits with no ACK at all, and that a
+  failure inside the served process's startup window reaps it.
+- `src-tauri/web/tests/terminal_ws.rs` proves, over the real `AttachManager`/PTY path, that a
+  reader with no ACK really pauses past core's 1 MiB high water mark, resumes when an ACK spends
+  the credit, and finishes bounded when the Pane exits underneath it.
 
 ## How to run this checklist
 

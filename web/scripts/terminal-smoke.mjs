@@ -205,9 +205,20 @@ async function fetchJson(url, cookie) {
 /** Records securitypolicyviolation events and page-level errors for the checks. */
 const PAGE_PROBE = `
 window.__t8 = window.__t8 || { violations: [], wire: [], events: [] };
-for (const ty of ["paste", "beforeinput", "input", "keydown", "compositionend"]) {
+// Every gate-relevant DOM event, with the payload it carried and the phase the page was in at
+// dispatch: "banner" is null once the page is Attached (there is no banner then), so "pre
+// Attached" is read at the dispatch instant rather than assumed after the fact.
+for (const ty of ["paste", "beforeinput", "input", "keydown", "compositionstart", "compositionend"]) {
   document.addEventListener(ty, (e) => {
-    window.__t8.events.push({ ty, cls: e.constructor.name, data: e.data ?? (e.clipboardData ? e.clipboardData.getData("text/plain") : null), key: e.key ?? null, prevented: e.defaultPrevented, attached: (document.querySelector(".term-banner")?.textContent ?? "attached") });
+    window.__t8.events.push({
+      ty,
+      cls: e.constructor.name,
+      data: e.data ?? (e.clipboardData ? e.clipboardData.getData("text/plain") : null),
+      key: e.key ?? null,
+      prevented: e.defaultPrevented,
+      banner: document.querySelector(".term-banner")?.textContent ?? null,
+      at: Date.now(),
+    });
   }, true);
 }
 window.addEventListener("securitypolicyviolation", (e) => {
@@ -504,20 +515,57 @@ async function main() {
     // ---- the settling window: query/reply, and no user input before Attached ------------
     // Three requirements meet here, and each is checked on the wire rather than in rendered text:
     //   (a) xterm answers a terminal query while the attempt is still settling,
-    //   (b) a trusted IME composition and a trusted paste reach nothing while settling,
-    //   (c) the same composition and paste *do* reach the Pane once Attached — the positive
-    //       control that proves the harness can deliver them at all.
-    // `window.__t8.wire` records every frame the lens sent, with the banner text at that moment.
+    //   (b) a paste and an IME composition reach nothing while the lens is still Connecting,
+    //   (c) the same delivery *does* reach the Pane once Attached — the positive control that
+    //       proves this harness can deliver it at all.
+    //
+    // One delivery is used in both (b) and (c), so the difference between them is the phase and
+    // nothing else: a `paste` event at the page boundary the OS menu uses, carrying the real
+    // clipboard payload, plus Chromium's own IME path. The delivery is labelled SCRIPTED where
+    // it is synthesized; what it proves is that this page's gate drops it while settling and
+    // lets it through when Attached, not that a phone's OS menu behaves this way.
+    // The two payloads this section uses, one per delivery path. Neither is ever typed, so if one
+    // appears in the Pane it can only have arrived through the path being tested. The paste
+    // payload carries no newline on purpose: a leak that stops in the Pane's canonical line
+    // buffer is invisible to `pane read`, and only the controlled flush below can reveal it.
     const settleToken = `SETTLE_${process.pid}_${Date.now()}`;
     const imeText = `ướ${settleToken}`;
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+    /** Puts `text` on the real clipboard and delivers it as a `paste`, returning the event the
+     * page observed at dispatch (payload, phase) so the caller can judge it, not assume it. */
+    const pasteDelivery = async (page, text) => {
+      await page.evaluate((t) => navigator.clipboard.writeText(t), text);
+      return page.evaluate(async () => {
+        const before = window.__t8.events.length;
+        const payload = await navigator.clipboard.readText();
+        const dt = new DataTransfer();
+        dt.setData("text/plain", payload);
+        const ta = document.querySelector(".xterm-helper-textarea");
+        ta.focus();
+        ta.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 0));
+        const seen = window.__t8.events.slice(before).filter((e) => e.ty === "paste");
+        return { payload, dispatched: seen.length, seen, banner: document.querySelector(".term-banner")?.textContent ?? null };
+      });
+    };
+    /** Commits `text` through Chromium's IME path, returning what the page saw at dispatch. */
+    const imeDelivery = async (page, cdp, text) => {
+      const before = await page.evaluate(() => window.__t8.events.length);
+      await cdp.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
+      await cdp.send("Input.insertText", { text });
+      await page.waitForTimeout(120);
+      return page.evaluate((from) => window.__t8.events.slice(from), before);
+    };
+
+    /** The Pane's own screen, as the Pane reports it (not what the browser renders). */
+    const paneScreen = async (paneId, lines = 60) => paneRead(paneId, lines);
 
     // --- (a) a real query during settling ------------------------------------------------
     // herdr 0.9.5 strips and answers its own startup probe inside core, so the production page
     // never sees that one. What it CAN see is a query a Pane writes later, which herdr forwards:
     // measured here, a Pane printing `ESC[c` after attach does reach the client's stream. So the
     // query is produced by the Pane and the reply must come from xterm on the wire, while the
-    // lens still says Connecting — the exact requirement, on the exact path.
+    // lens still says Connecting.
     let queryProbe = null;
     let caughtSettling = null;
     for (let attempt = 0; attempt < 8 && caughtSettling === null; attempt++) {
@@ -525,7 +573,10 @@ async function main() {
         await page.locator('button[aria-label="Back"]').first().tap();
         await page.waitForSelector(".pane-card", { timeout: 60000 });
       }
-      await page.evaluate(() => (window.__t8.wire.length = 0));
+      await page.evaluate(() => {
+        window.__t8.wire.length = 0;
+        window.__t8.events.length = 0;
+      });
       await page.locator(card(queryPane.paneId)).first().tap();
       await page.waitForSelector(".xterm-helper-textarea", { timeout: 60000 });
       if ((await page.locator(".term-banner", { hasText: "Connecting…" }).count()) === 0) continue;
@@ -533,39 +584,70 @@ async function main() {
       // the same moment the browser is still settling.
       const sentAt = Date.now();
       await run(herdr, ["--session", sessionName, "pane", "run", queryPane.paneId, "query"], { env });
-      await page.evaluate((text) => navigator.clipboard.writeText(`${text}\r`), settleToken);
-      await page.locator(".xterm-helper-textarea").focus();
-      const focusState = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
-      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: 2, commands: ["paste"] });
-      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: 2 });
-      await cdp.send("Input.imeSetComposition", { text: imeText, selectionStart: imeText.length, selectionEnd: imeText.length });
-      await cdp.send("Input.insertText", { text: imeText });
+      // The phase *before* any settling input, read at that instant rather than inferred later.
+      const focusBanner = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
+      // The settling inputs, delivered exactly as the positive control below delivers them.
+      const settlingPaste = await pasteDelivery(page, settleToken);
+      const settlingImeEvents = await imeDelivery(page, cdp, imeText);
       const afterState = await page.evaluate(() => document.querySelector(".term-banner")?.textContent ?? null);
       // Wait for the Pane's own marker to have been rendered, so the query really went out.
       await page.waitForFunction(() => (document.querySelector(".xterm-rows")?.textContent ?? "").includes("QUERY-SENT"), null, { timeout: 30000 }).catch(() => {});
       const wire = await page.evaluate(() => window.__t8.wire.slice());
-      // A reply is an OUT frame that is not a JSON command and contains a terminal response
-      // sequence. herdr's redraw echoes the Pane's own stream back as text, so only OUT frames
-      // count: the browser's socket send is the only thing that can be a reply from xterm.
+      const events = await page.evaluate(() => window.__t8.events.slice());
       const replies = wire.filter((f) => f.kind === "out" && !f.text.startsWith("{") && /\x1b\[[?>]?[0-9;]*[cnR]/.test(f.text));
-      caughtSettling = { focusState, afterState, frames: wire.length, sentAt, paneOutput: await paneRead(queryPane.paneId, 20) };
+      caughtSettling = {
+        sentAt,
+        focusBanner,
+        afterState,
+        paneId: queryPane.paneId,
+        terminalId: queryPane.terminalId,
+        settlingPaste,
+        settlingImeEvents,
+        events,
+        frames: wire.length,
+        paneOutput: await paneScreen(queryPane.paneId),
+      };
       if (replies.length > 0) queryProbe = { replies, wire };
     }
-    check("the lens was caught in its settling window to test it", caughtSettling !== null, JSON.stringify({ ...caughtSettling, paneOutput: undefined }));
+    const settling = caughtSettling;
+    check("the lens was caught in its settling window to test it", settling !== null, JSON.stringify({ ...settling, paneOutput: undefined, events: undefined }));
     check(
       "the page reported Connecting… at both ends of the settling inputs",
-      caughtSettling !== null && caughtSettling.focusState?.includes("Connecting") && caughtSettling.afterState?.includes("Connecting"),
-      JSON.stringify({ focus: caughtSettling?.focusState, after: caughtSettling?.afterState }),
+      settling !== null && /\bConnecting\b/.test(settling.focusBanner ?? "") && /\bConnecting\b/.test(settling.afterState ?? ""),
+      JSON.stringify({ focus: settling?.focusBanner, after: settling?.afterState }),
     );
     check(
       "the Pane really wrote its DA1 query during the settling window",
-      caughtSettling !== null && /QUERY-SENT/.test(caughtSettling.paneOutput),
-      JSON.stringify(caughtSettling?.paneOutput?.slice(-200)),
+      settling !== null && /QUERY-SENT/.test(settling.paneOutput),
+      JSON.stringify(settling?.paneOutput?.slice(-200)),
     );
-    writeFileSync(
-      join(EVIDENCE, "settling-wire.json"),
-      JSON.stringify({ settleToken, imeText, caughtSettling, queryProbe, wire: (queryProbe?.wire ?? []).concat(await page.evaluate(() => window.__t8.wire.slice())) }, null, 2),
+
+    // The settling deliveries really happened, at the page boundary, with their payload and the
+    // phase at dispatch: without this the absence checks below would pass on a probe that never
+    // fired (the vacuity the previous round had).
+    const settlingPasteEvent = settling?.settlingPaste?.seen?.find((e) => e.ty === "paste") ?? null;
+    const settlingImeSaw = settling?.settlingImeEvents ?? [];
+    check(
+      "scripted paste really dispatched while Connecting, carrying the payload",
+      settling !== null &&
+        settlingPasteEvent !== null &&
+        settling.settlingPaste.payload === settleToken &&
+        (settlingPasteEvent.data ?? "").includes(settleToken) &&
+        /\bConnecting\b/.test(settlingPasteEvent.banner ?? ""),
+      JSON.stringify({
+        payload: settling?.settlingPaste?.payload,
+        dispatched: settling?.settlingPaste?.dispatched,
+        event: settlingPasteEvent,
+      }),
     );
+    check(
+      "scripted IME really dispatched while Connecting, carrying the composed text",
+      settlingImeSaw.some((e) => e.ty === "compositionend" && (e.data ?? "").includes(settleToken)) &&
+        settlingImeSaw.some((e) => e.ty === "input" && (e.data ?? "").includes(settleToken)) &&
+        settlingImeSaw.every((e) => /\bConnecting\b/.test(e.banner ?? "")),
+      JSON.stringify(settlingImeSaw.map((e) => ({ ty: e.ty, data: e.data, banner: e.banner }))),
+    );
+
     // MEASURED LIMITATION, and an open requirement rather than a covered one.
     //
     // The brief asks for a real xterm query/reply during settling. On this transport it cannot
@@ -575,37 +657,57 @@ async function main() {
     // never asked and never replies. The one query that does reach a client is herdr's startup
     // probe, which `herdly-core`'s attach reader recognises and answers itself (PROBE/PROBE_REPLY),
     // by approved design from Task 2. So this assertion states what really happened; the
-    // requirement itself stays open in the report for a controller ruling.
+    // requirement itself stays OPEN — see the report.
     const queryReachedPage = (queryProbe?.wire ?? (await page.evaluate(() => window.__t8.wire.slice()))).some(
       (f) => f.kind === "in" && /\x1b\[c/.test(f.text),
     );
     check(
-      "herdr's emulation answers the Pane's query itself: it never reaches xterm (open requirement)",
-      caughtSettling !== null && /\^\[\[\?62;22c|\[\?62;22c/.test(await paneRead(queryPane.paneId, 20)) && !queryReachedPage,
-      JSON.stringify({ paneAnswered: (await paneRead(queryPane.paneId, 20)).slice(-160), queryReachedPage }),
+      "herdr's emulation answers the Pane's query itself: it never reaches xterm (I3 OPEN)",
+      settling !== null && /\[\?62;22c/.test(await paneScreen(queryPane.paneId)) && !queryReachedPage,
+      JSON.stringify({ paneAnswered: (await paneScreen(queryPane.paneId)).slice(-160), queryReachedPage }),
     );
-    note("I3 OPEN: a production xterm query/reply during settling is not observable through herdr 0.9.5's attach stream; see the report");
+    note("I3 OPEN: a production xterm query/reply during settling is not observable through herdr 0.9.5's attach stream");
 
-    // Nothing the user did during settling may appear on the wire except protocol replies.
+    // The wire oracle for the settling window: nothing the user did reached the socket. Only
+    // JSON protocol frames (open/ack/resize) may be there.
     const settlingWire = await page.evaluate(() => window.__t8.wire.slice());
-    const settlingLeaks = settlingWire.filter((f) => f.kind === "out" && !/^\{/.test(f.text) && !/^\x1b\[/.test(f.text));
+    const settlingLeaks = settlingWire.filter((f) => f.kind === "out" && !/^\{/.test(f.text));
     check(
-      "scripted IME and trusted paste put no user text on the wire while settling",
-      settlingLeaks.length === 0 && settlingWire.length > 0,
+      "the settling deliveries put no user text on the wire",
+      settlingLeaks.length === 0 && settlingWire.length > 0 && settling !== null,
       JSON.stringify(settlingWire.map((f) => f.text)),
     );
+    // The line-buffer oracle: the Pane this settling attempt really attached to (the query Pane,
+    // not the echo one) is asked for input *after* it is Attached. A prefix stuck in its canonical
+    // line buffer would be echoed by that flush, so the flush is both the reveal and the proof
+    // that the buffer was read at all.
     await page.waitForFunction(() => !document.querySelector(".term-banner"), null, { timeout: 60000 });
-    await page.waitForTimeout(1200);
-    const settledOutput = await paneRead(echoPane.paneId, 40);
+    await page.waitForTimeout(400);
+    // The controlled flush: an Attached-time line ending in Enter, so the Pane's line buffer is
+    // really read and anything it held would be echoed back with it.
+    const flushToken = `FLUSH_${process.pid}_${Date.now()}`;
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.type(flushToken, { delay: 6 });
+    await page.keyboard.press("Enter");
+    // The flush's own answer must appear: without it the absence below would be vacuous, so a
+    // missing answer is a failure of this check rather than an exception that hides it.
+    const flushAnswered = await page
+      .waitForFunction((m) => (document.querySelector(".xterm-rows")?.textContent ?? "").includes(`GOT:${m}`), flushToken, { timeout: 60000 })
+      .then(() => true)
+      .catch(() => false);
+    const flushed = await paneScreen(queryPane.paneId);
     check(
-      "nothing from the settling window reached the Pane's line buffer",
-      !settledOutput.includes(settleToken) && !settledOutput.includes(imeText.slice(0, 3)),
-      settledOutput.slice(-300),
+      "after the Attached flush the settling Pane's line buffer holds nothing from the window",
+      flushAnswered &&
+        flushed.includes(`GOT:${flushToken}`) &&
+        !flushed.includes(settleToken) &&
+        !flushed.includes(imeText),
+      JSON.stringify({ flushToken, flushAnswered, tail: flushed.slice(-400) }),
     );
 
-    // --- (c) positive control: the same IME commit and paste DO reach the Pane once Attached ---
-    // The Pane for this control runs the raw `cat -v` reader, so bytes are echoed back as text
-    // with no line buffering and no shell interpretation: the oracle is the byte itself.
+    // --- (c) positive control: the SAME two deliveries DO reach the Pane once Attached -----
+    // The mouse Pane runs the raw `cat -v` reader, so bytes are echoed back as text with no line
+    // buffering and no shell interpretation: the oracle is the byte itself.
     await page.locator('button[aria-label="Back"]').first().tap();
     await page.waitForSelector(card(mousePane.paneId), { timeout: 60000 });
     await page.locator(card(mousePane.paneId)).first().tap();
@@ -614,41 +716,72 @@ async function main() {
     const controlIme = `CTRL_IME_${Date.now()}`;
     const controlPaste = `CTRL_PASTE_${Date.now()}`;
     await page.locator(".xterm-helper-textarea").focus();
-    // Paste first: Chromium refuses a paste command while an IME composition is open, so the
-    // controlled order is paste, then composition, each measured before the next.
-    await page.evaluate((text) => navigator.clipboard.writeText(text), controlPaste);
-    // Measured: on xterm's textarea Chromium's Ctrl+V is consumed by xterm as the raw byte
-    // `0x16` (the Pane receives `^V`), so the keyboard chord is not the paste path this UI has.
-    // A phone pastes from the OS menu, which delivers a `paste` event carrying the clipboard
-    // payload; that is reproduced here — the payload is read from the real clipboard, and only
-    // the delivery is scripted at the exact boundary the OS menu uses. Labelled scripted paste.
-    await page.evaluate(async () => {
-      const text = await navigator.clipboard.readText();
-      const dt = new DataTransfer();
-      dt.setData("text/plain", text);
-      const ta = document.querySelector(".xterm-helper-textarea");
-      ta.focus();
-      ta.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-    });
+    const controlPasteDelivery = await pasteDelivery(page, controlPaste);
     let afterPaste = "";
     for (let i = 0; i < 40; i++) {
-      afterPaste = await paneRead(mousePane.paneId, 30);
+      afterPaste = await paneScreen(mousePane.paneId, 30);
       if (afterPaste.includes(controlPaste)) break;
       await page.waitForTimeout(200);
     }
-    await cdp.send("Input.imeSetComposition", { text: controlIme, selectionStart: controlIme.length, selectionEnd: controlIme.length });
-    await cdp.send("Input.insertText", { text: controlIme });
+    const controlImeEvents = await imeDelivery(page, cdp, controlIme);
     await page.waitForTimeout(600);
-    const afterIme = await paneRead(mousePane.paneId, 30);
+    const afterIme = await paneScreen(mousePane.paneId, 30);
+    // The delivery is the same one the settling window used, so the only difference is phase.
+    const controlPasteEvent = controlPasteDelivery.seen.find((e) => e.ty === "paste") ?? null;
     check(
-      "positive control: a trusted IME commit reaches the Pane after Attached",
-      afterIme.includes(controlIme),
-      JSON.stringify(afterIme.slice(-200)),
+      "positive control: the same scripted paste reached the Pane after Attached",
+      afterPaste.includes(controlPaste) &&
+        controlPasteDelivery.payload === controlPaste &&
+        (controlPasteEvent?.data ?? "").includes(controlPaste) &&
+        !/\bConnecting\b/.test(controlPasteEvent?.banner ?? ""),
+      JSON.stringify({ payload: controlPasteDelivery.payload, event: controlPasteEvent, tail: afterPaste.slice(-200) }),
     );
     check(
-      "positive control: a scripted paste carrying the real clipboard payload reaches the Pane",
-      afterPaste.includes(controlPaste),
-      JSON.stringify(afterPaste.slice(-200)),
+      "positive control: the same IME commit reached the Pane after Attached",
+      afterIme.includes(controlIme) &&
+        controlImeEvents.some((e) => e.ty === "compositionend" && (e.data ?? "").includes(controlIme)),
+      JSON.stringify({ events: controlImeEvents.map((e) => ({ ty: e.ty, data: e.data, banner: e.banner })), tail: afterIme.slice(-200) }),
+    );
+
+    // One merged timeline, so the ordering between what the page saw and what it sent is in the
+    // artifact rather than left to prose: each entry keeps its own discriminator.
+    const timeline = [
+      ...(settling?.events ?? []).map((e) => ({ at: e.at, kind: "event", ty: e.ty, data: e.data, banner: e.banner })),
+      ...(settlingWire ?? []).map((f) => ({ at: f.at, kind: f.kind === "out" ? "sent" : "received", text: f.text, banner: f.banner })),
+      ...(controlPasteDelivery.seen ?? []).map((e) => ({ at: e.at, kind: "event", ty: e.ty, data: e.data, banner: e.banner })),
+      ...(controlImeEvents ?? []).map((e) => ({ at: e.at, kind: "event", ty: e.ty, data: e.data, banner: e.banner })),
+    ].sort((a, b) => a.at - b.at);
+
+    // Everything this section observed, saved as evidence rather than described in prose.
+    writeFileSync(
+      join(EVIDENCE, "settling-window.json"),
+      JSON.stringify(
+        {
+          phase: { settlingBanner: settling?.focusBanner, attachedBanner: null },
+          pane: { settling: { paneId: queryPane.paneId, terminalId: queryPane.terminalId }, positive: { paneId: mousePane.paneId, terminalId: mousePane.terminalId } },
+          settling: {
+            paste: settling?.settlingPaste,
+            imeEvents: settlingImeSaw,
+            wire: (queryProbe?.wire ?? []).concat(settlingWire),
+            flushToken,
+            paneScreen: flushed,
+          },
+          positive: {
+            paste: { delivery: controlPasteDelivery, payload: controlPaste },
+            imeEvents: controlImeEvents,
+            controlIme,
+            paneScreen: afterPaste,
+          },
+          timeline,
+          labels: {
+            paste: "scripted (ClipboardEvent at the page boundary, real clipboard payload)",
+            ime: "trusted (Chromium Input.imeSetComposition/insertText)",
+            i3: "OPEN — herdr 0.9.5 answers the Pane's query in its own emulation",
+          },
+        },
+        null,
+        2,
+      ),
     );
 
     // ---- xterm's own runtime styling and the self-hosted font under the real CSP --------

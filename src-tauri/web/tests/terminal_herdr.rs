@@ -926,6 +926,107 @@ impl Drop for ServeGuard {
     }
 }
 
+/// The review's I2 finding, proved as a test: a failure *inside* the startup window is covered by
+/// the guard, so the served child is reaped instead of leaking.
+///
+/// The failure is real and reachable: this test holds the port, so `serve` cannot bind it and its
+/// readiness never comes — the same place a timeout, a `pair` error or a missing token panics. The
+/// child is created and owned by `ServeGuard` before that first await, exactly as production does.
+#[test]
+#[ignore]
+fn a_startup_failure_after_the_spawn_reaps_the_served_child() {
+    let shared = shared();
+    install_cleanup_hook();
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = held.local_addr().unwrap().to_string();
+    let dir = tempfile::Builder::new()
+        .prefix("served-startup-fail-")
+        .tempdir_in(&shared.root)
+        .unwrap();
+    let log_path = dir.path().join("served.log");
+    let inside_log = log_path.clone();
+    // The child's pid outlives the unwound scope, so it can be checked afterwards.
+    let recorded = std::sync::Arc::new(std::sync::Mutex::new(None::<u32>));
+    let seen = recorded.clone();
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let failure = std::panic::catch_unwind(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let log = std::fs::File::create(&inside_log).unwrap();
+                let child = std::process::Command::new(env!("CARGO_BIN_EXE_herdly-web"))
+                    .args([
+                        "serve",
+                        "--bind",
+                        &addr,
+                        "--origin",
+                        &format!("http://{addr}"),
+                        "--static",
+                        &dir.path().display().to_string(),
+                        "--state",
+                        &dir.path().join("state").display().to_string(),
+                    ])
+                    .env_clear()
+                    .envs(&shared.env)
+                    .stdin(Stdio::null())
+                    .stdout(log.try_clone().unwrap())
+                    .stderr(log)
+                    .spawn()
+                    .expect("the served child starts");
+                // The ordering under test: the guard owns the child before the first await, so
+                // nothing below can leak it.
+                let guard = ServeGuard(child);
+                let pid = guard.0.id();
+                *seen.lock().unwrap() = Some(pid);
+                eprintln!("STARTUP-FAIL: child pid={pid}; its port is held by this test");
+                // Readiness exactly as `Served::start` reads it, from what the server reports.
+                wait_for_async(
+                    "the served process to report that it is listening",
+                    3,
+                    || async {
+                        std::fs::read_to_string(&inside_log)
+                            .map(|t| t.contains("listening"))
+                            .unwrap_or(false)
+                    },
+                )
+                .await;
+                drop(guard);
+            })
+    });
+    std::panic::set_hook(hook);
+    if let Err(payload) = &failure {
+        let msg = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_else(|| "<non-string panic>".into());
+        eprintln!("STARTUP-FAIL: startup failed as designed: {msg}");
+    }
+    assert!(
+        failure.is_err(),
+        "the readiness wait must fail inside the startup window, which is the case under test"
+    );
+    let pid = recorded
+        .lock()
+        .unwrap()
+        .expect("the child pid was recorded before the panic");
+    eprintln!("STARTUP-FAIL: after the panic, checking pid {pid}");
+    eprintln!(
+        "STARTUP-FAIL: server said {:?}",
+        std::fs::read_to_string(&log_path)
+            .unwrap_or_default()
+            .trim()
+    );
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "ServeGuard's Drop must reap its own child: {pid} is still alive"
+    );
+    eprintln!("STARTUP-FAIL: pid {pid} is gone, so the guard reaped it");
+}
+
 /// A live served process plus the pairing it produced: only built once startup succeeded.
 struct Served {
     child: ServeGuard,
@@ -1297,16 +1398,20 @@ async fn fc_marker(fx: &mut Fixture, ws: &mut Ws, label: &str) {
     read_until(ws, &wanted, |t| t.contains(&wanted)).await;
 }
 
-/// A real PTY child that exits while its reader is still waiting on unacknowledged output must
-/// finish bounded: the exit is reported and the attempt cleans up, without one ACK being sent.
+/// A real Pane that exits while the client never acknowledges anything: the exit is reported and
+/// the server ends the attempt itself with a normal close.
 ///
-/// This is the slow-ACK exit case the Spec requires (verification item 2), and it is a real PTY
-/// with a real wedged reader rather than a fake grace timer: the socket never sends an ACK frame,
-/// so the attach reader pauses for want of credit once output passes its high-water mark, and the
-/// child exits underneath it. The assertion is bounded completion — never full-output retention.
+/// What this proves and what it does not, measured rather than assumed: through herdr's attach
+/// stream a Pane's flood arrives as a screen redraw (about 4.8 KB here), never as the Pane's raw
+/// bytes, so this child's exit cannot demonstrate a reader paused on credit. A pause needs more
+/// unacknowledged output than core's 1 MiB high water mark, which is what
+/// `terminal_ws::a_real_pty_that_exits_while_its_reader_is_paused_past_the_high_water` measures
+/// over the real `AttachManager`/PTY path. This test covers the herdr-side half: a live attach
+/// whose child exits with zero ACKs still reports the exit and closes 1000, bounded, with no
+/// child left behind — and it never claims full-output retention.
 #[tokio::test]
 #[ignore]
-async fn a_real_pty_child_that_exits_under_a_slow_ack_reader_completes_bounded() {
+async fn a_real_attach_child_that_exits_with_no_ack_is_reported_and_closed_1000() {
     // The flood starts only when the socket types `go`, so it happens while the client is
     // attached and refusing to acknowledge, not before the attach exists.
     let fx = Fixture::start_with(
@@ -1325,8 +1430,9 @@ async fn a_real_pty_child_that_exits_under_a_slow_ack_reader_completes_bounded()
         .await
         .unwrap();
 
-    // Read output but never acknowledge any of it: flow control pauses the reader at its high
-    // water mark — the state a slow or absent browser leaves it in — while the child exits.
+    // Read output but never acknowledge any of it: the state a slow or absent browser leaves the
+    // reader in. (Not a pause proof: see the test's own note — herdr redraws a screen, well under
+    // the high water mark.)
     let started = Instant::now();
     let mut bytes = 0usize;
     let mut exited = None;
@@ -1380,7 +1486,7 @@ async fn a_real_pty_child_that_exits_under_a_slow_ack_reader_completes_bounded()
     })
     .await;
     eprintln!(
-        "SLOWACK: read {bytes} unacked bytes; exited code={:?}; elapsed {elapsed:?}",
+        "NOACK: read {bytes} unacked bytes; exited code={:?}; elapsed {elapsed:?}",
         exited["code"]
     );
 }

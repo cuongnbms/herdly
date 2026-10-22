@@ -5,6 +5,8 @@ use herdly_web::{
     testing::{paired_cookie, state_with, FakeBackend, FakeTerminal},
 };
 use serde_json::{json, Value};
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 use std::{sync::Arc, time::Duration};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 const ORIGIN: &str = "http://192.0.2.10:7380";
@@ -939,6 +941,12 @@ impl RealServer {
             .unwrap_or(0)
     }
 
+    /// The same, with the payload held on `gate`: it waits for the file to exist, so the test
+    /// decides when the Pane starts producing output.
+    async fn start_gated_at(body: &str, gate: &std::path::Path) -> RealServer {
+        RealServer::start_inner(body, Some(gate)).await
+    }
+
     /// How many `attach` children of *this* fixture are still alive. The fixture's fake herdr
     /// records its pid before it becomes the PTY child, so concurrent tests never mix theirs in.
     fn live_children(&self) -> usize {
@@ -958,15 +966,43 @@ impl RealServer {
             .count()
     }
 
+    /// The PIDs of *this* fixture's live attach children, newest first not guaranteed: the
+    /// fixture's own marker files are the only source, so no other test's child can appear.
+    fn live_child_pids(&self) -> Vec<u32> {
+        let Ok(entries) = std::fs::read_dir(&self.live) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let pid = name.strip_prefix("pid-")?.parse::<u32>().ok()?;
+                std::path::Path::new(&format!("/proc/{pid}"))
+                    .exists()
+                    .then_some(pid)
+            })
+            .collect()
+    }
+
     /// Starts the server over a fake `herdr` that runs its argv on a real PTY.
     async fn start(body: &str) -> RealServer {
+        RealServer::start_inner(body, None).await
+    }
+
+    /// The one starter: `gate` is handed to the payload through its environment when present.
+    async fn start_inner(body: &str, gate: Option<&std::path::Path>) -> RealServer {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("attach-starts");
         let live = dir.path().join("attach-live");
         std::fs::create_dir_all(&live).unwrap();
         let wrapper = dir.path().join("fake-herdr");
         // Records this child's pid and start before becoming the payload, so the test can tell
-        // which attach children of its own are still alive.
+        // which attach children of its own are still alive. With a gate, the payload is handed
+        // the gate's path so it can hold its output until the test opens it.
+        let body = match gate {
+            Some(g) => format!("T8_GATE='{}'; export T8_GATE; {body}", g.display()),
+            None => body.to_string(),
+        };
         std::fs::write(
             &wrapper,
             format!(
@@ -1440,4 +1476,260 @@ async fn a_failed_gated_open_delivers_the_error_then_1008_to_a_live_peer() {
         server.st.terminals.is_empty()
     })
     .await;
+}
+
+/// A Pane that waits for the test's gate, then writes 4 MiB through the shell builtin
+/// `printf`, so the test can watch it stall inside its own write. The 64 KiB line is built once
+/// into a variable (no pipeline writes into the PTY), which leaves that `printf` as the only
+/// blocking call.
+#[cfg(target_os = "linux")]
+const GATED_FLOOD_SCRIPT: &str = r#"printf 'READY\n'
+BIG=$(dd if=/dev/zero bs=65536 count=1 2>/dev/null | tr '\0' 'x')
+while [ ! -f "$T8_GATE" ]; do
+  sleep 0.02
+done
+i=0
+while [ $i -lt 64 ]; do
+  printf '%s' "$BIG"
+  i=$((i+1))
+done
+printf '\nTOTAL:4194304\n'
+exit 0
+"#;
+
+/// What the Pane script intends to write before its own trailer.
+#[cfg(target_os = "linux")]
+const FLOOD_BYTES: usize = 64 * 65536;
+
+/// Core's pause threshold (`HIGH_WATER` in `core/src/attach.rs`): past this many unacknowledged
+/// bytes the attach reader stops forwarding until an ACK brings the debt back down.
+#[cfg(target_os = "linux")]
+const HIGH_WATER: usize = 1 << 20;
+
+/// Bytes `pid` has written so far, from `/proc/<pid>/io`. A writer blocked on a full PTY has
+/// written less than it means to; that is what makes "paused reader" observable rather than
+/// assumed.
+#[cfg(target_os = "linux")]
+fn written_bytes(pid: u32) -> Option<u64> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
+    for line in text.lines() {
+        if let Some(v) = line.strip_prefix("wchar: ") {
+            return v.trim().parse().ok();
+        }
+    }
+    None
+}
+
+/// What the reading task saw, in the order the socket produced it.
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+enum Wire {
+    Data,
+    Exited(Value),
+    Closed(Option<u16>),
+}
+
+/// Two consecutive stable samples of both numbers: nothing new on the wire while the still-live
+/// Pane has also written nothing new. Either half alone proves nothing (a finished Pane is quiet
+/// too, and a Pane between writes looks briefly quiet), and both are read from outside the code
+/// under test: the socket's own frames, and the Pane's `/proc/<pid>/io`.
+#[cfg(target_os = "linux")]
+async fn wait_paused(
+    wire: &std::sync::atomic::AtomicUsize,
+    child: u32,
+    floor: usize,
+    deadline: Instant,
+) -> Option<(usize, u64, Duration)> {
+    let started = Instant::now();
+    let mut last: Option<(usize, u64)> = None;
+    while Instant::now() < deadline {
+        let sample = (
+            wire.load(std::sync::atomic::Ordering::SeqCst),
+            written_bytes(child).unwrap_or(u64::MAX),
+        );
+        if sample.0 > floor && last == Some(sample) {
+            return Some((sample.0, sample.1, started.elapsed()));
+        }
+        if !std::path::Path::new(&format!("/proc/{child}")).exists() {
+            return None;
+        }
+        last = Some(sample);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+    None
+}
+
+#[tokio::test]
+async fn a_real_pty_that_exits_while_its_reader_is_paused_past_the_high_water() {
+    let dir = tempfile::tempdir().unwrap();
+    let gate = dir.path().join("go");
+    let server = RealServer::start_gated_at(GATED_FLOOD_SCRIPT, &gate).await;
+    let mut ws = server.connect().await;
+    ws.send(open_frame(&server.session, "p1", 80, 24, false))
+        .await
+        .unwrap();
+    assert_eq!(next_event(&mut ws).await["type"], "attached");
+    wait_until("the attach child to start", || server.live_children() == 1).await;
+    let child = server.live_child_pids()[0];
+
+    // Two halves, so no read is ever cancelled mid-frame: the reading task owns the stream, this
+    // test owns the sink it sends ACKs on. Every byte that arrives is counted, including any that
+    // arrive after `Attached`: the count is the *wire* count, which is what the peer is credited
+    // for, and no frame is dropped from it by the helper that reads it.
+    let (mut sink, mut stream) = ws.split();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Wire>();
+    let wire_total = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = wire_total.clone();
+    let reader = tokio::spawn(async move {
+        loop {
+            match stream.next().await {
+                Some(Ok(Message::Binary(data))) => {
+                    counter.fetch_add(data.len(), std::sync::atomic::Ordering::SeqCst);
+                    let _ = tx.send(Wire::Data);
+                }
+                Some(Ok(Message::Text(text))) => {
+                    let e: Value = serde_json::from_str(&text).unwrap();
+                    if e["type"] == "exited" {
+                        let _ = tx.send(Wire::Exited(e));
+                    }
+                }
+                Some(Ok(Message::Close(frame))) => {
+                    let _ = tx.send(Wire::Closed(frame.map(|f| u16::from(f.code))));
+                    return;
+                }
+                Some(Ok(_)) => continue,
+                Some(Err(_)) | None => {
+                    let _ = tx.send(Wire::Closed(None));
+                    return;
+                }
+            }
+        }
+    });
+
+    // Release the flood and never acknowledge: the state a slow or absent browser leaves the
+    // attach reader in. The bound is absolute and is never reset by the frames that keep coming.
+    std::fs::write(&gate, b"go").unwrap();
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(120);
+
+    // --- 1. the reader really pauses, past core's high water mark ----------------------
+    let (wire_1, written_1, paused_1) = wait_paused(&wire_total, child, 0, deadline)
+        .await
+        .unwrap_or_else(|| {
+            panic!(
+                "the reader never paused: {} bytes on the wire, Pane wrote {} after {:?}",
+                wire_total.load(std::sync::atomic::Ordering::SeqCst),
+                written_bytes(child).unwrap_or(u64::MAX),
+                started.elapsed()
+            )
+        });
+    eprintln!(
+        "SLOWACK2: paused at {wire_1} bytes on the wire, Pane wrote {written_1} of {FLOOD_BYTES} \
+         at {paused_1:?} (core high water {HIGH_WATER})"
+    );
+    // Nothing has been acknowledged, so all of those bytes are unacknowledged credit: core
+    // stops only past its own threshold, so reaching the wire count above proves the pause.
+    assert!(
+        wire_1 >= HIGH_WATER,
+        "core pauses only past its {HIGH_WATER}-byte high water mark; only {wire_1} bytes reached this socket"
+    );
+    // ...and the Pane still holds output it already produced and still wants to write.
+    assert!(
+        (written_1 as usize) < FLOOD_BYTES,
+        "a paused reader cannot have taken the whole flood: the Pane wrote all {FLOOD_BYTES} bytes"
+    );
+
+    // Nothing was acknowledged, so all of those bytes are outstanding credit; a reader that
+    // stops only past its threshold cannot have stopped under it. The other side of the bound
+    // matters too: core forwards at most one read chunk past the threshold, so the wire count
+    // pins the pause to that boundary instead of any large number.
+    assert!(
+        wire_1 <= HIGH_WATER + 65536,
+        "a paused reader stops within one read chunk of {HIGH_WATER}; {wire_1} bytes crossed the wire"
+    );
+
+    // --- 2. what the reader is waiting for is credit, not a dead peer -----------------
+    // Acknowledging exactly what crossed the wire ends the pause: the reader forwards again and
+    // then pauses a *second* time, a full threshold later. A reader that had stopped for any
+    // other reason (EOF, a wedged sink, a lost child) would not resume on an ACK, and one that
+    // was not accounting credit would not stop again one threshold further on.
+    sink.send(Message::Text(
+        json!({"type": "ack", "bytes": wire_1}).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    let mut resumed_at = None;
+    let resume_by = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < resume_by && resumed_at.is_none() {
+        match tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
+            Ok(Some(Wire::Data)) => {
+                let now = wire_total.load(std::sync::atomic::Ordering::SeqCst);
+                if now > wire_1 {
+                    resumed_at = Some(now);
+                }
+            }
+            Ok(Some(Wire::Exited(_))) => continue,
+            Ok(Some(Wire::Closed(code))) => {
+                panic!("the ACK for the whole wire was refused: closed {code:?}")
+            }
+            Ok(None) => break,
+            Err(_) => continue,
+        }
+    }
+    let resumed_at = resumed_at.expect("an ACK for the wire's own byte count ends the pause");
+    eprintln!("SLOWACK2: the ACK resumed the reader past {resumed_at} wire bytes");
+
+    // --- 3. the exit is released only while the reader is paused again ----------------
+    let (wire_2, written_2, paused_2) = wait_paused(&wire_total, child, resumed_at, deadline)
+        .await
+        .unwrap_or_else(|| {
+            panic!(
+                "the reader did not pause again: {} bytes on the wire, Pane wrote {}",
+                wire_total.load(std::sync::atomic::Ordering::SeqCst),
+                written_bytes(child).unwrap_or(u64::MAX)
+            )
+        });
+    eprintln!(
+        "SLOWACK2: paused again at {wire_2} bytes on the wire, Pane wrote {written_2} of \
+         {FLOOD_BYTES} at {paused_2:?}"
+    );
+    assert!(
+        (written_2 as usize) < FLOOD_BYTES,
+        "the Pane must still be blocked in its own write when its exit is released"
+    );
+    // The Pane is SIGKILLed where it stands, blocked inside its own write, so it exits underneath
+    // a paused reader. The signal goes to this fixture's own attach child, taken from its own
+    // marker file.
+    unsafe { libc::kill(child as i32, libc::SIGKILL) };
+
+    let mut exited = None;
+    let mut code = None;
+    while Instant::now() < deadline && (exited.is_none() || code.is_none()) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(left, rx.recv()).await {
+            Ok(Some(Wire::Exited(e))) => exited = exited.or(Some(e)),
+            Ok(Some(Wire::Closed(c))) => code = code.or(Some(c)),
+            Ok(Some(Wire::Data)) => continue,
+            Ok(None) => break,
+            Err(_) => panic!("the exit is not reported inside the bound: {wire_2} bytes unacked"),
+        }
+    }
+    let exited = exited.expect("an exited PTY under a paused reader reports it");
+    assert_eq!(exited["type"], "exited", "{exited}");
+    // The server seals and closes by itself: this client never sends Close, so a server that
+    // waited for its peer would never end the attempt.
+    assert_eq!(
+        code.expect("the attempt ends itself after the exit"),
+        Some(1000),
+        "an exited PTY ends as a normal close, {wire_2} bytes unacked"
+    );
+    // Bounded completion, no ACK for the paused bytes, and no claim about retaining all output.
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "the whole run took {:?}",
+        started.elapsed()
+    );
+    eprintln!("SLOWACK2: closed 1000 at {:?}", started.elapsed());
+    reader.abort();
+    wait_until("the attach child to exit", || server.live_children() == 0).await;
 }

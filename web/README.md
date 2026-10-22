@@ -189,9 +189,14 @@ The Terminal lens has two automated proofs and one it cannot have:
 # a failed assertion. Works from the repo root as well: node web/scripts/terminal-smoke.mjs
 node web/scripts/terminal-smoke.mjs
 
-# Real herdr lifecycle (attach, Held, takeover, resize, exit, slow-ACK exit, SIGTERM with a live attach).
+# Real herdr lifecycle (attach, Held, takeover, resize, exit, SIGTERM with a live attach).
 cargo test --manifest-path src-tauri/Cargo.toml -p herdly-web \
   --test terminal_herdr -- --ignored --test-threads=1
+
+# The same lifecycle over the real AttachManager/PTY path: a reader with no ACK pauses past the
+# 1 MiB high water mark, an ACK resumes it, and a Pane exiting underneath it still completes
+# bounded with a normal close.
+cargo test --manifest-path src-tauri/Cargo.toml -p herdly-web --test terminal_ws
 ```
 
 The smoke builds `web/dist` itself (in `web/`, so it is that project's bundle) and builds
