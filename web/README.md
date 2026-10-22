@@ -111,6 +111,18 @@ herdly-web pair
 
 Open the printed link (or scan the QR code) in Chrome on the phone within 10 minutes, with WireGuard on.
 
+## Android shell
+
+`android/` wraps Herdly Web in a full-screen WebView. The **Android** workflow (`.github/workflows/android.yml`) builds it on every push that touches `android/`, or by hand from the Actions tab once the workflow is on `main`; the APK is the run's `herdly-android-debug` artifact (a zip; unzip it to get `app-debug.apk`).
+
+1. Install the APK on the phone (allow installs from unknown sources).
+2. Run `herdly-web pair`, scan the QR code with any scanner, and copy the link instead of opening it.
+3. Open Herdly and paste the link. The app pairs as its own device, separate from Chrome.
+
+Long-press the app icon and pick "Pair or change server" to paste a new link. Android 12 and later open `http://` links in the browser rather than offering an app, so pasting is the only way in.
+
+The APK is debug-signed with the runner's throwaway key, so an APK from a later run will not install over an earlier one: uninstall first, then pair again. To build locally with the Android SDK and JDK 17: `cd android && ./gradlew assembleDebug`.
+
 ## Devices and revoking
 
 ```sh
