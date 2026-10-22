@@ -69,6 +69,40 @@ describe("store machines", () => {
   });
 });
 
+describe("store pairing loss", () => {
+  it("keeps Not paired when the healthy Chat socket reports afterwards", () => {
+    const { setConn, apply } = useWeb.getState();
+    setConn("open");
+    setConn("unpaired");
+    setConn("connecting");
+    setConn("down");
+    apply({ type: "machine", view: view("local") });
+    expect(useWeb.getState().conn).toBe("unpaired");
+  });
+
+  it("leaves Not paired for a socket whose handshake starts after the revocation", () => {
+    const { setConn } = useWeb.getState();
+    setConn("open");
+    setConn("unpaired");
+    // A `connecting` is the new handshake; its `open` is the authentication that proves pairing.
+    setConn("connecting");
+    setConn("open");
+    expect(useWeb.getState().conn).toBe("open");
+    expect(useWeb.getState().authLost).toBe(false);
+  });
+
+  it("refuses an open for a handshake that began before the revocation", () => {
+    const { setConn } = useWeb.getState();
+    setConn("open");
+    setConn("connecting");
+    setConn("unpaired");
+    // The socket that was connecting when pairing was revoked opens after it: still not paired.
+    setConn("open");
+    expect(useWeb.getState().conn).toBe("unpaired");
+    expect(useWeb.getState().authLost).toBe(true);
+  });
+});
+
 describe("store unknown frames", () => {
   it("ignores a frame type it does not know", () => {
     const { apply } = useWeb.getState();

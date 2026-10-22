@@ -28,3 +28,6 @@ http-body-util = "0.1"
 [dev-dependencies]
 tempfile = "3"
 tokio-tungstenite = "0.26"
+# `start_paused`: tests that must pin a deadline (the 10 s open timeout) drive Tokio's clock
+# rather than waiting in real time. Test-only; nothing in the shipped surface uses it.
+tokio = { version = "1", features = ["full", "test-util"] }

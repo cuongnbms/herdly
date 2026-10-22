@@ -7,6 +7,7 @@ use crate::config::{now_secs, BODY_LIMIT, COOKIE_MAX_AGE, COOKIE_NAME};
 use crate::error::{forbidden, unauthorized, ApiError};
 use crate::hub::Hub;
 use crate::static_files;
+use crate::terminal::{registry::TerminalRegistry, socket};
 use crate::ws;
 use axum::extract::{DefaultBodyLimit, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -25,6 +26,10 @@ pub struct Config {
     pub static_dir: PathBuf,
     /// How often an open `/ws` checks that its device is still paired.
     pub revoke_check: Duration,
+    /// How long a Terminal socket may take to send its initial open frame. Production uses
+    /// [`crate::terminal::socket::OPEN_TIMEOUT`]; tests shorten it so the route's deadline is
+    /// exercised without waiting in real time.
+    pub open_timeout: Duration,
 }
 
 pub struct AppState {
@@ -33,6 +38,8 @@ pub struct AppState {
     pub cfg: Config,
     pub hub: Arc<Hub>,
     pub chats: Arc<ChatHub>,
+    /// Every live Terminal attempt: owned cleanup and graceful shutdown.
+    pub terminals: Arc<TerminalRegistry>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -47,6 +54,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/pane/keys", post(api::pane_keys))
         .route("/api/pane/text", post(api::pane_text))
         .route("/ws", get(ws::ws_handler))
+        .route("/ws/terminal", get(socket::ws_handler))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -134,8 +142,10 @@ async fn security_headers(State(st): State<Arc<AppState>>, req: Request, next: N
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.starts_with("text/html"));
     if is_html {
+        // Inline *styles* only, for xterm's runtime-generated styles and style attributes.
+        // Scripts, frames, objects and connections keep their existing restrictions.
         let csp = format!(
-            "default-src 'self'; connect-src 'self' ws://{}; img-src 'self' data:; object-src 'none'; base-uri 'none'",
+            "default-src 'self'; connect-src 'self' ws://{}; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'",
             origin_authority(&st.cfg.origin)
         );
         if let Ok(v) = HeaderValue::from_str(&csp) {

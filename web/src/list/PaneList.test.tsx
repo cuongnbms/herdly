@@ -30,12 +30,12 @@ describe("PaneList", () => {
     expect(shown("title 1")).toBe("idle");
   });
 
-  it("explains panes without a chat lens", () => {
+  it("opens a shell Pane into its Terminal lens, with no Chat hint", () => {
     const onOpen = vi.fn();
     render(<PaneList onOpen={onOpen} />);
     fireEvent.click(screen.getByText("title 3"));
-    expect(onOpen).not.toHaveBeenCalled();
-    expect(screen.getByText("Chat lens supports Claude Code and pi only")).toBeInTheDocument();
+    expect(onOpen).toHaveBeenCalledWith({ session: "default", pane_id: "3" });
+    expect(screen.queryByText("Chat lens supports Claude Code and pi only")).toBeNull();
   });
 
   it("updates a badge from a pane_status frame and clears the seen mark", () => {

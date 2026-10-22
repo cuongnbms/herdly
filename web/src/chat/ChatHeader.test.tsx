@@ -34,15 +34,18 @@ describe("ChatHeader", () => {
     expect(onBack).toHaveBeenCalled();
   });
 
-  it("counts only other blocked chat Panes in the chip and jumps to the first", () => {
+  // The chip used to count only other blocked Panes with a Chat lens, which hid every blocked
+  // shell and codex Pane from attention navigation. Terminal reachability is approved, so the
+  // count covers every other blocked Pane and jumps to the first in herdr's order.
+  it("counts every other blocked Pane, including one with no Chat lens, and jumps to the first", () => {
     const onSwitch = vi.fn();
     render(<ChatHeader pane={pane} onBack={() => {}} onSwitch={onSwitch} />);
-    fireEvent.click(screen.getByLabelText("1 need you"));
-    expect(onSwitch).toHaveBeenCalledWith({ session: "s", pane_id: "p2" });
+    fireEvent.click(screen.getByLabelText("2 need you"));
+    expect(onSwitch).toHaveBeenCalledWith({ session: "s", pane_id: "p3" });
   });
 
-  it("hides the chip when no other chat Pane is blocked", () => {
-    useWeb.setState({ machines: [machine("idle")] as never });
+  it("hides the chip when no other Pane is blocked", () => {
+    useWeb.setState({ machines: [{ ...machine("idle"), sessions: [{ ...machine("idle").sessions[0], workspaces: [{ ...machine("idle").sessions[0].workspaces[0], tabs: [{ ...machine("idle").sessions[0].workspaces[0].tabs[0], panes: [p("p1", "fix login", "working")] }] }] }] }] as never });
     render(<ChatHeader pane={pane} onBack={() => {}} onSwitch={() => {}} />);
     expect(screen.queryByLabelText(/need you/)).toBeNull();
   });

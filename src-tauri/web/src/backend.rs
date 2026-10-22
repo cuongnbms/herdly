@@ -1,4 +1,5 @@
 //! What the server needs from herdly-core, as a trait so tests can fake it.
+use crate::terminal::backend::{attach_command, resolve_terminal, OwnedTerminal, TerminalHandle};
 use async_trait::async_trait;
 use herdly_core::error::AppResult;
 use herdly_core::machines::{MachineManager, LOCAL};
@@ -47,6 +48,11 @@ pub trait Backend: Send + Sync + 'static {
     ) -> AppResult<Located>;
     fn page(&self, pane: &WebPane, before: usize, limit: usize) -> Option<Vec<ChatItem>>;
     fn close_chat(&self, pane: &WebPane);
+    /// A fresh, not-yet-opened Terminal attempt for `pane`.
+    ///
+    /// One call is one attempt: nothing is spawned until the handle's `open`, and the caller
+    /// closes every handle it is given. `takeover` is true only for an explicit Take over.
+    async fn terminal(&self, pane: &WebPane, takeover: bool) -> AppResult<Arc<dyn TerminalHandle>>;
 }
 
 /// The real backend: herdly-core's managers.
@@ -86,5 +92,13 @@ impl Backend for Core {
 
     fn close_chat(&self, pane: &WebPane) {
         self.chats.close(&pane.to_ref());
+    }
+
+    async fn terminal(&self, pane: &WebPane, takeover: bool) -> AppResult<Arc<dyn TerminalHandle>> {
+        let key = resolve_terminal(&self.views(), pane)?;
+        let info = self.mgr.info(LOCAL)?;
+        let transport = self.mgr.transport(LOCAL)?;
+        let argv = attach_command(&info, &*transport, &key, takeover);
+        Ok(OwnedTerminal::new(key, argv))
     }
 }

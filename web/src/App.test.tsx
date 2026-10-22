@@ -126,7 +126,10 @@ describe("App", () => {
     expect(useWeb.getState().chats["s/p1"].located?.path).toBe("/t");
   });
 
-  it("keeps Panes from multiple Tabs under the correct Workspace and disables unsupported agents", () => {
+  // Replaced assertion: a shell Pane used to be disabled here. Task 7 approves Terminal
+  // reachability, so the shell Pane is selectable from the sidebar and only a stopped Session
+  // is disabled.
+  it("keeps Panes from multiple Tabs under the correct Workspace and keeps shell Panes reachable", () => {
     const session = twoPanes.sessions[0];
     const workspace = session.workspaces[0];
     const tab = workspace.tabs[0];
@@ -141,7 +144,7 @@ describe("App", () => {
     expect(first.getByRole("button", { name: /alpha/ })).toBeInTheDocument();
     expect(first.getByRole("button", { name: /gamma/ })).toBeInTheDocument();
     const other = within(drawer.getByRole("group", { name: "Workspace Other" }));
-    expect(other.getByRole("button", { name: /shell/ })).toBeDisabled();
+    expect(other.getByRole("button", { name: /shell/ })).not.toBeDisabled();
     expect(first.queryByRole("button", { name: /shell/ })).not.toBeInTheDocument();
     expect(other.queryByRole("button", { name: /gamma/ })).not.toBeInTheDocument();
   });
@@ -191,7 +194,8 @@ describe("App", () => {
   it("subscribes when a Chat opens, and on back unsubscribes, clears it and returns to the list", () => {
     const pane = { session: "s", pane_id: "p1" };
     const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
-    useWeb.setState({ open: pane });
+    // A claude Pane, so it opens in Chat and PaneScreen takes the subscription.
+    useWeb.setState({ machines: [twoPanes] as never, open: pane });
     act(() => useWeb.getState().apply({ type: "chat_opened", pane, located: { agent: "claude", path: "/t", ambiguous: false, candidates: [], pending: false } }));
     render(<App socket={socket as never} />);
     expect(socket.subscribe).toHaveBeenCalledWith(pane);
@@ -230,5 +234,179 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /beta/ }));
     fireEvent.click(within(screen.getByRole("dialog", { name: "Panes" })).getByText("alpha"));
     expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("draft A");
+  });
+
+  /** A machine whose second Pane is a shell, so it has no Chat lens. */
+  const shellMachine = { ...twoPanes, sessions: [{ ...twoPanes.sessions[0], workspaces: [{ ...twoPanes.sessions[0].workspaces[0], tabs: [{ ...twoPanes.sessions[0].workspaces[0].tabs[0], panes: [pv("p1", "alpha"), { ...pv("p2", "beta"), agent: null }] }] }] }] };
+
+  it("opens a shell Pane from the list into Terminal, without subscribing Chat", () => {
+    useWeb.setState({ machines: [shellMachine] as never });
+    const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
+    render(<App socket={socket as never} />);
+    fireEvent.click(screen.getByText("beta"));
+    expect(screen.getByRole("button", { name: "Terminal" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Chat" })).toBeDisabled();
+    expect(screen.queryByLabelText("Message")).toBeNull();
+    expect(socket.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("opens a shell Pane from the sidebar into Terminal", () => {
+    useWeb.setState({ machines: [shellMachine] as never });
+    const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
+    render(<App socket={socket as never} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    const drawer = within(screen.getByRole("dialog", { name: "Sessions and Workspaces" }));
+    fireEvent.click(drawer.getByRole("button", { name: /beta/ }));
+    expect(screen.getByRole("button", { name: "Terminal" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Chat" })).toBeDisabled();
+    expect(socket.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("can switch to a shell Pane from the Pane sheet, and reach a blocked shell from the needs chip", () => {
+    // beta is a blocked shell Pane: only the Terminal lens can show it.
+    const blockedShell = { ...shellMachine, sessions: [{ ...shellMachine.sessions[0], workspaces: [{ ...shellMachine.sessions[0].workspaces[0], tabs: [{ ...shellMachine.sessions[0].workspaces[0].tabs[0], panes: [pv("p1", "alpha"), { ...pv("p2", "beta"), agent: null, status: "blocked" }] }] }] }] };
+    useWeb.setState({ machines: [blockedShell] as never, open: { session: "s", pane_id: "p1" } });
+    const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
+    render(<App socket={socket as never} />);
+    // The needs chip used to filter by Chat capability, which hid every shell Pane.
+    fireEvent.click(screen.getByRole("button", { name: /1 need you/ }));
+    expect(useWeb.getState().open).toEqual({ session: "s", pane_id: "p2" });
+    expect(screen.getByRole("button", { name: "Terminal" })).toHaveAttribute("aria-pressed", "true");
+    // And the Pane sheet reaches it too.
+    fireEvent.click(screen.getByRole("button", { name: /alpha|beta/ }));
+    const sheet = within(screen.getByRole("dialog", { name: "Panes" }));
+    fireEvent.click(sheet.getByText("alpha"));
+    expect(useWeb.getState().open).toEqual({ session: "s", pane_id: "p1" });
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    // No Chat subscribe for the shell Pane, only for the claude one it came back to.
+    expect(socket.subscribe.mock.calls.map((c) => c[0].pane_id)).toEqual(["p1", "p1"]);
+  });
+
+  it("unsubscribes Chat when Terminal is chosen and subscribes again on return, keeping the draft", () => {
+    localStorage.clear();
+    const a = { session: "s", pane_id: "p1" };
+    const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
+    useWeb.setState({ machines: [twoPanes] as never, open: a });
+    act(() => useWeb.getState().apply({ type: "chat_opened", pane: a, located: { agent: "claude", path: "/t", ambiguous: false, candidates: [], pending: false } }));
+    render(<App socket={socket as never} />);
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "half a thought" } });
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(socket.unsubscribe).toHaveBeenCalledWith(a);
+    expect(screen.queryByLabelText("Message")).toBeNull();
+    // The Chat state is kept, not cleared: only the live feed stops.
+    expect(useWeb.getState().chats["s/p1"].located?.path).toBe("/t");
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(socket.subscribe).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("Message")).toHaveValue("half a thought");
+  });
+
+  it("remembers the chosen Lens across a remount, per Pane", () => {
+    localStorage.clear();
+    const a = { session: "s", pane_id: "p1" };
+    const socket = { subscribe: vi.fn(), unsubscribe: vi.fn() };
+    useWeb.setState({ machines: [twoPanes] as never, open: a });
+    const first = render(<App socket={socket as never} />);
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    act(() => first.unmount());
+    useWeb.setState({ open: a });
+    render(<App socket={socket as never} />);
+    expect(screen.getByRole("button", { name: "Terminal" })).toHaveAttribute("aria-pressed", "true");
+    // Another Pane has its own preference and still opens on Chat.
+    act(() => useWeb.getState().openChat({ session: "s", pane_id: "p2" }));
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("goes back from Terminal to the list and keeps one header at a time", () => {
+    localStorage.clear();
+    const a = { session: "s", pane_id: "p1" };
+    useWeb.setState({ machines: [twoPanes] as never, open: a });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(document.querySelectorAll("header.chat-header")).toHaveLength(1);
+    fireEvent.click(screen.getByLabelText("Back"));
+    expect(useWeb.getState().open).toBeNull();
+    expect(screen.getByRole("heading", { name: "Herdly" })).toBeInTheDocument();
+  });
+
+  it("closes the Terminal and shows the Pane as unavailable when its Session stops", () => {
+    localStorage.clear();
+    const a = { session: "s", pane_id: "p1" };
+    useWeb.setState({ machines: [twoPanes] as never, open: a });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(screen.getByTestId("terminal-host")).toBeInTheDocument();
+    act(() => useWeb.setState({ machines: [{ ...twoPanes, sessions: [{ ...twoPanes.sessions[0], running: false }] }] as never }));
+    expect(screen.getByRole("alert")).toHaveTextContent("This Session is stopped");
+    // The attempt is gone: nothing is left that could keep writing to the old terminal.
+    expect(document.querySelectorAll(".xterm")).toHaveLength(0);
+  });
+
+  it.each([1000, 1008, 1009])("recovers terminal close %i manually through App without changing pairing", async (code) => {
+    const wires: BrowserWire[] = [];
+    class BrowserWire {
+      binaryType = "blob";
+      onopen: (() => void) | null = null;
+      onmessage: ((e: { data: string | ArrayBuffer }) => void) | null = null;
+      onclose: ((e: { code: number }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      sent: (string | ArrayBufferView)[] = [];
+      constructor(readonly url: string) { wires.push(this); }
+      send(data: string | ArrayBufferView) { this.sent.push(data); }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", BrowserWire);
+    localStorage.clear();
+    useWeb.setState({ conn: "open", authLost: false, machines: [shellMachine] as never, open: { session: "s", pane_id: "p2" } });
+    try {
+      const view = render(<App />);
+      expect(wires[0].url).toBe(`ws://${location.host}/ws/terminal`);
+      act(() => {
+        wires[0].onopen!();
+        wires[0].onmessage!({ data: JSON.stringify({ type: "attached" }) });
+        wires[0].onmessage!({ data: new TextEncoder().encode("retained screen").buffer });
+      });
+      await act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+      const old = document.querySelector(".xterm");
+      const rendered = old!.querySelector(".xterm-rows")!.textContent;
+      expect(rendered).toContain("retained screen");
+      act(() => wires[0].onclose!({ code }));
+      expect(screen.getByRole("status")).toHaveTextContent(`Connection closed (code ${code}). Reattach to try again.`);
+      expect(document.querySelector(".xterm")).toBe(old);
+      expect(old!.querySelector(".xterm-rows")!.textContent).toBe(rendered);
+      expect(screen.queryByText("Disconnected, reconnecting…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Esc" })).toBeDisabled();
+      expect(useWeb.getState().conn).toBe("open");
+      expect(useWeb.getState().authLost).toBe(false);
+      const reattach = screen.getByRole("button", { name: "Reattach" });
+      reattach.focus();
+      expect(reattach).toHaveFocus();
+      fireEvent.click(reattach);
+      expect(wires).toHaveLength(2);
+      expect(document.querySelector(".xterm")).not.toBe(old);
+      expect(old!.isConnected).toBe(false);
+      expect(document.querySelector(".xterm-rows")!.textContent).not.toContain("retained screen");
+      expect(screen.getByRole("status")).toHaveTextContent("Connecting…");
+      act(() => wires[1].onopen!());
+      expect(JSON.parse(wires[1].sent[0] as string)).toMatchObject({ type: "open", pane: { session: "s", pane_id: "p2" }, takeover: false });
+      act(() => wires[1].onmessage!({ data: JSON.stringify({ type: "attached" }) }));
+      expect(screen.getByRole("button", { name: "Esc" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+      expect([...new Uint8Array((wires[1].sent[1] as ArrayBufferView).buffer)]).toEqual([27]);
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows a Pane that disappeared as unavailable instead of attaching to it", () => {
+    localStorage.clear();
+    const a = { session: "s", pane_id: "p1" };
+    useWeb.setState({ machines: [twoPanes] as never, open: a });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    act(() => useWeb.setState({ machines: [{ ...twoPanes, sessions: [{ ...twoPanes.sessions[0], workspaces: [] }] }] as never }));
+    expect(screen.getByRole("alert")).toHaveTextContent("This Pane is no longer here");
+    expect(document.querySelectorAll(".xterm")).toHaveLength(0);
   });
 });

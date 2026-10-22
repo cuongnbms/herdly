@@ -544,9 +544,16 @@ fn read_loop(e: &Arc<Entry>, mut reader: Box<dyn Read + Send>) {
             return !e.closed.load(Ordering::SeqCst);
         }
         let n = bytes.len();
+        // Charge the bytes before handing them to the sink, and release the credit lock first:
+        // a sink that acknowledges synchronously inside `data` would otherwise acknowledge
+        // bytes this batch adds right after it returns, leaving them unacked forever, and it
+        // would deadlock against a lock held across the callback.
+        {
+            let mut unacked = e.unacked.lock().unwrap();
+            *unacked += n;
+        }
         sink.data(bytes);
         let mut unacked = e.unacked.lock().unwrap();
-        *unacked += n;
         if *unacked > HIGH_WATER {
             while *unacked >= LOW_WATER && !e.closed.load(Ordering::SeqCst) {
                 unacked = e.resume.wait(unacked).unwrap();
@@ -631,8 +638,30 @@ fn coalesce(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
     use std::time::Duration;
+
+    /// Closes the attach even when a test fails or times out, from a helper thread so a
+    /// reader wedged in a callback cannot hang the test binary.
+    struct Close(Arc<AttachManager>, AttachKey);
+    impl Drop for Close {
+        fn drop(&mut self) {
+            close_bounded(&self.0, &self.1);
+        }
+    }
+
+    /// `close` from a helper thread, so a reader wedged inside its callback fails the test
+    /// instead of hanging it. Returns false when `close` did not return in time.
+    fn close_bounded(m: &Arc<AttachManager>, k: &AttachKey) -> bool {
+        let (m, k) = (m.clone(), k.clone());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            m.close(&k);
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(5)).is_ok()
+    }
 
     #[derive(Default)]
     struct Rec {
@@ -812,6 +841,118 @@ mod tests {
         m.ack(&key("c"), got);
         wait_for(|| rec.bytes.lock().unwrap().len() > got).await;
         m.close(&key("c"));
+    }
+    #[tokio::test]
+    async fn immediate_sink_ack_leaves_no_outstanding_debt() {
+        struct Immediate {
+            manager: Arc<AttachManager>,
+            key: AttachKey,
+            balance: Mutex<Option<(usize, usize)>>,
+        }
+        impl Sink for Immediate {
+            fn data(&self, bytes: Vec<u8>) {
+                let entry = self.manager.get(&self.key).unwrap();
+                let before = *entry.unacked.lock().unwrap();
+                self.manager.ack(&self.key, bytes.len());
+                let after = *entry.unacked.lock().unwrap();
+                *self.balance.lock().unwrap() = Some((before, after));
+            }
+            fn event(&self, _: AttachEvent) {}
+        }
+        let manager = AttachManager::new(Duration::from_secs(5));
+        let k = key("instant-ack");
+        let sink = Arc::new(Immediate {
+            manager: manager.clone(),
+            key: k.clone(),
+            balance: Mutex::new(None),
+        });
+        manager
+            .open(
+                k.clone(),
+                sh("printf ready; sleep 30"),
+                80,
+                24,
+                sink.clone(),
+            )
+            .unwrap();
+        let _close = Close(manager.clone(), k.clone());
+        wait_for(|| sink.balance.lock().unwrap().is_some()).await;
+        let balance = *sink.balance.lock().unwrap();
+        assert!(close_bounded(&manager, &k), "close must not hang");
+        assert_eq!(balance, Some((5, 0)));
+    }
+    #[tokio::test]
+    async fn immediate_acks_keep_output_flowing_above_the_high_water_mark() {
+        struct StreamAcks {
+            manager: Arc<AttachManager>,
+            key: AttachKey,
+            received: AtomicUsize,
+        }
+        impl Sink for StreamAcks {
+            fn data(&self, bytes: Vec<u8>) {
+                self.received.fetch_add(bytes.len(), Ordering::SeqCst);
+                // Acknowledged before `data` returns: flow control must not stop the reader.
+                self.manager.ack(&self.key, bytes.len());
+            }
+            fn event(&self, _: AttachEvent) {}
+        }
+        // Past the pause threshold, several times over.
+        const TOTAL: usize = HIGH_WATER + READ_CHUNK + 1_000_000;
+        let manager = AttachManager::new(Duration::from_secs(5));
+        let k = key("stream-acks");
+        let sink = Arc::new(StreamAcks {
+            manager: manager.clone(),
+            key: k.clone(),
+            received: AtomicUsize::new(0),
+        });
+        // `/dev/zero` keeps the byte count exact: the PTY's ONLCR would inflate `yes` output.
+        manager
+            .open(
+                k.clone(),
+                sh(&format!("head -c {TOTAL} /dev/zero")),
+                80,
+                24,
+                sink.clone(),
+            )
+            .unwrap();
+        let _close = Close(manager.clone(), k.clone());
+        let entry = manager.get(&k).unwrap();
+        // The exit watcher removes the entry after the child exits and the reader drains, so
+        // this waits for the reader's last delivery without a sleep.
+        let mut drained = false;
+        for _ in 0..200 {
+            if !manager.entries.lock().unwrap().contains_key(&k) {
+                drained = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+        let got = sink.received.load(Ordering::SeqCst);
+        // The drain grace bounds the watcher, not the reader: a reader wedged on the credit
+        // mutex can still be running here, so the balance is read with a deadline. A plain
+        // `lock()` would turn exactly the lock-boundary regression this test guards against
+        // into a hung suite instead of a failure.
+        let debt = {
+            let mut debt = None;
+            for _ in 0..100 {
+                if let Ok(unacked) = entry.unacked.try_lock() {
+                    debt = Some(*unacked);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+            debt
+        };
+        assert!(drained, "the stream never finished and drained");
+        assert_eq!(
+            got, TOTAL,
+            "a sink that acknowledges inside `data` must not stall the reader above HIGH_WATER"
+        );
+        assert_eq!(
+            debt,
+            Some(0),
+            "bytes acknowledged inside `data` must not stay outstanding after delivery"
+        );
     }
     #[tokio::test]
     async fn release_detaches_after_idle_unless_reopened() {

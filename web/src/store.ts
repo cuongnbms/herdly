@@ -12,6 +12,14 @@ export interface ChatView {
 
 interface WebState {
   conn: Conn;
+  /** The device pairing was revoked: only a socket that opens again clears this. */
+  authLost: boolean;
+  /**
+   * The connection was being opened when the pairing was revoked. A socket's `onopen` for an
+   * attempt started before the revocation proves nothing about pairing, so it is refused until
+   * a connection is opened after `authLost`.
+   */
+  authStale: boolean;
   /** The connection was open and has been lost since: reconnect attempts show the bar. */
   lost: boolean;
   machines: MachineView[];
@@ -35,6 +43,8 @@ function withChat(chats: Record<string, ChatView>, pane: WebPane, patch: (v: Cha
 
 export const useWeb = create<WebState>()((set) => ({
   conn: "connecting",
+  authLost: false,
+  authStale: false,
   lost: false,
   machines: [],
   open: null,
@@ -82,7 +92,22 @@ export const useWeb = create<WebState>()((set) => ({
       }
     }),
 
-  setConn: (conn) => set((s) => ({ conn, lost: conn === "open" ? false : s.lost || conn === "down" })),
+  setConn: (conn) =>
+    set((s) => {
+      // A revoked pairing is sticky, whichever socket noticed it: the Chat socket's frames and a
+      // live Machine view are not fresh authentication, so they cannot bring the paired UI back.
+      // Only a socket that opens again proves the device is paired, and only one whose attempt
+      // began after the revocation: an `onopen` already in flight was not re-authenticated.
+      if (conn === "unpaired") return { conn, authLost: true, authStale: true };
+      // A connection whose handshake starts now is a new authentication attempt, so a later
+      // `open` on it is proof; an `open` on one started before is not.
+      if (conn === "connecting") return s.authLost ? { authStale: false, lost: s.lost } : { conn, lost: s.lost };
+      if (s.authLost) {
+        if (conn === "open" && !s.authStale) return { conn, lost: false, authLost: false };
+        return { lost: conn === "down" ? true : s.lost };
+      }
+      return { conn, lost: conn === "open" ? false : s.lost || conn === "down" };
+    }),
 
   prependOlder: (key, items, before) =>
     set((s) => {
