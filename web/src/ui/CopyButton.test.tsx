@@ -16,6 +16,8 @@ describe("CopyButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     expect(copy.copyText).toHaveBeenCalledWith("second");
     expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Copied");
+    expect(screen.getByRole("button", { name: "Copied" })).toHaveAttribute("data-state", "success");
     act(() => vi.advanceTimersByTime(1500));
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   });

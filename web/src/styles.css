@@ -139,16 +139,43 @@ button:disabled { opacity: 0.45; cursor: default; }
 
 /* ---------- Copy button ---------- */
 .copy-btn {
-  min-height: 44px; /* tap area; the transparent border keeps the painted pill at 32px */
-  min-width: 44px;
-  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px; /* keep a comfortable tap target around the compact visual pill */
+  min-width: 112px; /* reserve room for all three labels without layout shifts */
+  padding: 6px 0;
   margin: -6px 0;
-  border: 6px solid transparent;
-  background-clip: padding-box;
-  border-radius: var(--r-sm);
-  background-color: var(--surface-2);
+  border-radius: var(--r-md);
   color: var(--fg-2);
   font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+.copy-btn-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+.copy-btn-icon { flex-shrink: 0; }
+@media (hover: hover) {
+  .copy-btn:hover .copy-btn-content {
+    background: var(--hover);
+    border-color: var(--line-2);
+    color: var(--fg);
+  }
+}
+.copy-btn:active .copy-btn-content { background: var(--active); }
+.copy-btn[data-state="success"] .copy-btn-content { color: var(--green); }
+.copy-btn[data-state="error"] .copy-btn-content { color: var(--err-fg); }
+@media (prefers-reduced-motion: reduce) {
+  .copy-btn-content { transition: none; }
 }
 
 /* ---------- Sheet ---------- */
