@@ -3,7 +3,7 @@ import { findRow, groupByStatus, rowPane } from "../list/order";
 import type { Lens } from "../pane/lens";
 import { useWeb } from "../store";
 import { webKey, type WebPane } from "../types";
-import { BackIcon, MenuIcon } from "../ui/icons";
+import { BackIcon, ChatIcon, MenuIcon, TerminalIcon } from "../ui/icons";
 import { PaneSheet } from "./PaneSheet";
 
 export function ChatHeader({ pane, onBack, onSwitch, onMenu, lens, onLens, chatEnabled = true }: {
@@ -40,8 +40,8 @@ export function ChatHeader({ pane, onBack, onSwitch, onMenu, lens, onLens, chatE
       )}
       {lens !== undefined && onLens && (
         <div className="lens-switch" role="group" aria-label="Lens">
-          <button type="button" className="lens-opt" aria-pressed={lens === "chat"} disabled={!chatEnabled} onClick={() => onLens("chat")}>Chat</button>
-          <button type="button" className="lens-opt" aria-pressed={lens === "terminal"} onClick={() => onLens("terminal")}>Terminal</button>
+          <button type="button" className="lens-opt" aria-label="Chat" title="Chat" aria-pressed={lens === "chat"} disabled={!chatEnabled} onClick={() => onLens("chat")}><ChatIcon /></button>
+          <button type="button" className="lens-opt" aria-label="Terminal" title="Terminal" aria-pressed={lens === "terminal"} onClick={() => onLens("terminal")}><TerminalIcon /></button>
         </div>
       )}
       {sheetOpen && <PaneSheet current={pane} onClose={closeSheet} onSwitch={(p) => onSwitch?.(p)} />}

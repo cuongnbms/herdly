@@ -16,6 +16,18 @@ export const MenuIcon = (props: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...props}><path d="M4 6h16M4 12h16M4 18h16" /></svg>
 );
 
+export const ChatIcon = (props: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...props}>
+    <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
+  </svg>
+);
+
+export const TerminalIcon = (props: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...props}>
+    <path d="M5 7l5 5-5 5M12 18h7" />
+  </svg>
+);
+
 export const BackIcon = (props: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...props}>
     <path d="M15 5l-7 7 7 7" />

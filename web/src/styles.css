@@ -321,7 +321,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 .chat-header {
   position: relative;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
   padding: calc(env(safe-area-inset-top) + 4px) 4px 4px;
@@ -380,20 +380,20 @@ button:disabled { opacity: 0.45; cursor: default; }
 /* FitAddon subtracts xterm padding, not host padding, from the measured parent height. */
 .pane-screen .term-host { padding: 0; }
 .pane-screen .term-host .xterm { padding: 4px 4px 0; }
-/* The selector is its own row so it fits a 320px viewport beside the header buttons. */
+/* Compact header actions retain 44px touch targets, including on a 320px viewport. */
 .lens-switch {
-  order: 1;
-  flex-basis: 100%;
+  flex: 0 0 auto;
+  margin-left: auto;
   display: flex;
   gap: 4px;
-  padding: 0 4px 4px;
 }
 .lens-opt {
-  flex: 1;
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0 10px;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   color: var(--fg-2);
   background: var(--surface-1);
   border: 1px solid var(--line-2);
