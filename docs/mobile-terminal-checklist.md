@@ -96,9 +96,11 @@ Status: **awaiting a real phone** (no Android device has run any row below).
   carries only cursor-visibility and synchronized-output modes and the Pane receives `ESC[A`.
 - **Scrollback lives in herdr, not in the browser.** On attach, herdr turns on the alternate
   screen and SGR mouse reporting in the client and paints only the visible grid, so the browser's
-  xterm has no history. A swipe therefore goes up as wheel reports (one per three lines of
-  travel), the same as a desktop wheel: herdr scrolls its own history, or hands the wheel to an
-  application that asked for the mouse. A tap still sends no click.
+  xterm has no history. A swipe therefore goes up as wheel reports, the same as a desktop wheel:
+  herdr scrolls its own history, or hands the wheel to an application that asked for the mouse.
+  Content moves at twice the finger, a flick keeps scrolling and slows down (a touch stops it),
+  and a tap still sends no click. herdr repaints whole lines per report, so the motion is
+  line by line, not pixel smooth.
 - **Terminal queries are answered by herdr, not by the browser's xterm.** herdr emulates each
   Pane's terminal, so a query a program writes (`ESC[c`, `ESC[5n`, an OSC colour query) is answered
   inside herdr; the client never sees the query. Measured: the Pane's own screen shows the answer

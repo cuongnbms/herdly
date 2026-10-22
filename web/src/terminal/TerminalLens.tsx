@@ -18,6 +18,17 @@ const TAP_SLOP_PX = 10;
 const TAP_MAX_MS = 500;
 /** Lines herdr scrolls its own history per wheel report (measured on herdr 0.9.5). */
 const WHEEL_LINES = 3;
+/** Content runs this many times the finger's travel. */
+const SWIPE_GAIN = 2;
+/** A fling starts from the finger's speed (px/ms) over this last stretch of the swipe. */
+const FLING_WINDOW_MS = 100;
+const FLING_MIN_SPEED = 0.3;
+const FLING_MAX_SPEED = 6;
+const FLING_STOP_SPEED = 0.05;
+/** A fling's speed falls by a factor of e every this many ms (close to iOS). */
+const FLING_DECAY_MS = 325;
+/** At most this many wheel reports in one step, so a fling never floods herdr. */
+const MAX_NOTCHES = 4;
 /** Self-hosted face, so cells measure the same on every device. */
 const FONT_FAMILY = '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace';
 
@@ -399,7 +410,19 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
 
     // Touch: a swipe scrolls (locally, or as wheel reports when mouse reporting is on), a tap
     // only focuses. Without this, a mouse-reporting app turns each touch into a click.
-    let touch: { x: number; y: number; at: number; lastY: number; moved: boolean } | null = null;
+    type Point = { clientX: number; clientY: number };
+    let touch: {
+      x: number;
+      y: number;
+      at: number;
+      lastY: number;
+      moved: boolean;
+      point: Point;
+      samples: { t: number; y: number }[];
+    } | null = null;
+    /** Travel (px) not yet turned into a scroll; positive moves toward newer output. */
+    let pending = 0;
+    let fling = 0;
     const cellHeight = (): number => {
       const screen = box.querySelector<HTMLElement>(".xterm-screen");
       const t = term.current;
@@ -407,18 +430,10 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
       const height = screen.getBoundingClientRect().height;
       return height > 0 ? height / t.rows : 0;
     };
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) {
-        touch = null;
-        return;
-      }
-      const point = e.touches[0];
-      touch = { x: point.clientX, y: point.clientY, at: Date.now(), lastY: point.clientY, moved: false };
-    };
     /** Wheel reports through xterm's own encoder, at the finger, exactly as a desktop wheel. */
-    const wheel = (notches: number, point: Touch) => {
+    const wheel = (notches: number, point: Point): boolean => {
       const screen = box.querySelector<HTMLElement>(".xterm-screen");
-      if (!screen || !typing.current) return;
+      if (!screen || !typing.current) return false;
       for (let i = 0; i < Math.abs(notches); i++) {
         screen.dispatchEvent(
           new WheelEvent("wheel", {
@@ -431,26 +446,79 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
           }),
         );
       }
+      return true;
+    };
+    /** Scrolls by finger travel, at SWIPE_GAIN; false when nothing can scroll any more. */
+    const scrollBy = (pixels: number, point: Point): boolean => {
+      const t = term.current;
+      const cell = cellHeight();
+      if (!t || cell <= 0) return false;
+      // herdr paints the Pane in the alternate screen with mouse reporting on and keeps the
+      // history itself: the browser has nothing to scroll, so the swipe goes up as wheel reports.
+      const upstream = t.modes.mouseTrackingMode !== "none";
+      const step = (upstream ? cell * WHEEL_LINES : cell) / SWIPE_GAIN;
+      pending += pixels;
+      const lines = Math.trunc(pending / step);
+      if (lines === 0) return true;
+      pending -= lines * step;
+      if (!upstream) {
+        t.scrollLines(lines);
+        return true;
+      }
+      return wheel(Math.max(-MAX_NOTCHES, Math.min(MAX_NOTCHES, lines)), point);
+    };
+    const stopFling = () => {
+      if (fling) cancelAnimationFrame(fling);
+      fling = 0;
+    };
+    /** Keeps scrolling after a flick, slowing down, until it is too slow, touched, or replaced. */
+    const startFling = (velocity: number, point: Point) => {
+      stopFling();
+      const owner = term.current;
+      let speed = Math.max(-FLING_MAX_SPEED, Math.min(FLING_MAX_SPEED, velocity));
+      let last = performance.now();
+      const frame = (now: number) => {
+        // A frame after a long pause (a hidden page) must not jump.
+        const dt = Math.min(now - last, 50);
+        last = now;
+        fling = 0;
+        if (!live || term.current !== owner || !scrollBy(speed * dt, point)) return;
+        speed *= Math.exp(-dt / FLING_DECAY_MS);
+        if (Math.abs(speed) >= FLING_STOP_SPEED) fling = requestAnimationFrame(frame);
+      };
+      fling = requestAnimationFrame(frame);
+    };
+    const onTouchStart = (e: TouchEvent) => {
+      // A touch catches a fling where it is.
+      stopFling();
+      pending = 0;
+      if (e.touches.length !== 1) {
+        touch = null;
+        return;
+      }
+      const point = e.touches[0];
+      const at = performance.now();
+      touch = {
+        x: point.clientX,
+        y: point.clientY,
+        at: Date.now(),
+        lastY: point.clientY,
+        moved: false,
+        point: { clientX: point.clientX, clientY: point.clientY },
+        samples: [{ t: at, y: point.clientY }],
+      };
     };
     const onTouchMove = (e: TouchEvent) => {
       if (!touch || e.touches.length !== 1) return;
       const point = e.touches[0];
       if (Math.abs(point.clientX - touch.x) > TAP_SLOP_PX || Math.abs(point.clientY - touch.y) > TAP_SLOP_PX) touch.moved = true;
-      const t = term.current;
-      const cell = cellHeight();
-      if (t && cell > 0) {
-        // herdr paints the Pane in the alternate screen with mouse reporting on and keeps the
-        // history itself: the browser has nothing to scroll, so the swipe goes up as wheel reports.
-        const upstream = t.modes.mouseTrackingMode !== "none";
-        const step = upstream ? cell * WHEEL_LINES : cell;
-        // Content follows the finger: pulling down reveals older lines (a negative scroll).
-        const lines = Math.trunc((touch.lastY - point.clientY) / step);
-        if (lines !== 0) {
-          if (upstream) wheel(lines, point);
-          else t.scrollLines(lines);
-          touch.lastY -= lines * step;
-        }
-      }
+      // Content follows the finger: pulling down reveals older lines (a negative scroll).
+      scrollBy(touch.lastY - point.clientY, point);
+      touch.lastY = point.clientY;
+      touch.point = { clientX: point.clientX, clientY: point.clientY };
+      const now = performance.now();
+      touch.samples.push({ t: now, y: point.clientY });
+      while (touch.samples.length > 2 && now - touch.samples[0].t > FLING_WINDOW_MS) touch.samples.shift();
       // Keep the page and the compat-mouse path out of the gesture.
       e.preventDefault();
     };
@@ -460,7 +528,19 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
       if (!started) return;
       // Suppress the synthesized mousedown/click: a tap focuses, it does not click a TUI target.
       e.preventDefault();
-      if (!started.moved && Date.now() - started.at < TAP_MAX_MS) term.current?.focus();
+      if (!started.moved) {
+        if (Date.now() - started.at < TAP_MAX_MS) term.current?.focus();
+        return;
+      }
+      // Only the last stretch counts: a finger that slowed or stopped before lifting leaves no fling.
+      const now = performance.now();
+      const recent = started.samples.filter((s) => now - s.t <= FLING_WINDOW_MS);
+      if (recent.length < 2) return;
+      const first = recent[0];
+      const last = recent[recent.length - 1];
+      const elapsed = Math.max(last.t - first.t, 1);
+      const velocity = (first.y - last.y) / elapsed;
+      if (Math.abs(velocity) >= FLING_MIN_SPEED) startFling(velocity, started.point);
     };
     box.addEventListener("touchstart", onTouchStart, { passive: true });
     box.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -511,6 +591,7 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
     return () => {
       live = false;
       typing.current = false;
+      stopFling();
       wire.stop();
       if (socket.current === wire) socket.current = null;
       if (keyBar.current === keyEntry) keyBar.current = null;

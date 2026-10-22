@@ -987,7 +987,8 @@ async function main() {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     };
     await swipe(cx, cy, 10);
-    await page.waitForTimeout(700);
+    // Long enough for a fling to run out, so the tap below is compared with a settled Pane.
+    await page.waitForTimeout(2200);
     const afterSwipe = await paneRead(mousePane.paneId, 20);
     const scrollAfter = await page.evaluate(() => window.scrollY);
     check(

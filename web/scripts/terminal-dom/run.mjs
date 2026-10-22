@@ -376,17 +376,20 @@ async function main() {
     const box = await page.locator(".xterm-screen").boundingBox();
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
-    // A real one-finger swipe on a touch-enabled Chromium context; `dy` is the finger's travel.
+    // A real one-finger swipe on a touch-enabled Chromium context; `dy` is the finger's travel
+    // and `pace` the milliseconds between moves. The default drag is slow enough to leave no
+    // fling behind; `pace: 0` is a flick.
     await page.touchscreen.tap(cx, cy).catch(() => {});
     const client = await page.context().newCDPSession(page);
-    const swipe = async (dy) => {
+    const swipe = async (dy, { pace = 120, settle = 300 } = {}) => {
       const from = cy - dy / 2;
       await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: from }] });
       for (let step = 1; step <= 8; step++) {
+        if (pace) await page.waitForTimeout(pace);
         await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: from + (dy * step) / 8 }] });
       }
       await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-      await page.waitForTimeout(300);
+      if (settle) await page.waitForTimeout(settle);
     };
     // Natural phone scrolling: the content follows the finger, so pulling down reveals older
     // lines and, at the bottom, pushing up has nothing newer to show.
@@ -427,6 +430,50 @@ async function main() {
       upSent.length > 0 && upSent.every((t) => /^\x1b\[<65;\d+;\d+M$/.test(t)),
       JSON.stringify(upSent),
     );
+
+    // Speed: content runs at twice the finger, so a report (three herdr lines) per 1.5 rows.
+    const cell = await page.evaluate(() => {
+      const screen = document.querySelector(".xterm-screen");
+      const rows = document.querySelectorAll(".xterm-rows > div").length;
+      return screen && rows ? screen.getBoundingClientRect().height / rows : 0;
+    });
+    const expected = Math.trunc((240 * 2) / (3 * cell));
+    await clear();
+    await swipe(240, { settle: 0 });
+    const slowSent = (await wheelReports()).length;
+    check(
+      "a slow drag scrolls at twice the finger",
+      Math.abs(slowSent - expected) <= 1,
+      `sent ${slowSent}, expected ${expected} (cell ${cell.toFixed(1)}px)`,
+    );
+    await page.waitForTimeout(700);
+    check("a slow drag leaves no fling behind", (await wheelReports()).length === slowSent, `${slowSent} -> ${(await wheelReports()).length}`);
+
+    // Fling: a flick keeps scrolling after the finger lifts, slows down, and stops on its own.
+    await clear();
+    await swipe(160, { pace: 0, settle: 0 });
+    const atLift = (await wheelReports()).length;
+    await page.waitForTimeout(300);
+    const coasting = (await wheelReports()).length;
+    check("a flick keeps scrolling after the finger lifts", coasting > atLift, `${atLift} -> ${coasting}`);
+    await page.waitForTimeout(1700);
+    const settled = (await wheelReports()).length;
+    await page.waitForTimeout(400);
+    check("a fling stops on its own", (await wheelReports()).length === settled, `${settled} -> ${(await wheelReports()).length}`);
+    const flingSent = await wheelReports();
+    check("a fling sends wheel reports only, in the flick's direction", flingSent.every((t) => /^\x1b\[<64;\d+;\d+M$/.test(t)), JSON.stringify(flingSent.slice(0, 4)));
+
+    // A touch stops a fling at once.
+    await clear();
+    await swipe(160, { pace: 0, settle: 0 });
+    await page.waitForTimeout(60);
+    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy }] });
+    const caught = (await wheelReports()).length;
+    await page.waitForTimeout(400);
+    const held = (await wheelReports()).length;
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    check("a touch stops a fling", held === caught, `${caught} -> ${held}`);
+    await page.waitForTimeout(200);
 
     // A tap focuses without clicking a terminal target.
     await clear();
