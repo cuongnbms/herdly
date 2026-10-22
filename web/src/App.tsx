@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "./nav/Sidebar";
 import type { Socket } from "./socket";
 import { PaneList } from "./list/PaneList";
@@ -42,6 +42,17 @@ export function App({ socket }: { socket?: Socket }) {
     if (open) clearChat(webKey(open));
     openChat(next);
   };
+  // Android asks the React screen first: WebView history does not track Pane selection.
+  useEffect(() => {
+    const onAndroidBack = (event: Event) => {
+      if (conn === "unpaired" || !open) return;
+      event.preventDefault();
+      clearChat(webKey(open));
+      closeChat();
+    };
+    window.addEventListener("herdly:android-back", onAndroidBack);
+    return () => window.removeEventListener("herdly:android-back", onAndroidBack);
+  }, [conn, open, clearChat, closeChat]);
   if (conn === "unpaired") return <NotPaired />;
   return (
     <>
