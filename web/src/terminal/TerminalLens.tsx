@@ -419,10 +419,11 @@ export function TerminalLens({ pane, transport = defaultFactory }: { pane: WebPa
       if (Math.abs(point.clientX - touch.x) > TAP_SLOP_PX || Math.abs(point.clientY - touch.y) > TAP_SLOP_PX) touch.moved = true;
       const cell = cellHeight();
       if (cell > 0) {
-        const lines = Math.trunc((point.clientY - touch.lastY) / cell);
+        // Content follows the finger: pulling down reveals older lines (a negative scroll).
+        const lines = Math.trunc((touch.lastY - point.clientY) / cell);
         if (lines !== 0) {
           term.current?.scrollLines(lines);
-          touch.lastY += lines * cell;
+          touch.lastY -= lines * cell;
         }
       }
       // Keep the page and the compat-mouse path out of the gesture.
