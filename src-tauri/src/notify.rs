@@ -37,6 +37,7 @@ mod mac {
     use objc2_foundation::{
         NSDictionary, NSObject, NSObjectProtocol, NSString, NSUserNotification,
         NSUserNotificationCenter, NSUserNotificationCenterDelegate,
+        NSUserNotificationDefaultSoundName,
     };
     use tauri::AppHandle;
 
@@ -131,6 +132,8 @@ mod mac {
         let n = NSUserNotification::new();
         n.setTitle(Some(&NSString::from_str(title)));
         n.setInformativeText(Some(&NSString::from_str(body)));
+        // nil (the default) delivers silently.
+        n.setSoundName(Some(unsafe { NSUserNotificationDefaultSoundName }));
         let keys = KEYS.map(NSString::from_str);
         let vals = [&pane.machine_id, &pane.session, &pane.pane_id].map(|s| NSString::from_str(s));
         let info = NSDictionary::<NSString, AnyObject>::from_slices(
@@ -156,6 +159,20 @@ mod mac {
             let n = build(&pane, "claude is blocked", "devtuf › my session › app");
             assert_eq!(pane_of(&n), Some(pane));
             assert_eq!(n.title().unwrap().to_string(), "claude is blocked");
+        }
+
+        #[test]
+        fn notification_plays_the_default_sound() {
+            let pane = PaneRef {
+                machine_id: "m".into(),
+                session: "s".into(),
+                pane_id: "p".into(),
+            };
+            let n = build(&pane, "title", "body");
+            assert_eq!(
+                n.soundName().as_deref(),
+                Some(unsafe { NSUserNotificationDefaultSoundName })
+            );
         }
 
         /// `cargo test` runs unbundled, like `tauri dev`: there is no default center there.
