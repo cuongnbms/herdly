@@ -1,4 +1,5 @@
 import { common, createLowlight } from "lowlight";
+import { isEnvFile } from "./envFile";
 import { HIGHLIGHT_LIMIT } from "./limits";
 
 /** One run of text in a line; `cls` is the space-joined `hljs-*` classes, "" for plain. */
@@ -36,7 +37,7 @@ function extOf(path: string): string {
  * HIGHLIGHT_LIMIT come back as one plain segment per line.
  */
 export function highlightLines(text: string, path: string): Seg[][] {
-  const ext = extOf(path);
+  const ext = isEnvFile(path) ? "ini" : extOf(path);
   if (text.length > HIGHLIGHT_LIMIT || !ext || !lowlight.registered(ext)) return plainLines(text);
 
   const lines: Seg[][] = [[]];
