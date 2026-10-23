@@ -132,11 +132,20 @@ function WorkspaceGroup({ machineId, session, workspace: ws, entries: all }: { m
   const call = (method: string, params: unknown) => () => herdrCall(machineId, session, method, params);
   const closePane = (pane_id: string) => () => {
     if (!a) return;
-    setClosing((s) => new Set(s).add(pane_id));
-    a.guard(() => call("pane.close", { pane_id })().catch((e: unknown) => {
-      unhide(pane_id);
-      throw e;
-    }));
+    const run = () => {
+      setClosing((s) => new Set(s).add(pane_id));
+      return call("pane.close", { pane_id })().catch((e: unknown) => {
+        unhide(pane_id);
+        throw e;
+      });
+    };
+    const pane = all.find((e) => e.pane.pane_id === pane_id)?.pane;
+    if (pane?.status === "working" || pane?.status === "blocked") {
+      const status = pane.status === "working" ? "working" : "blocked (waiting for input)";
+      a.confirm("Close pane", `Agent "${pane.title}" is ${status}. Closing this pane will stop it. Close anyway?`, "Close", run);
+    } else {
+      a.guard(run);
+    }
   };
   const reorder = useTabReorder(
     ws.tabs.map((t) => t.tab_id),
