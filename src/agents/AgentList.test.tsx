@@ -290,11 +290,55 @@ describe("AgentList", () => {
     expect(herdrCall).toHaveBeenCalledWith("local", "default", "pane.split", { target_pane_id: "p3", direction: "right" });
   });
 
-  it("closes a pane from its card button without asking", () => {
+  it("warns before closing a blocked pane and leaves it visible when cancelled", () => {
     render(<AgentList />);
-    fireEvent.click(screen.getByRole("button", { name: "Close Tag v1.4.0" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Guard export" }));
+    const dialog = screen.getByRole("dialog", { name: "Close pane" });
+    expect(within(dialog).getByText(/Guard export.*blocked.*waiting for input/i)).toBeTruthy();
+    expect(herdrCall).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Close Guard export" })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(herdrCall).toHaveBeenCalledWith("local", "default", "pane.close", { pane_id: "p3" });
+    expect(screen.getByRole("button", { name: "Close Guard export" })).toBeTruthy();
+    expect(herdrCall).not.toHaveBeenCalled();
+  });
+
+  it("warns from the working pane menu and only closes after confirmation", () => {
+    useApp.setState({ viewed: { machine_id: "local", session: "other" } });
+    useFilesPanel.setState({ view: "agents" });
+    render(<AgentList />);
+    fireEvent.contextMenu(screen.getByText("Backup"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close pane" }));
+    const dialog = screen.getByRole("dialog", { name: "Close pane" });
+    expect(within(dialog).getByText(/Backup.*working/i)).toBeTruthy();
+    expect(herdrCall).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Close Backup" })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(herdrCall).toHaveBeenCalledExactlyOnceWith("local", "other", "pane.close", { pane_id: "p9" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close Backup" })).toBeNull();
+  });
+
+  it.each([
+    ["Tag v1.4.0", "p3"],
+    ["Ship flag", "p4"],
+    ["Idempotent payments", "p1"],
+  ])("closes inactive pane %s from its card button without asking", (title, pane_id) => {
+    render(<AgentList />);
+    fireEvent.click(screen.getByRole("button", { name: `Close ${title}` }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(herdrCall).toHaveBeenCalledWith("local", "default", "pane.close", { pane_id });
+  });
+
+  it("restores a blocked pane if its confirmed close fails", async () => {
+    vi.mocked(herdrCall).mockRejectedValueOnce({ message: "close failed" });
+    render(<AgentList />);
+    fireEvent.click(screen.getByRole("button", { name: "Close Guard export" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Close pane" })).getByRole("button", { name: "Close" }));
+    expect(herdrCall).toHaveBeenCalledExactlyOnceWith("local", "default", "pane.close", { pane_id: "p2" });
+    expect(screen.queryByRole("button", { name: "Close Guard export" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Close Guard export" })).toBeTruthy();
+    expect(screen.getByText("close failed")).toBeTruthy();
   });
 
   it("hides a closing pane at once, its tab-mate standing alone", () => {
