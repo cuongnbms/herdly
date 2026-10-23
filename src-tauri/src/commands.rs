@@ -129,8 +129,15 @@ pub fn notify_pane(
     pane: crate::view::PaneRef,
     title: String,
     body: String,
+    sound: String,
 ) -> Result<(), AppError> {
-    crate::notify::show(&app, pane, title, body)
+    crate::notify::show(&app, pane, title, body, sound)
+}
+
+/// Plays a notification sound once, for previewing it in Settings.
+#[tauri::command]
+pub fn notify_sound_preview(app: tauri::AppHandle, sound: String) -> Result<(), AppError> {
+    crate::notify::preview_sound(&app, sound)
 }
 
 /// Saves a pasted image on the Machine and returns its path there. The body is the raw

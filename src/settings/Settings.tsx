@@ -1,6 +1,15 @@
 import { type CSSProperties, type DragEvent, memo, type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { notificationsEnabled, setNotificationsEnabled } from "../notify";
+import { notifySoundPreview } from "../lib/ipc";
+import {
+  NOTIFICATION_SOUNDS,
+  type NotificationSound,
+  notificationSound,
+  notificationsEnabled,
+  setNotificationSound,
+  setNotificationsEnabled,
+} from "../notify";
 import { BotIcon, ChatIcon, CloseIcon, EyeIcon, FolderIcon, GearIcon, GripIcon, PencilIcon } from "../ui/icons";
+import { SelectMenu } from "./Dropdown";
 import { FontPicker } from "./FontPicker";
 import { DEFAULT_HIDDEN_FOLDERS, useHiddenFolders } from "./hiddenFolders";
 import { NEW_AGENT_LENSES, useLensSettings } from "./lens";
@@ -131,6 +140,7 @@ function Stepper({
 
 function GeneralSettings() {
   const [notify, setNotify] = useState(notificationsEnabled);
+  const [sound, setSound] = useState(notificationSound);
   const newTab = useNewTab();
   const recent = useRecentAgents();
   return (
@@ -160,6 +170,20 @@ function GeneralSettings() {
             setNotificationsEnabled(on);
           }}
         />
+        <Row label="Notification sound" desc="Default is the macOS notification sound; picking one plays it.">
+          <SelectMenu
+            label="Notification sound"
+            value={sound}
+            disabled={!notify}
+            options={NOTIFICATION_SOUNDS.map((s) => ({ value: s, label: s }))}
+            onChange={(v) => {
+              const s = v as NotificationSound;
+              setSound(s);
+              setNotificationSound(s);
+              if (s !== "Default" && s !== "None") void notifySoundPreview(s).catch((e: unknown) => console.warn("sound preview failed", e));
+            }}
+          />
+        </Row>
       </Group>
       <p className="note">
         For exact chat binding, run <code>herdr integration install claude</code> / <code>pi</code> on each machine.

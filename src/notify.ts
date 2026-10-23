@@ -4,32 +4,61 @@ import { paneKey } from "./lib/types";
 
 const SETTINGS_KEY = "herdly:settings";
 
-export function notificationsEnabled(): boolean {
+/** `Default` is the system notification sound and `None` is silent; the rest are macOS system sounds by name. */
+export const NOTIFICATION_SOUNDS = [
+  "Default",
+  "Basso",
+  "Blow",
+  "Bottle",
+  "Frog",
+  "Funk",
+  "Glass",
+  "Hero",
+  "Morse",
+  "Ping",
+  "Pop",
+  "Purr",
+  "Sosumi",
+  "Submarine",
+  "Tink",
+  "None",
+] as const;
+export type NotificationSound = (typeof NOTIFICATION_SOUNDS)[number];
+
+function readRaw(): Record<string, unknown> {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) {
-      const p = JSON.parse(raw) as { notifications?: unknown };
-      if (typeof p.notifications === "boolean") return p.notifications;
-    }
+    const p = raw ? (JSON.parse(raw) as unknown) : null;
+    return p && typeof p === "object" ? (p as Record<string, unknown>) : {};
   } catch {
-    /* storage unavailable or corrupt */
+    return {};
   }
-  return true;
 }
 
-export function setNotificationsEnabled(on: boolean): void {
+function save(patch: Record<string, unknown>): void {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    let prev: Record<string, unknown> = {};
-    try {
-      prev = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-    } catch {
-      /* ignore corrupt */
-    }
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...prev, notifications: on }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...readRaw(), ...patch }));
   } catch {
     /* ignore */
   }
+}
+
+export function notificationsEnabled(): boolean {
+  const v = readRaw().notifications;
+  return typeof v === "boolean" ? v : true;
+}
+
+export function setNotificationsEnabled(on: boolean): void {
+  save({ notifications: on });
+}
+
+export function notificationSound(): NotificationSound {
+  const v = readRaw().notificationSound;
+  return NOTIFICATION_SOUNDS.includes(v as NotificationSound) ? (v as NotificationSound) : "Default";
+}
+
+export function setNotificationSound(sound: NotificationSound): void {
+  save({ notificationSound: sound });
 }
 
 export function shouldNotify(ev: PaneStatusEvent, selected: PaneRef | null, enabled: boolean): boolean {
@@ -51,7 +80,10 @@ export async function notifyPaneStatus(
     ?.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes))
     .find((p) => p.pane_id === ev.pane.pane_id);
   const machine = machines[ev.pane.machine_id]?.label ?? ev.pane.machine_id;
-  await notifyPane(ev.pane, `${pane?.agent ?? ev.title} is ${ev.status}`, `${machine} › ${ev.pane.session} › ${ev.title}`).catch(
-    (e: unknown) => console.warn("notify_pane failed", e),
-  );
+  await notifyPane(
+    ev.pane,
+    `${pane?.agent ?? ev.title} is ${ev.status}`,
+    `${machine} › ${ev.pane.session} › ${ev.title}`,
+    notificationSound(),
+  ).catch((e: unknown) => console.warn("notify_pane failed", e));
 }

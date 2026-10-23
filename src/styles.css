@@ -639,7 +639,7 @@ input.switch:checked::after { transform: translateX(12px); }
 .setting-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .setting-label > span, .setting-label > label { white-space: nowrap; }
 .setting-desc { margin: 0; color: var(--fg-3); font-size: 11.5px; line-height: 1.45; }
-.setting-row > .seg, .setting-row > .stepper, .setting-row > .font-picker { flex: none; }
+.setting-row > .seg, .setting-row > .stepper, .setting-row > .font-picker, .setting-row > .select-menu { flex: none; }
 .font-picker { position: relative; width: 220px; min-width: 0; }
 .font-picker input {
   width: 100%; height: 28px; padding: 0 8px; box-sizing: border-box;

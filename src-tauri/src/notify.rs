@@ -11,6 +11,12 @@ use crate::{error::AppError, view::PaneRef};
 /// Event the frontend listens to; its payload is the clicked notification's `PaneRef`.
 pub const ACTIVATE_EVENT: &str = "notify://activate";
 
+/// Sound names the frontend sends besides a macOS system sound's own name (`Glass`, `Ping`, …).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const DEFAULT_SOUND: &str = "Default";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const NO_SOUND: &str = "None";
+
 /// Bring the main window forward and tell the frontend to select `pane`.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn activate<R: Runtime>(app: &AppHandle<R>, pane: PaneRef) {
@@ -27,13 +33,14 @@ fn activate<R: Runtime>(app: &AppHandle<R>, pane: PaneRef) {
 #[cfg(target_os = "macos")]
 #[allow(deprecated)] // NSUserNotification: UNUserNotificationCenter needs a properly signed app.
 mod mac {
-    use super::{activate, PaneRef};
+    use super::{activate, PaneRef, DEFAULT_SOUND, NO_SOUND};
     use objc2::{
         define_class, msg_send,
         rc::Retained,
         runtime::{AnyObject, ProtocolObject},
         AnyThread, ClassType, DefinedClass, MainThreadMarker,
     };
+    use objc2_app_kit::NSSound;
     use objc2_foundation::{
         NSDictionary, NSObject, NSObjectProtocol, NSString, NSUserNotification,
         NSUserNotificationCenter, NSUserNotificationCenterDelegate,
@@ -120,20 +127,24 @@ mod mac {
     }
 
     /// Deliver one notification. Must run on the main thread.
-    pub fn deliver(pane: &PaneRef, title: &str, body: &str) {
+    pub fn deliver(pane: &PaneRef, title: &str, body: &str, sound: &str) {
         match center() {
-            Some(center) => center.deliverNotification(&build(pane, title, body)),
+            Some(center) => center.deliverNotification(&build(pane, title, body, sound)),
             None => tracing::debug!("no notification center; dropped \"{title}\""),
         }
     }
 
     /// A notification whose `userInfo` carries `pane`, read back by [`pane_of`] on click.
-    fn build(pane: &PaneRef, title: &str, body: &str) -> Retained<NSUserNotification> {
+    fn build(pane: &PaneRef, title: &str, body: &str, sound: &str) -> Retained<NSUserNotification> {
         let n = NSUserNotification::new();
         n.setTitle(Some(&NSString::from_str(title)));
         n.setInformativeText(Some(&NSString::from_str(body)));
-        // nil (the default) delivers silently.
-        n.setSoundName(Some(unsafe { NSUserNotificationDefaultSoundName }));
+        // A nil sound name (NSUserNotification's default) delivers silently.
+        match sound {
+            NO_SOUND => {}
+            DEFAULT_SOUND => n.setSoundName(Some(unsafe { NSUserNotificationDefaultSoundName })),
+            name => n.setSoundName(Some(&NSString::from_str(name))),
+        }
         let keys = KEYS.map(NSString::from_str);
         let vals = [&pane.machine_id, &pane.session, &pane.pane_id].map(|s| NSString::from_str(s));
         let info = NSDictionary::<NSString, AnyObject>::from_slices(
@@ -143,6 +154,16 @@ mod mac {
         // SAFETY: every value is an NSString, a valid property-list type.
         unsafe { n.setUserInfo(Some(&info)) };
         n
+    }
+
+    /// Play a system sound by name, for previewing it in Settings. Must run on the main thread.
+    pub fn play(sound: &str) {
+        match NSSound::soundNamed(&NSString::from_str(sound)) {
+            Some(s) => {
+                s.play();
+            }
+            None => tracing::debug!("no system sound named \"{sound}\""),
+        }
     }
 
     #[cfg(test)]
@@ -156,23 +177,41 @@ mod mac {
                 session: "my session".into(),
                 pane_id: "w5:p1E".into(),
             };
-            let n = build(&pane, "claude is blocked", "devtuf › my session › app");
+            let n = build(
+                &pane,
+                "claude is blocked",
+                "devtuf › my session › app",
+                DEFAULT_SOUND,
+            );
             assert_eq!(pane_of(&n), Some(pane));
             assert_eq!(n.title().unwrap().to_string(), "claude is blocked");
         }
 
-        #[test]
-        fn notification_plays_the_default_sound() {
+        fn sound_of(sound: &str) -> Option<String> {
             let pane = PaneRef {
                 machine_id: "m".into(),
                 session: "s".into(),
                 pane_id: "p".into(),
             };
-            let n = build(&pane, "title", "body");
-            assert_eq!(
-                n.soundName().as_deref(),
-                Some(unsafe { NSUserNotificationDefaultSoundName })
-            );
+            build(&pane, "title", "body", sound)
+                .soundName()
+                .map(|s| s.to_string())
+        }
+
+        #[test]
+        fn default_sound_is_the_system_notification_sound() {
+            let default = unsafe { NSUserNotificationDefaultSoundName }.to_string();
+            assert_eq!(sound_of(DEFAULT_SOUND), Some(default));
+        }
+
+        #[test]
+        fn named_sound_is_played_by_name() {
+            assert_eq!(sound_of("Glass"), Some("Glass".into()));
+        }
+
+        #[test]
+        fn no_sound_delivers_silently() {
+            assert_eq!(sound_of(NO_SOUND), None);
         }
 
         /// `cargo test` runs unbundled, like `tauri dev`: there is no default center there.
@@ -183,7 +222,7 @@ mod mac {
                 session: "s".into(),
                 pane_id: "p".into(),
             };
-            deliver(&pane, "title", "body");
+            deliver(&pane, "title", "body", DEFAULT_SOUND);
         }
 
         #[test]
@@ -201,20 +240,45 @@ pub fn init(app: &AppHandle) {
     let _ = app;
 }
 
-/// Show a notification for `pane`; clicking it selects that pane (macOS only).
-pub fn show(app: &AppHandle, pane: PaneRef, title: String, body: String) -> Result<(), AppError> {
-    show_inner(app, pane, title, body).map_err(|e| AppError::new("io", e.to_string()))
+/// Show a notification for `pane` with `sound` (`Default`, `None` or a system sound's name);
+/// clicking it selects that pane. Both the pane jump and the sound are macOS only.
+pub fn show(
+    app: &AppHandle,
+    pane: PaneRef,
+    title: String,
+    body: String,
+    sound: String,
+) -> Result<(), AppError> {
+    show_inner(app, pane, title, body, sound).map_err(|e| AppError::new("io", e.to_string()))
 }
 
-fn show_inner(app: &AppHandle, pane: PaneRef, title: String, body: String) -> tauri::Result<()> {
+/// Play the system sound `sound` once, so Settings can preview it (macOS only).
+pub fn preview_sound(app: &AppHandle, sound: String) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    let r = app.run_on_main_thread(move || mac::play(&sound));
+    #[cfg(not(target_os = "macos"))]
+    let r: tauri::Result<()> = {
+        let _ = (app, sound);
+        Ok(())
+    };
+    r.map_err(|e| AppError::new("io", e.to_string()))
+}
+
+fn show_inner(
+    app: &AppHandle,
+    pane: PaneRef,
+    title: String,
+    body: String,
+    sound: String,
+) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        app.run_on_main_thread(move || mac::deliver(&pane, &title, &body))
+        app.run_on_main_thread(move || mac::deliver(&pane, &title, &body, &sound))
     }
     #[cfg(not(target_os = "macos"))]
     {
         use tauri_plugin_notification::NotificationExt;
-        let _ = pane;
+        let _ = (pane, sound);
         app.notification()
             .builder()
             .title(title)

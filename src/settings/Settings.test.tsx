@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/ipc", () => ({
   systemFonts: vi.fn(async () => ["CaskaydiaCove Nerd Font Mono", "Lilex", "Menlo"]),
+  notifySoundPreview: vi.fn(async () => {}),
 }));
+import { notifySoundPreview } from "../lib/ipc";
+import { notificationSound } from "../notify";
 import { loadLensSettings, useLensSettings } from "./lens";
 import { DEFAULT_HIDDEN_FOLDERS, loadHiddenFolders, useHiddenFolders } from "./hiddenFolders";
 import { DEFAULT_QUICK_REPLIES, loadQuickReplies, QUICK_REPLIES_MAX, useQuickReplies } from "./quickReplies";
@@ -69,6 +72,23 @@ describe("Settings dialog", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Fonts" }));
     expect(screen.getByRole("combobox", { name: "Terminal font" })).toBeTruthy();
     expect(screen.queryByRole("switch", { name: "Notifications" })).toBeNull();
+  });
+
+  it("picks the notification sound, plays it, and dims it while notifications are off", () => {
+    render(<Settings />);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const sound = screen.getByRole("combobox", { name: "Notification sound" });
+    expect(sound.textContent).toBe("Default");
+    fireEvent.click(sound);
+    fireEvent.mouseDown(screen.getByRole("option", { name: "Glass" }));
+    expect(sound.textContent).toBe("Glass");
+    expect(notificationSound()).toBe("Glass");
+    expect(notifySoundPreview).toHaveBeenCalledWith("Glass");
+    fireEvent.click(sound);
+    fireEvent.mouseDown(screen.getByRole("option", { name: "None" }));
+    expect(notifySoundPreview).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("switch", { name: "Notifications" }));
+    expect((sound as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("closes on Escape and on the close button", () => {

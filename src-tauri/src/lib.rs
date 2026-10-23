@@ -61,6 +61,7 @@ pub fn run() {
             commands::session_delete,
             commands::herdr_call,
             commands::notify_pane,
+            commands::notify_sound_preview,
             commands::image_save_temp,
             commands::term_open,
             commands::term_write,
