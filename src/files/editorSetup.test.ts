@@ -33,6 +33,12 @@ describe("editorSetup", () => {
     expect(await languageFor("notes.zzz")).toBeNull();
   });
 
+  it("reads env files as properties", async () => {
+    for (const rel of [".env", "app/.env.production", "env/local.env"]) {
+      expect((await languageFor(rel))?.language.name, rel).toBe("properties");
+    }
+  });
+
   it("keeps a CRLF document clean when LF or CR text is inserted", () => {
     for (const [ins, want] of [["x\ny", "ax\r\nyb\r\n"], ["p\rq", "ap\r\nqb\r\n"], ["m\r\nn", "am\r\nnb\r\n"]]) {
       const s = createEditorState("ab\r\n");

@@ -17,4 +17,11 @@ describe("highlightLines", () => {
     const big = "x".repeat(HIGHLIGHT_LIMIT + 1);
     expect(highlightLines(big, "a.ts")).toEqual([[{ text: big, cls: "" }]]);
   });
+  it("highlights env files as key=value with comments", () => {
+    for (const path of [".env", "app/.env.local", "env/local.env", "env/_template.env"]) {
+      const lines = highlightLines("# note\nAPI_PORT=3000\n", path);
+      expect(lines[0][0].cls, path).toContain("hljs-comment");
+      expect(lines[1].some((s) => s.cls.includes("hljs-attr") && s.text === "API_PORT"), path).toBe(true);
+    }
+  });
 });
