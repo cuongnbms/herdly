@@ -57,6 +57,7 @@ pnpm tauri build    # produces src-tauri/target/release/bundle/macos/Herdly.app
 The backend without Tauri is the `herdly-core` crate in `src-tauri/core/` (herdr RPC,
 transcripts, attach, git, files); the app in `src-tauri/src/` is the Tauri layer over it.
 `cargo test --workspace` and `cargo clippy --workspace` in `src-tauri` cover the app, `herdly-core` and `herdly-web`.
+In a worktree, `mise run lint`, `test:backend` and `test:integration` use the main checkout's `src-tauri/target` (`scripts/main-target.sh`), so a fresh worktree reuses the dependencies main already built.
 
 Herdly Web (`src-tauri/web/`, `web/`) serves this Machine's Pane list, Chat lens and mobile Terminal lens to a phone; see [web/README.md](web/README.md). Its manual phone checks are [docs/mobile-terminal-checklist.md](docs/mobile-terminal-checklist.md).
 

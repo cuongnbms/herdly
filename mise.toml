@@ -49,10 +49,13 @@ run = "pnpm typecheck"
 description = "Type-check the Herdly Web UI"
 run = "pnpm --dir web typecheck"
 
+# The cargo gates run through main-target.sh: in a worktree under .worktrees/ they use the
+# main checkout's src-tauri/target, so a fresh worktree doesn't rebuild every dependency.
+# Builds keep their own target, since $APP points into it.
 [tasks.lint]
 description = "Clippy on the backend, warnings as errors"
 dir = "src-tauri"
-run = "cargo clippy --workspace -- -D warnings"
+run = "../scripts/main-target.sh cargo clippy --workspace -- -D warnings"
 
 [tasks."test:frontend"]
 description = "Frontend tests (vitest)"
@@ -65,23 +68,27 @@ run = "pnpm --dir web test"
 [tasks."test:backend"]
 description = "Backend tests (cargo)"
 dir = "src-tauri"
-run = "cargo test --workspace"
+run = "../scripts/main-target.sh cargo test --workspace"
 
 # A throwaway keychain and a tiny bundle; never the login keychain or /Applications.
 [tasks."test:sign"]
 description = "Tests for the local signing scripts (macOS)"
 run = "scripts/sign.test.sh"
 
+[tasks."test:scripts"]
+description = "Tests for main-target.sh against a throwaway repository"
+run = "scripts/main-target.test.sh"
+
 [tasks.test]
-description = "Frontend, backend and signing script tests"
-depends = ["test:frontend", "test:web", "test:backend", "test:sign"]
+description = "Frontend, backend and script tests"
+depends = ["test:frontend", "test:web", "test:backend", "test:sign", "test:scripts"]
 
 # Starts isolated `herdly-test-*` sessions on the local herdr and always
 # stops and deletes them. The SSH test only runs when HERDLY_SSH_TEST is set.
 [tasks."test:integration"]
 description = "Integration tests against a real local herdr"
 dir = "src-tauri"
-run = "cargo test --workspace -- --ignored --test-threads=1"
+run = "../scripts/main-target.sh cargo test --workspace -- --ignored --test-threads=1"
 
 [tasks.check]
 description = "Typecheck, lint and test"
